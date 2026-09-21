@@ -4417,7 +4417,7 @@ Expected: builds with no errors. Any failure means a `std` feature that does not
 
 `README.md`:
 ````markdown
-# fat16-emulator
+# fs-emulator (written as fat16-emulator; renamed later)
 
 A byte-accurate FAT16 filesystem on an in-memory virtual disk, written in Rust
 as a learning tool. Every operation records exactly which bytes changed and

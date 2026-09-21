@@ -1,0 +1,9 @@
+[package]
+name = "fs-core"
+description = "Filesystem-agnostic core: virtual disk, change tracking, and the FileSystem trait"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
