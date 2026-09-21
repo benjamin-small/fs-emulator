@@ -2,8 +2,10 @@
 //! fields, tagged unions on `kind`, `Option` as `null`, bytes as `Uint8Array`.
 //! Nothing here touches wasm-bindgen, so it all runs under `cargo test`.
 
+use fat::FatVariant;
 use fs_core::{Event, RegionKind};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -191,9 +193,258 @@ impl From<fs_core::Annotation> for Annotation {
     }
 }
 
+/// Every field optional; absent fields take `fat::FormatOptions::default()`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct FormatOptions {
+    pub bytes_per_sector: Option<u16>,
+    pub sectors_per_cluster: Option<u8>,
+    pub total_sectors: Option<u32>,
+    pub fat_count: Option<u8>,
+    pub root_entries: Option<u16>,
+    pub reserved_sectors: Option<u16>,
+    pub volume_label: Option<String>,
+    pub volume_id: Option<u32>,
+    pub enforce_fat16_range: Option<bool>,
+}
+
+/// Space-pad or truncate to the 11-byte on-disk label.
+pub fn pad_label(label: &str) -> [u8; 11] {
+    let mut out = [b' '; 11];
+    for (i, b) in label.bytes().take(11).enumerate() {
+        out[i] = b;
+    }
+    out
+}
+
+impl From<FormatOptions> for fat::FormatOptions {
+    fn from(o: FormatOptions) -> Self {
+        let d = fat::FormatOptions::default();
+        fat::FormatOptions {
+            bytes_per_sector: o.bytes_per_sector.unwrap_or(d.bytes_per_sector),
+            sectors_per_cluster: o.sectors_per_cluster.unwrap_or(d.sectors_per_cluster),
+            total_sectors: o.total_sectors.unwrap_or(d.total_sectors),
+            fat_count: o.fat_count.unwrap_or(d.fat_count),
+            root_entries: o.root_entries.unwrap_or(d.root_entries),
+            reserved_sectors: o.reserved_sectors.unwrap_or(d.reserved_sectors),
+            volume_label: o
+                .volume_label
+                .map(|l| pad_label(&l))
+                .unwrap_or(d.volume_label),
+            volume_id: o.volume_id.unwrap_or(d.volume_id),
+            enforce_fat16_range: o.enforce_fat16_range.unwrap_or(d.enforce_fat16_range),
+        }
+    }
+}
+
+fn text(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes).trim_end().to_string()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BootSector {
+    pub oem_name: String,
+    pub bytes_per_sector: u16,
+    pub sectors_per_cluster: u8,
+    pub reserved_sectors: u16,
+    pub fat_count: u8,
+    pub root_entries: u16,
+    pub total_sectors: u32,
+    pub media: u8,
+    pub sectors_per_fat: u16,
+    pub sectors_per_track: u16,
+    pub heads: u16,
+    pub hidden_sectors: u32,
+    pub drive_number: u8,
+    pub boot_signature: u8,
+    pub volume_id: u32,
+    pub volume_label: String,
+    pub fs_type: String,
+}
+
+impl From<&fat::BootSector> for BootSector {
+    fn from(b: &fat::BootSector) -> Self {
+        BootSector {
+            oem_name: text(&b.oem_name),
+            bytes_per_sector: b.bytes_per_sector,
+            sectors_per_cluster: b.sectors_per_cluster,
+            reserved_sectors: b.reserved_sectors,
+            fat_count: b.fat_count,
+            root_entries: b.root_entries,
+            total_sectors: b.total_sectors(),
+            media: b.media,
+            sectors_per_fat: b.sectors_per_fat,
+            sectors_per_track: b.sectors_per_track,
+            heads: b.heads,
+            hidden_sectors: b.hidden_sectors,
+            drive_number: b.drive_number,
+            boot_signature: b.boot_signature,
+            volume_id: b.volume_id,
+            volume_label: text(&b.volume_label),
+            fs_type: text(&b.fs_type),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Geometry {
+    pub variant: String,
+    pub bytes_per_sector: usize,
+    pub sectors_per_cluster: usize,
+    pub reserved_sectors: u64,
+    pub fat_count: u8,
+    pub sectors_per_fat: u64,
+    pub root_entries: usize,
+    pub root_dir_sectors: u64,
+    pub first_root_dir_sector: u64,
+    pub first_data_sector: u64,
+    pub total_sectors: u64,
+    pub cluster_count: u32,
+}
+
+impl From<&fat::Geometry> for Geometry {
+    fn from(g: &fat::Geometry) -> Self {
+        Geometry {
+            variant: match g.variant {
+                FatVariant::Fat16 => "fat16".to_string(),
+            },
+            bytes_per_sector: g.bytes_per_sector,
+            sectors_per_cluster: g.sectors_per_cluster,
+            reserved_sectors: g.reserved_sectors,
+            fat_count: g.fat_count,
+            sectors_per_fat: g.sectors_per_fat,
+            root_entries: g.root_entries,
+            root_dir_sectors: g.root_dir_sectors,
+            first_root_dir_sector: g.first_root_dir_sector,
+            first_data_sector: g.first_data_sector,
+            total_sectors: g.total_sectors,
+            cluster_count: g.cluster_count,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum FatEntry {
+    Free,
+    Next { cluster: u32 },
+    EndOfChain,
+    Bad,
+    Reserved,
+}
+
+impl From<fat::FatEntry> for FatEntry {
+    fn from(e: fat::FatEntry) -> Self {
+        match e {
+            fat::FatEntry::Free => FatEntry::Free,
+            fat::FatEntry::Next(c) => FatEntry::Next { cluster: c },
+            fat::FatEntry::EndOfChain => FatEntry::EndOfChain,
+            fat::FatEntry::Bad => FatEntry::Bad,
+            fat::FatEntry::Reserved => FatEntry::Reserved,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum RawEntry {
+    Free,
+    Deleted {
+        #[serde(with = "serde_bytes")]
+        bytes: Vec<u8>,
+    },
+    Short {
+        name: String,
+        attr: u8,
+        first_cluster: u32,
+        size: u32,
+        created: Option<DateTime>,
+        modified: Option<DateTime>,
+        accessed: Option<DateTime>,
+        is_dir: bool,
+    },
+    Lfn {
+        order: u8,
+        is_last: bool,
+        checksum: u8,
+        text: String,
+    },
+}
+
+impl From<fat::RawEntry> for RawEntry {
+    fn from(e: fat::RawEntry) -> Self {
+        match e {
+            fat::RawEntry::Free => RawEntry::Free,
+            fat::RawEntry::Deleted { bytes } => RawEntry::Deleted {
+                bytes: bytes.to_vec(),
+            },
+            fat::RawEntry::Short(s) => RawEntry::Short {
+                name: s.display_name(),
+                attr: s.attr,
+                first_cluster: s.first_cluster(),
+                size: s.size,
+                created: fat::dir_entry::unpack(s.create_date, s.create_time).map(Into::into),
+                modified: fat::dir_entry::unpack(s.write_date, s.write_time).map(Into::into),
+                accessed: fat::dir_entry::unpack(s.access_date, 0).map(Into::into),
+                is_dir: s.is_dir(),
+            },
+            fat::RawEntry::Lfn(l) => RawEntry::Lfn {
+                order: l.order(),
+                is_last: l.is_last(),
+                checksum: l.checksum,
+                text: fat::name::from_ucs2(&l.chars()),
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClusterOwner {
+    pub cluster: u32,
+    pub path: String,
+    pub is_dir: bool,
+    pub first_cluster: u32,
+}
+
+/// Sorted by cluster (BTreeMap order).
+pub fn owners_to_list(map: &BTreeMap<u32, fat::ClusterOwner>) -> Vec<ClusterOwner> {
+    map.iter()
+        .map(|(&cluster, o)| ClusterOwner {
+            cluster,
+            path: o.path.clone(),
+            is_dir: o.is_dir,
+            first_cluster: o.first_cluster,
+        })
+        .collect()
+}
+
+pub fn owners_from_list(list: Vec<ClusterOwner>) -> BTreeMap<u32, fat::ClusterOwner> {
+    list.into_iter()
+        .map(|o| {
+            (
+                o.cluster,
+                fat::ClusterOwner {
+                    path: o.path,
+                    is_dir: o.is_dir,
+                    first_cluster: o.first_cluster,
+                },
+            )
+        })
+        .collect()
+}
+
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
+    use fat::{FatFs, FormatOptions as FatFormat};
+    use std::collections::BTreeMap;
     use std::fmt;
     use std::ops::Range as StdRange;
 
@@ -452,5 +703,101 @@ mod tests {
             keys.0,
             vec!["name", "isDir", "size", "created", "modified", "accessed"]
         );
+    }
+
+    #[test]
+    fn format_options_default_to_the_core_defaults() {
+        let dto = FormatOptions::default();
+        assert_eq!(FatFormat::from(dto), FatFormat::default());
+        let dto = FormatOptions {
+            total_sectors: Some(8192),
+            sectors_per_cluster: Some(1),
+            volume_label: Some("teach".into()),
+            enforce_fat16_range: Some(false),
+            ..Default::default()
+        };
+        let core = FatFormat::from(dto);
+        assert_eq!(core.total_sectors, 8192);
+        assert_eq!(core.sectors_per_cluster, 1);
+        assert_eq!(&core.volume_label, b"teach      ");
+        assert!(!core.enforce_fat16_range);
+        assert_eq!(core.bytes_per_sector, 512);
+    }
+
+    #[test]
+    fn labels_are_padded_and_truncated() {
+        assert_eq!(pad_label(""), *b"           ");
+        assert_eq!(pad_label("A"), *b"A          ");
+        assert_eq!(pad_label("TWELVE CHARS"), *b"TWELVE CHAR");
+    }
+
+    #[test]
+    fn boot_sector_and_geometry_map() {
+        let fs = FatFs::format(FatFormat::default()).unwrap();
+        let bs = BootSector::from(fs.boot_sector());
+        assert_eq!(bs.oem_name, "FAT16EMU");
+        assert_eq!(bs.bytes_per_sector, 512);
+        assert_eq!(bs.total_sectors, 32768);
+        assert_eq!(bs.fs_type, "FAT16");
+        assert_eq!(bs.volume_label, "NO NAME");
+        let g = Geometry::from(fs.geometry());
+        assert_eq!(g.variant, "fat16");
+        assert_eq!(g.cluster_count, 8167);
+        assert_eq!(g.first_data_sector, 97);
+    }
+
+    #[test]
+    fn fat_entry_and_raw_entry_map() {
+        assert_eq!(FatEntry::from(fat::FatEntry::Free), FatEntry::Free);
+        assert_eq!(
+            FatEntry::from(fat::FatEntry::Next(9)),
+            FatEntry::Next { cluster: 9 }
+        );
+        assert_eq!(
+            FatEntry::from(fat::FatEntry::EndOfChain),
+            FatEntry::EndOfChain
+        );
+        let mut fs = FatFs::format(FatFormat::default()).unwrap();
+        fs.create_file("/My File.txt", b"abc").unwrap();
+        fs.create_file("/B", b"").unwrap();
+        fs.delete_file("/B").unwrap();
+        let raw: Vec<RawEntry> = fs
+            .raw_dir_entries("/")
+            .unwrap()
+            .into_iter()
+            .map(Into::into)
+            .collect();
+        assert!(
+            matches!(&raw[0], RawEntry::Lfn { order: 1, is_last: true, text, .. } if text == "My File.txt")
+        );
+        assert!(
+            matches!(&raw[1], RawEntry::Short { name, size: 3, is_dir: false, first_cluster: 2, .. } if name == "MYFILE~1.TXT")
+        );
+        assert!(matches!(&raw[2], RawEntry::Deleted { bytes } if bytes.len() == 32));
+        assert_eq!(raw[3], RawEntry::Free);
+    }
+
+    #[test]
+    fn cluster_owner_lists_round_trip_sorted() {
+        let mut fs = FatFs::format(FatFormat::default()).unwrap();
+        fs.create_dir("/D").unwrap();
+        fs.create_file("/D/F", &[0u8; 5000]).unwrap();
+        let map = fs.cluster_owners();
+        let list = owners_to_list(&map);
+        assert_eq!(list.len(), 4);
+        assert!(list.windows(2).all(|w| w[0].cluster < w[1].cluster));
+        assert_eq!(
+            list[0],
+            ClusterOwner {
+                cluster: 2,
+                path: "/D".into(),
+                is_dir: true,
+                first_cluster: 2
+            }
+        );
+        assert_eq!(list[1].path, "/D/F");
+        assert_eq!(list[1].first_cluster, 3);
+        let back: BTreeMap<u32, fat::ClusterOwner> = owners_from_list(list);
+        assert_eq!(back, map);
     }
 }
