@@ -198,13 +198,23 @@ options differ.
 
 ### FAT32 seams (designed in, not implemented)
 
-- Cluster numbers are `u32` everywhere.
-- `enum FatVariant { Fat16 }` with FAT32 to be added. Entry width, end-of-chain
-  and bad-cluster markers, and root-directory location (fixed region vs
-  cluster chain) are dispatched on it.
-- The BPB parser reads the common first 36 bytes, then a variant-specific
-  extension (FAT16: EBPB at offset 36; FAT32: 28 extra bytes then EBPB at 64).
+What v1 actually dispatches on `FatVariant`:
+
+- Cluster numbers are `u32` everywhere, including the high half of the short
+  entry's first-cluster field.
+- `enum FatVariant { Fat16 }` with FAT32 to be added. The FAT entry byte
+  offset (`Geometry::fat_entry_offset`) and the entry codec in `table`
+  (`decode`/`encode`) match on it, so a FAT32 arm cannot silently reuse the
+  16-bit width.
 - `format` and `from_image` return `Error::Unsupported` for anything but FAT16.
+
+Still to be done when FAT32 lands (not dispatched in v1):
+
+- `BootSector::parse` reads the FAT16 EBPB at offset 36 unconditionally; FAT32
+  needs the common 36 bytes, then 28 extra fields, then the EBPB at 64.
+- `dir::slots(DirLocation::Root)` assumes the fixed root region; FAT32 keeps
+  the root in a cluster chain.
+- End-of-chain and bad-cluster markers are FAT16 constants in `decode16`.
 
 ### `FormatOptions` and defaults
 
