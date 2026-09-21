@@ -1,17 +1,18 @@
 import { Volume } from "fs-emulator-wasm";
-import type { Annotation, ClusterOwner, DateTime, OpRecord } from "fs-emulator-wasm";
+import type { Annotation, ClusterOwner, DateTime, FsError, OpRecord } from "fs-emulator-wasm";
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
 
 let volume = Volume.formatFat16(undefined);
 let owners: ClusterOwner[] = volume.clusterOwners();
+let exportUrl: string | null = null;
 
 function status(text: string): void {
   $("status").textContent = text;
 }
 
 function fail(e: unknown): void {
-  const err = e as { code?: string; message?: string };
+  const err = e as Partial<FsError>;
   status(`${err.code ?? "Error"}: ${err.message ?? String(e)}`);
 }
 
@@ -89,12 +90,18 @@ function renderSector(): void {
 }
 
 function refresh(): void {
-  owners = volume.clusterOwners();
-  renderListing();
-  renderLastOp();
-  renderSector();
-  const blob = new Blob([new Uint8Array(volume.image())], { type: "application/octet-stream" });
-  $<HTMLAnchorElement>("export").href = URL.createObjectURL(blob);
+  try {
+    owners = volume.clusterOwners();
+    renderListing();
+    renderLastOp();
+    renderSector();
+    if (exportUrl) URL.revokeObjectURL(exportUrl);
+    const blob = new Blob([new Uint8Array(volume.image())], { type: "application/octet-stream" });
+    exportUrl = URL.createObjectURL(blob);
+    $<HTMLAnchorElement>("export").href = exportUrl;
+  } catch (e) {
+    fail(e);
+  }
 }
 
 function mutate(action: () => void): void {
@@ -118,7 +125,13 @@ $("sector").addEventListener("input", renderSector);
 $<HTMLInputElement>("load").addEventListener("change", async (ev) => {
   const file = (ev.target as HTMLInputElement).files?.[0];
   if (!file) return;
-  const bytes = new Uint8Array(await file.arrayBuffer());
+  let bytes: Uint8Array;
+  try {
+    bytes = new Uint8Array(await file.arrayBuffer());
+  } catch (e) {
+    fail(e);
+    return;
+  }
   mutate(() => {
     volume = Volume.fromImage(bytes);
   });

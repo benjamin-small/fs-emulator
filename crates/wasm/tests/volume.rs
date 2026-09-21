@@ -96,6 +96,15 @@ fn errors_carry_codes() {
     let err = v.read_file("/nope").unwrap_err();
     assert!(err.is_instance_of::<js_sys::Error>());
     assert_eq!(get(&err, "message").as_string().unwrap(), "not found");
+    let huge = obj(&[
+        ("totalSectors", JsValue::from(4_000_000u32)),
+        ("sectorsPerCluster", JsValue::from(64u32)),
+    ]);
+    assert_eq!(code(Volume::format_fat16(huge).unwrap_err()), "BadArgument");
+    assert_eq!(
+        code(Volume::format_fat16(obj(&[("totalSector", JsValue::from(2048u32))])).unwrap_err()),
+        "BadArgument"
+    );
 }
 
 #[wasm_bindgen_test]
@@ -137,11 +146,11 @@ fn history_layout_bytes_and_time() {
 
     let img = v.image();
     assert_eq!(img.len(), 32768 * 512);
-    let again = Volume::from_image(&img).unwrap();
+    let again = Volume::from_image(img.clone()).unwrap();
     assert_eq!(Array::from(&again.list_dir("/").unwrap()).length(), 0);
     assert_eq!(again.history_length(), 0);
     assert_eq!(
-        code(Volume::from_image(&img[..100]).unwrap_err()),
+        code(Volume::from_image(img[..100].to_vec()).unwrap_err()),
         "CorruptImage"
     );
 
@@ -237,4 +246,32 @@ fn fat_inspection() {
         ),
         "BadArgument"
     );
+}
+
+#[wasm_bindgen_test]
+fn serializer_contract_null_and_bytes() {
+    let mut v = fresh();
+    v.create_file("/A.TXT", b"a").unwrap();
+    v.create_file("/B.TXT", b"b").unwrap();
+    v.delete_file("/B.TXT").unwrap();
+    // RawEntry::Deleted carries bytes inside a tagged enum variant.
+    let raw = Array::from(&v.raw_dir_entries("/").unwrap());
+    let deleted = raw.get(1);
+    assert_eq!(get(&deleted, "kind").as_string().unwrap(), "deleted");
+    let bytes = get(&deleted, "bytes");
+    assert!(bytes.is_instance_of::<Uint8Array>());
+    assert_eq!(Uint8Array::from(bytes).length(), 32);
+    // Option::None must serialize as null, not undefined: zero A.TXT's access date on disk and re-import.
+    let mut img = v.image();
+    let root = get(&v.geometry().unwrap(), "firstRootDirSector")
+        .as_f64()
+        .unwrap() as usize
+        * 512;
+    img[root + 18] = 0;
+    img[root + 19] = 0;
+    let again = Volume::from_image(img).unwrap();
+    let st = again.stat("/A.TXT").unwrap();
+    let accessed = get(&st, "accessed");
+    assert!(accessed.is_null(), "expected null, got {:?}", accessed);
+    assert!(!accessed.is_undefined());
 }

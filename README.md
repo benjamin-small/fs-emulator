@@ -13,6 +13,8 @@ Linux.
   trait. FAT32 and ext2/ext3 will plug in here later.
 - `fat`: the FAT16 implementation (`FatFs`) plus FAT-specific inspection:
   `fat_entries`, `cluster_chain`, `raw_dir_entries`, `annotate_sector`.
+- `wasm` (`fs-emulator-wasm`): the wasm-bindgen `Volume` class and
+  TypeScript types for browsers.
 
 ## Example
 
@@ -38,3 +40,9 @@ cargo build --workspace --target wasm32-unknown-unknown
 ```
 
 Design: `docs/superpowers/specs/2026-09-21-fat16-emulator-design.md`.
+
+## Demo
+
+`web/demo` is a Vite + TypeScript page that exercises the `wasm` crate in a
+browser. Build the wasm package first with
+`wasm-pack build crates/wasm --target bundler`, then `cd web/demo && pnpm install && pnpm dev`.

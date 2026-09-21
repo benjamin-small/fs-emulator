@@ -5,6 +5,7 @@ use crate::dto;
 use crate::error::{js_error, to_js};
 use fat::FatFs;
 use fs_core::FileSystem;
+use js_sys::Object;
 use serde::Serialize;
 use serde_wasm_bindgen::Serializer;
 use wasm_bindgen::prelude::*;
@@ -12,6 +13,9 @@ use wasm_bindgen::prelude::*;
 enum Inner {
     Fat(FatFs),
 }
+
+/// Largest volume the wrapper will allocate in browser memory.
+pub const MAX_VOLUME_BYTES: u64 = 256 * 1024 * 1024;
 
 #[wasm_bindgen]
 pub struct Volume {
@@ -41,6 +45,23 @@ fn to_value<T: Serialize>(value: &T) -> Result<JsValue, JsValue> {
 
 fn from_value<T: serde::de::DeserializeOwned>(value: JsValue) -> Result<T, JsValue> {
     serde_wasm_bindgen::from_value(value).map_err(|e| js_error("BadArgument", &e.to_string()))
+}
+
+/// Reject any own key of `value` that is not in `allowed`. `#[serde(deny_unknown_fields)]`
+/// can't do this itself at the JS boundary: `serde-wasm-bindgen` deserializes a struct by
+/// looking up each known field by name on the object, never by iterating the object's own
+/// keys, so a typo'd key is simply never observed rather than rejected.
+fn reject_unknown_keys(value: &JsValue, allowed: &[&str]) -> Result<(), JsValue> {
+    for key in Object::keys(value.unchecked_ref::<Object>()).iter() {
+        let key = key.as_string().unwrap_or_default();
+        if !allowed.contains(&key.as_str()) {
+            return Err(js_error(
+                "BadArgument",
+                &format!("unknown option \"{key}\""),
+            ));
+        }
+    }
+    Ok(())
 }
 
 impl Volume {
@@ -79,17 +100,33 @@ impl Volume {
         let opts: dto::FormatOptions = if options.is_undefined() || options.is_null() {
             dto::FormatOptions::default()
         } else {
+            reject_unknown_keys(&options, dto::FormatOptions::FIELDS)?;
             from_value(options)?
         };
-        let fs = FatFs::format(opts.into()).map_err(to_js)?;
+        let opts: fat::FormatOptions = opts.into();
+        let bytes = opts.total_sectors as u64 * opts.bytes_per_sector as u64;
+        if bytes > MAX_VOLUME_BYTES {
+            return Err(js_error(
+                "BadArgument",
+                &format!("volume of {bytes} bytes exceeds the {MAX_VOLUME_BYTES}-byte limit"),
+            ));
+        }
+        let fs = FatFs::format(opts).map_err(to_js)?;
         Ok(Volume {
             inner: Inner::Fat(fs),
         })
     }
 
     #[wasm_bindgen(js_name = fromImage)]
-    pub fn from_image(bytes: &[u8]) -> Result<Volume, JsValue> {
-        let fs = FatFs::from_image(bytes.to_vec()).map_err(to_js)?;
+    pub fn from_image(bytes: Vec<u8>) -> Result<Volume, JsValue> {
+        let len = bytes.len() as u64;
+        if len > MAX_VOLUME_BYTES {
+            return Err(js_error(
+                "BadArgument",
+                &format!("volume of {len} bytes exceeds the {MAX_VOLUME_BYTES}-byte limit"),
+            ));
+        }
+        let fs = FatFs::from_image(bytes).map_err(to_js)?;
         Ok(Volume {
             inner: Inner::Fat(fs),
         })

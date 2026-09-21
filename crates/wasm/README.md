@@ -26,6 +26,8 @@ cargo test -p fs-emulator-wasm                 # native DTO tests
 
 ## Demo
 
+Build the wasm package first: `wasm-pack build crates/wasm --target bundler`.
+
 ```
 cd web/demo && pnpm install && pnpm dev
 ```

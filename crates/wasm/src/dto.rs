@@ -195,7 +195,7 @@ impl From<fs_core::Annotation> for Annotation {
 
 /// Every field optional; absent fields take `fat::FormatOptions::default()`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "camelCase", default)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct FormatOptions {
     pub bytes_per_sector: Option<u16>,
     pub sectors_per_cluster: Option<u8>,
@@ -206,6 +206,26 @@ pub struct FormatOptions {
     pub volume_label: Option<String>,
     pub volume_id: Option<u32>,
     pub enforce_fat16_range: Option<bool>,
+}
+
+impl FormatOptions {
+    /// The camelCase keys `#[serde(deny_unknown_fields)]` is meant to police.
+    /// `serde-wasm-bindgen` deserializes structs from JS objects by looking up
+    /// each known field by name rather than iterating the object's own keys,
+    /// so `deny_unknown_fields` never actually sees (and can't reject) an
+    /// unrecognized key coming from JS. Callers on that boundary must check
+    /// the object's keys against this list themselves before deserializing.
+    pub const FIELDS: &'static [&'static str] = &[
+        "bytesPerSector",
+        "sectorsPerCluster",
+        "totalSectors",
+        "fatCount",
+        "rootEntries",
+        "reservedSectors",
+        "volumeLabel",
+        "volumeId",
+        "enforceFat16Range",
+    ];
 }
 
 /// Space-pad or truncate to the 11-byte on-disk label.
