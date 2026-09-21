@@ -163,3 +163,78 @@ fn history_layout_bytes_and_time() {
         "BadArgument"
     );
 }
+
+#[wasm_bindgen_test]
+fn fat_inspection() {
+    let mut v = fresh();
+    v.create_file("/A very long file name.txt", b"x").unwrap();
+
+    let entries = Array::from(&v.fat_entries(0).unwrap());
+    assert_eq!(
+        get(&entries.get(0), "kind").as_string().unwrap(),
+        "reserved"
+    );
+    assert_eq!(
+        get(&entries.get(2), "kind").as_string().unwrap(),
+        "endOfChain"
+    );
+    assert_eq!(get(&entries.get(3), "kind").as_string().unwrap(), "free");
+    assert_eq!(Array::from(&v.fat_entries(2).unwrap()).length(), 0);
+
+    let chain = Array::from(&v.cluster_chain(2).unwrap());
+    assert_eq!(chain.length(), 1);
+    assert_eq!(chain.get(0).as_f64(), Some(2.0));
+    assert_eq!(code(v.cluster_chain(0).unwrap_err()), "CorruptImage");
+
+    let raw = Array::from(&v.raw_dir_entries("/").unwrap());
+    assert_eq!(get(&raw.get(0), "kind").as_string().unwrap(), "lfn");
+    assert_eq!(get(&raw.get(0), "isLast").as_bool(), Some(true));
+    assert_eq!(get(&raw.get(1), "kind").as_string().unwrap(), "lfn");
+    assert_eq!(get(&raw.get(2), "kind").as_string().unwrap(), "short");
+    assert_eq!(
+        get(&raw.get(2), "name").as_string().unwrap(),
+        "AVERYL~1.TXT"
+    );
+    assert_eq!(get(&raw.get(3), "kind").as_string().unwrap(), "free");
+    assert_eq!(
+        code(v.raw_dir_entries("/A very long file name.txt").unwrap_err()),
+        "NotADirectory"
+    );
+
+    let bs = v.boot_sector().unwrap();
+    assert_eq!(get(&bs, "fsType").as_string().unwrap(), "FAT16");
+    assert_eq!(get(&bs, "bytesPerSector").as_f64(), Some(512.0));
+    let g = v.geometry().unwrap();
+    assert_eq!(get(&g, "variant").as_string().unwrap(), "fat16");
+    assert_eq!(get(&g, "clusterCount").as_f64(), Some(8167.0));
+
+    let owners = v.cluster_owners().unwrap();
+    let list = Array::from(&owners);
+    assert_eq!(list.length(), 1);
+    assert_eq!(
+        get(&list.get(0), "path").as_string().unwrap(),
+        "/A very long file name.txt"
+    );
+    assert_eq!(get(&list.get(0), "cluster").as_f64(), Some(2.0));
+
+    let data_sector = get(&g, "firstDataSector").as_f64().unwrap() as u32;
+    let with = v.annotate_sector_with(data_sector, owners).unwrap();
+    let plain = v.annotate_sector(data_sector).unwrap();
+    assert_eq!(
+        js_sys::JSON::stringify(&with).unwrap(),
+        js_sys::JSON::stringify(&plain).unwrap()
+    );
+    assert_eq!(
+        get(&Array::from(&plain).get(0), "value")
+            .as_string()
+            .unwrap(),
+        "data of /A very long file name.txt"
+    );
+    assert_eq!(
+        code(
+            v.annotate_sector_with(0, JsValue::from_str("nope"))
+                .unwrap_err()
+        ),
+        "BadArgument"
+    );
+}

@@ -57,9 +57,6 @@ impl Volume {
     }
 
     /// The FAT volume, or a `NotFat` error once other filesystems exist.
-    ///
-    /// Unused until Task 4 adds FAT-specific inspection methods.
-    #[allow(dead_code)]
     fn fat(&self) -> Result<&FatFs, JsValue> {
         match &self.inner {
             Inner::Fat(f) => Ok(f),
@@ -227,5 +224,72 @@ impl Volume {
     /// A copy of the whole disk image.
     pub fn image(&self) -> Vec<u8> {
         self.fs().disk().as_bytes().to_vec()
+    }
+}
+
+/// FAT-specific inspection. Each throws `code === "NotFat"` on a non-FAT volume.
+#[wasm_bindgen]
+impl Volume {
+    #[wasm_bindgen(js_name = bootSector, unchecked_return_type = "BootSector")]
+    pub fn boot_sector(&self) -> Result<JsValue, JsValue> {
+        to_value(&dto::BootSector::from(self.fat()?.boot_sector()))
+    }
+
+    #[wasm_bindgen(unchecked_return_type = "Geometry")]
+    pub fn geometry(&self) -> Result<JsValue, JsValue> {
+        to_value(&dto::Geometry::from(self.fat()?.geometry()))
+    }
+
+    /// Every entry of one FAT copy, indexed by cluster; empty for a copy that does not exist.
+    #[wasm_bindgen(js_name = fatEntries, unchecked_return_type = "FatEntry[]")]
+    pub fn fat_entries(&self, fat: u8) -> Result<JsValue, JsValue> {
+        let list: Vec<dto::FatEntry> = self
+            .fat()?
+            .fat_entries(fat)
+            .into_iter()
+            .map(Into::into)
+            .collect();
+        to_value(&list)
+    }
+
+    #[wasm_bindgen(js_name = clusterChain, unchecked_return_type = "number[]")]
+    pub fn cluster_chain(&self, start: u32) -> Result<JsValue, JsValue> {
+        let chain = self.fat()?.cluster_chain(start).map_err(to_js)?;
+        to_value(&chain)
+    }
+
+    #[wasm_bindgen(js_name = rawDirEntries, unchecked_return_type = "RawEntry[]")]
+    pub fn raw_dir_entries(&self, path: &str) -> Result<JsValue, JsValue> {
+        let list: Vec<dto::RawEntry> = self
+            .fat()?
+            .raw_dir_entries(path)
+            .map_err(to_js)?
+            .into_iter()
+            .map(Into::into)
+            .collect();
+        to_value(&list)
+    }
+
+    /// One full directory-tree walk; reuse the result with `annotateSectorWith`.
+    #[wasm_bindgen(js_name = clusterOwners, unchecked_return_type = "ClusterOwner[]")]
+    pub fn cluster_owners(&self) -> Result<JsValue, JsValue> {
+        to_value(&dto::owners_to_list(&self.fat()?.cluster_owners()))
+    }
+
+    #[wasm_bindgen(js_name = annotateSectorWith, unchecked_return_type = "Annotation[]")]
+    pub fn annotate_sector_with(
+        &self,
+        sector: u32,
+        #[wasm_bindgen(unchecked_param_type = "ClusterOwner[]")] owners: JsValue,
+    ) -> Result<JsValue, JsValue> {
+        let owners: Vec<dto::ClusterOwner> = from_value(owners)?;
+        let map = dto::owners_from_list(owners);
+        let list: Vec<dto::Annotation> = self
+            .fat()?
+            .annotate_sector_with(sector as u64, &map)
+            .into_iter()
+            .map(Into::into)
+            .collect();
+        to_value(&list)
     }
 }
