@@ -7,9 +7,13 @@ use crate::dir_entry::{self, attr, LfnEntry, ShortEntry, DELETED, ENTRY_SIZE, FR
 use crate::events::{EntryKind, FatEvent};
 use crate::name;
 use crate::table;
+use crate::table::FatEntry;
 use fs_core::path;
-use fs_core::{DateTime, Disk, EntryInfo, Error, OpRecord, Region, RegionKind, Result};
-use std::collections::HashSet;
+use fs_core::{
+    Annotation, DateTime, Disk, EntryInfo, Error, FileSystem, OpRecord, Region, RegionKind, Result,
+};
+use std::collections::{BTreeMap, HashSet};
+use std::ops::Range;
 
 pub struct FatFs {
     disk: Disk,
@@ -530,6 +534,207 @@ impl FatFs {
         }));
         Ok(())
     }
+
+    /// Every entry of one FAT copy, indexed by cluster number.
+    pub fn fat_entries(&self, fat: u8) -> Vec<FatEntry> {
+        (0..self.geo.cluster_count + 2)
+            .map(|c| {
+                if c < 2 {
+                    FatEntry::Reserved
+                } else {
+                    table::read_entry_from(&self.disk, &self.geo, fat, c)
+                }
+            })
+            .collect()
+    }
+
+    pub fn cluster_chain(&self, start: u32) -> Result<Vec<u32>> {
+        table::chain(&self.disk, &self.geo, start)
+    }
+
+    /// Every slot of a directory, including free, deleted and LFN slots.
+    pub fn raw_dir_entries(&self, path: &str) -> Result<Vec<RawEntry>> {
+        let parts = path::parse(path)?;
+        let loc = self.resolve_dir(&parts)?;
+        Ok(dir::slots(&self.disk, &self.geo, loc)?
+            .into_iter()
+            .map(|s| RawEntry::parse(self.disk.read(s.offset, ENTRY_SIZE)))
+            .collect())
+    }
+
+    /// Which file or directory each allocated cluster belongs to.
+    fn cluster_owners(&self) -> BTreeMap<u32, (String, bool)> {
+        let mut owners = BTreeMap::new();
+        let mut stack = vec![(DirLocation::Root, String::new())];
+        while let Some((loc, prefix)) = stack.pop() {
+            let Ok(entries) = self.scan_dir(loc) else {
+                continue;
+            };
+            for l in entries.into_iter().filter(|l| !l.entry.is_dot_entry()) {
+                let path = format!("{prefix}/{}", l.name());
+                let first = l.entry.first_cluster();
+                if first != 0 {
+                    if let Ok(chain) = table::chain(&self.disk, &self.geo, first) {
+                        for c in chain {
+                            owners.insert(c, (path.clone(), l.entry.is_dir()));
+                        }
+                    }
+                    if l.entry.is_dir() {
+                        stack.push((DirLocation::Cluster(first), path));
+                    }
+                }
+            }
+        }
+        owners
+    }
+
+    pub fn annotate_sector(&self, sector: u64) -> Vec<Annotation> {
+        let g = &self.geo;
+        if sector >= g.total_sectors {
+            return Vec::new();
+        }
+        if sector == 0 {
+            return self.annotate_boot_sector();
+        }
+        if sector < g.reserved_sectors {
+            return vec![annotation(
+                0..g.bytes_per_sector,
+                "reserved",
+                "unused reserved sector",
+            )];
+        }
+        if sector < g.first_root_dir_sector {
+            return self.annotate_fat_sector(sector);
+        }
+        if sector < g.first_data_sector {
+            return self.annotate_dir_sector(sector);
+        }
+        let Some(cluster) = g.cluster_of_sector(sector) else {
+            return vec![annotation(
+                0..g.bytes_per_sector,
+                "unused",
+                "sector beyond the last cluster",
+            )];
+        };
+        match self.cluster_owners().get(&cluster) {
+            Some((_, true)) => self.annotate_dir_sector(sector),
+            Some((path, false)) => vec![annotation(
+                0..g.bytes_per_sector,
+                format!("cluster {cluster}"),
+                format!("data of {path}"),
+            )],
+            None => {
+                let state = match table::read_entry(&self.disk, g, cluster) {
+                    FatEntry::Free => "free cluster".to_string(),
+                    other => format!("cluster marked {other} but owned by no file"),
+                };
+                vec![annotation(
+                    0..g.bytes_per_sector,
+                    format!("cluster {cluster}"),
+                    state,
+                )]
+            }
+        }
+    }
+
+    fn annotate_boot_sector(&self) -> Vec<Annotation> {
+        let b = &self.boot;
+        let jump = self.disk.read(0, 3);
+        let text = |bytes: &[u8]| String::from_utf8_lossy(bytes).to_string();
+        vec![
+            annotation(
+                0..3,
+                "jump instruction",
+                format!("{:02X} {:02X} {:02X}", jump[0], jump[1], jump[2]),
+            ),
+            annotation(3..11, "OEM name", text(&b.oem_name)),
+            annotation(11..13, "bytes per sector", b.bytes_per_sector.to_string()),
+            annotation(
+                13..14,
+                "sectors per cluster",
+                b.sectors_per_cluster.to_string(),
+            ),
+            annotation(14..16, "reserved sectors", b.reserved_sectors.to_string()),
+            annotation(16..17, "FAT count", b.fat_count.to_string()),
+            annotation(17..19, "root directory entries", b.root_entries.to_string()),
+            annotation(
+                19..21,
+                "total sectors (16-bit)",
+                b.total_sectors_16.to_string(),
+            ),
+            annotation(21..22, "media descriptor", format!("0x{:02X}", b.media)),
+            annotation(22..24, "sectors per FAT", b.sectors_per_fat.to_string()),
+            annotation(24..26, "sectors per track", b.sectors_per_track.to_string()),
+            annotation(26..28, "heads", b.heads.to_string()),
+            annotation(28..32, "hidden sectors", b.hidden_sectors.to_string()),
+            annotation(
+                32..36,
+                "total sectors (32-bit)",
+                b.total_sectors_32.to_string(),
+            ),
+            annotation(36..37, "drive number", format!("0x{:02X}", b.drive_number)),
+            annotation(37..38, "reserved", "0"),
+            annotation(
+                38..39,
+                "extended boot signature",
+                format!("0x{:02X}", b.boot_signature),
+            ),
+            annotation(39..43, "volume ID", format!("0x{:08X}", b.volume_id)),
+            annotation(43..54, "volume label", text(&b.volume_label)),
+            annotation(54..62, "filesystem type", text(&b.fs_type)),
+            annotation(62..510, "boot code", "unused"),
+            annotation(510..512, "boot signature", "55 AA"),
+        ]
+    }
+
+    fn annotate_fat_sector(&self, sector: u64) -> Vec<Annotation> {
+        let g = &self.geo;
+        let fat = ((sector - g.reserved_sectors) / g.sectors_per_fat) as u8;
+        let sector_in_fat = (sector - g.reserved_sectors) % g.sectors_per_fat;
+        let entries_per_sector = g.bytes_per_sector / 2;
+        let first_cluster = sector_in_fat as usize * entries_per_sector;
+        (0..entries_per_sector)
+            .map(|i| {
+                let cluster = (first_cluster + i) as u32;
+                let range = i * 2..i * 2 + 2;
+                if cluster >= g.cluster_count + 2 {
+                    return annotation(
+                        range,
+                        format!("entry {cluster}"),
+                        "unused (beyond last cluster)",
+                    );
+                }
+                let label = match cluster {
+                    0 => "cluster 0 (media descriptor)".to_string(),
+                    1 => "cluster 1 (reserved)".to_string(),
+                    _ => format!("cluster {cluster}"),
+                };
+                let value = if cluster < 2 {
+                    let raw = self.disk.read(g.fat_entry_offset(fat, cluster), 2);
+                    format!("0x{:04X}", u16::from_le_bytes([raw[0], raw[1]]))
+                } else {
+                    table::read_entry_from(&self.disk, g, fat, cluster).to_string()
+                };
+                annotation(range, label, value)
+            })
+            .collect()
+    }
+
+    fn annotate_dir_sector(&self, sector: u64) -> Vec<Annotation> {
+        let g = &self.geo;
+        let base = sector as usize * g.bytes_per_sector;
+        (0..g.bytes_per_sector / ENTRY_SIZE)
+            .map(|i| {
+                let off = base + i * ENTRY_SIZE;
+                let raw = RawEntry::parse(self.disk.read(off, ENTRY_SIZE));
+                annotation(
+                    i * ENTRY_SIZE..(i + 1) * ENTRY_SIZE,
+                    format!("slot {i}"),
+                    raw.describe(),
+                )
+            })
+            .collect()
+    }
 }
 
 /// A directory entry found on disk, with where it lives.
@@ -563,6 +768,80 @@ impl Located {
     }
 }
 
+/// One directory slot exactly as it is on disk.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RawEntry {
+    Free,
+    Deleted { bytes: [u8; 32] },
+    Short(ShortEntry),
+    Lfn(LfnEntry),
+}
+
+impl RawEntry {
+    pub fn parse(bytes: &[u8]) -> RawEntry {
+        match bytes[0] {
+            FREE => RawEntry::Free,
+            DELETED => {
+                let mut copy = [0u8; ENTRY_SIZE];
+                copy.copy_from_slice(&bytes[..ENTRY_SIZE]);
+                RawEntry::Deleted { bytes: copy }
+            }
+            _ if attr::is_lfn(bytes[11]) => RawEntry::Lfn(LfnEntry::parse(bytes)),
+            _ => RawEntry::Short(ShortEntry::parse(bytes)),
+        }
+    }
+
+    /// One line describing the slot, for annotations.
+    pub fn describe(&self) -> String {
+        match self {
+            RawEntry::Free => "free".into(),
+            RawEntry::Deleted { bytes } => {
+                let mut name = *b"?          ";
+                name[1..].copy_from_slice(&bytes[1..11]);
+                let mut e = ShortEntry::parse(bytes);
+                e.name = name;
+                format!("deleted (was {})", e.display_name())
+            }
+            RawEntry::Short(e) => {
+                let kind = if e.is_dir() {
+                    "directory"
+                } else if e.is_volume_label() {
+                    "volume label"
+                } else {
+                    "file"
+                };
+                format!(
+                    "{} {} attr=0x{:02X} first_cluster={} size={}",
+                    kind,
+                    e.display_name(),
+                    e.attr,
+                    e.first_cluster(),
+                    e.size
+                )
+            }
+            RawEntry::Lfn(e) => format!(
+                "LFN part {}{} checksum=0x{:02X} \"{}\"",
+                e.order(),
+                if e.is_last() { " (last)" } else { "" },
+                e.checksum,
+                name::from_ucs2(&e.chars())
+            ),
+        }
+    }
+}
+
+fn annotation(
+    range: Range<usize>,
+    label: impl Into<String>,
+    value: impl Into<String>,
+) -> Annotation {
+    Annotation {
+        range,
+        label: label.into(),
+        value: value.into(),
+    }
+}
+
 /// Reassemble a long name from the LFN entries collected before a short
 /// entry, or `None` if they are incomplete or do not match its checksum.
 fn assemble_lfn(pending: &[(usize, LfnEntry)], short_name: &[u8; 11]) -> Option<String> {
@@ -584,6 +863,51 @@ fn assemble_lfn(pending: &[(usize, LfnEntry)], short_name: &[u8; 11]) -> Option<
 
 fn names_match(a: &str, b: &str) -> bool {
     a.to_uppercase() == b.to_uppercase()
+}
+
+impl FileSystem for FatFs {
+    fn fs_type(&self) -> &'static str {
+        FatFs::fs_type(self)
+    }
+    fn create_file(&mut self, path: &str, data: &[u8]) -> Result<OpRecord> {
+        FatFs::create_file(self, path, data)
+    }
+    fn write_file(&mut self, path: &str, data: &[u8]) -> Result<OpRecord> {
+        FatFs::write_file(self, path, data)
+    }
+    fn read_file(&self, path: &str) -> Result<Vec<u8>> {
+        FatFs::read_file(self, path)
+    }
+    fn delete_file(&mut self, path: &str) -> Result<OpRecord> {
+        FatFs::delete_file(self, path)
+    }
+    fn create_dir(&mut self, path: &str) -> Result<OpRecord> {
+        FatFs::create_dir(self, path)
+    }
+    fn remove_dir(&mut self, path: &str) -> Result<OpRecord> {
+        FatFs::remove_dir(self, path)
+    }
+    fn list_dir(&self, path: &str) -> Result<Vec<EntryInfo>> {
+        FatFs::list_dir(self, path)
+    }
+    fn stat(&self, path: &str) -> Result<EntryInfo> {
+        FatFs::stat(self, path)
+    }
+    fn set_now(&mut self, now: DateTime) {
+        FatFs::set_now(self, now)
+    }
+    fn disk(&self) -> &Disk {
+        FatFs::disk(self)
+    }
+    fn layout(&self) -> Vec<Region> {
+        FatFs::layout(self)
+    }
+    fn annotate_sector(&self, sector: u64) -> Vec<Annotation> {
+        FatFs::annotate_sector(self, sector)
+    }
+    fn history(&self) -> &[OpRecord] {
+        FatFs::history(self)
+    }
 }
 
 #[cfg(test)]
@@ -1171,5 +1495,116 @@ mod tests {
             Error::DiskFull
         );
         assert_eq!(fs.read_file("/F").unwrap()[0], 2);
+    }
+
+    use fs_core::FileSystem;
+
+    #[test]
+    fn fat_entries_and_cluster_chain() {
+        let mut fs = FatFs::format(FormatOptions::default()).unwrap();
+        let cs = fs.geo.cluster_size();
+        fs.create_file("/F", &vec![0u8; cs * 3]).unwrap();
+        let entries = fs.fat_entries(0);
+        assert_eq!(entries.len() as u32, fs.geo.cluster_count + 2);
+        assert_eq!(entries[0], FatEntry::Reserved);
+        assert_eq!(entries[1], FatEntry::Reserved);
+        assert_eq!(entries[2], FatEntry::Next(3));
+        assert_eq!(entries[3], FatEntry::Next(4));
+        assert_eq!(entries[4], FatEntry::EndOfChain);
+        assert_eq!(entries[5], FatEntry::Free);
+        assert_eq!(fs.fat_entries(1), entries);
+        assert_eq!(fs.cluster_chain(2).unwrap(), vec![2, 3, 4]);
+        assert!(matches!(fs.cluster_chain(0), Err(Error::CorruptImage(_))));
+    }
+
+    #[test]
+    fn raw_dir_entries_show_every_slot() {
+        let mut fs = tiny_fs();
+        fs.create_file("/My File.txt", b"").unwrap();
+        fs.create_file("/B", b"").unwrap();
+        fs.delete_file("/B").unwrap();
+        let raw = fs.raw_dir_entries("/").unwrap();
+        assert_eq!(raw.len(), 16);
+        assert!(matches!(&raw[0], RawEntry::Lfn(e) if e.order() == 1));
+        assert!(matches!(&raw[1], RawEntry::Short(e) if e.name == *b"MYFILE~1TXT"));
+        assert!(matches!(&raw[2], RawEntry::Deleted { bytes } if &bytes[1..11] == b"          "));
+        assert_eq!(raw[3], RawEntry::Free);
+        assert_eq!(
+            fs.raw_dir_entries("/My File.txt"),
+            Err(Error::NotADirectory)
+        );
+    }
+
+    #[test]
+    fn annotations_cover_boot_fat_directory_and_data_sectors() {
+        let mut fs = FatFs::format(FormatOptions::default()).unwrap();
+        fs.create_dir("/DOCS").unwrap();
+        fs.create_file("/DOCS/N.TXT", b"note").unwrap();
+        let g = fs.geo.clone();
+
+        let boot = fs.annotate_sector(0);
+        assert!(boot
+            .iter()
+            .any(|a| a.label == "bytes per sector" && a.value == "512" && a.range == (11..13)));
+        assert!(boot
+            .iter()
+            .any(|a| a.label == "boot signature" && a.range == (510..512)));
+
+        let fat = fs.annotate_sector(g.reserved_sectors);
+        assert_eq!(fat.len(), 256);
+        assert_eq!(fat[0].range, 0..2);
+        assert_eq!(fat[0].label, "cluster 0 (media descriptor)");
+        assert_eq!(fat[2].label, "cluster 2");
+        assert_eq!(fat[2].value, "end of chain");
+        assert_eq!(fat[3].value, "end of chain");
+        assert_eq!(fat[4].value, "free");
+
+        let root = fs.annotate_sector(g.first_root_dir_sector);
+        assert_eq!(root.len(), 16);
+        assert_eq!(root[0].range, 0..32);
+        assert!(root[0].value.contains("DOCS") && root[0].value.contains("directory"));
+        assert_eq!(root[1].value, "free");
+
+        let docs_cluster = fs.resolve("/DOCS").unwrap().unwrap().entry.first_cluster();
+        let docs_sector =
+            g.first_data_sector + (docs_cluster as u64 - 2) * g.sectors_per_cluster as u64;
+        let docs = fs.annotate_sector(docs_sector);
+        assert!(docs[0].value.contains(".") && docs[2].value.contains("N.TXT"));
+
+        let n_cluster = fs
+            .resolve("/DOCS/N.TXT")
+            .unwrap()
+            .unwrap()
+            .entry
+            .first_cluster();
+        let n_sector = g.first_data_sector + (n_cluster as u64 - 2) * g.sectors_per_cluster as u64;
+        let data = fs.annotate_sector(n_sector);
+        assert_eq!(data.len(), 1);
+        assert_eq!(data[0].range, 0..512);
+        assert_eq!(data[0].label, format!("cluster {n_cluster}"));
+        assert_eq!(data[0].value, "data of /DOCS/N.TXT");
+
+        let unused = fs.annotate_sector(n_sector + 8);
+        assert_eq!(unused[0].value, "free cluster");
+        assert!(fs.annotate_sector(g.total_sectors).is_empty());
+    }
+
+    #[test]
+    fn works_through_the_trait_object() {
+        let mut fs: Box<dyn FileSystem> =
+            Box::new(FatFs::format(FormatOptions::default()).unwrap());
+        assert_eq!(fs.fs_type(), "FAT16");
+        fs.create_dir("/A").unwrap();
+        fs.create_file("/A/b.txt", b"via trait").unwrap();
+        fs.write_file("/A/b.txt", b"again").unwrap();
+        assert_eq!(fs.read_file("/A/B.TXT").unwrap(), b"again");
+        assert_eq!(fs.list_dir("/A").unwrap()[0].name, "B.TXT");
+        fs.delete_file("/A/b.txt").unwrap();
+        fs.remove_dir("/A").unwrap();
+        assert_eq!(fs.history().len(), 5);
+        assert_eq!(fs.layout().len(), 5);
+        assert_eq!(fs.disk().sector_count(), 32768);
+        fs.set_now(DateTime::new(2000, 1, 1, 0, 0, 0));
+        assert!(!fs.annotate_sector(0).is_empty());
     }
 }

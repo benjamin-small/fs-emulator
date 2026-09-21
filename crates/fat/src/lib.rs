@@ -11,5 +11,5 @@ pub mod table;
 pub use boot_sector::{BootSector, FatVariant, FormatOptions, Geometry};
 pub use dir_entry::{LfnEntry, ShortEntry};
 pub use events::{EntryKind, FatEvent};
-pub use fs::{FatFs, Located};
+pub use fs::{FatFs, Located, RawEntry};
 pub use table::FatEntry;
