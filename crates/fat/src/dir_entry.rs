@@ -290,10 +290,13 @@ mod tests {
 
     #[test]
     fn out_of_range_time_fields_stay_in_their_bits() {
-        let dt = DateTime::new(2000, 1, 1, 99, 99, 99);
+        // minute = 0 so an unmasked seconds overflow (99 / 2 = 0b110001, bit
+        // 5 set) would visibly set the minute field's low bit if it leaked
+        // across, instead of landing on a bit that's already 1.
+        let dt = DateTime::new(2000, 1, 1, 99, 0, 99);
         assert_eq!(pack_time(&dt) >> 11, 99 & 0x1F);
-        assert_eq!((pack_time(&dt) >> 5) & 0x3F, 99 & 0x3F);
-        assert_eq!(pack_time(&dt) & 0x1F, (99 / 2) & 0x1F);
+        assert_eq!((pack_time(&dt) >> 5) & 0x3F, 0);
+        assert_eq!(pack_time(&dt) & 0x1F, 17);
     }
 
     #[test]
