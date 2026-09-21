@@ -4,10 +4,12 @@
 use crate::boot_sector::{BootSector, FormatOptions, Geometry};
 use crate::dir::{self, DirLocation};
 use crate::dir_entry::{self, attr, LfnEntry, ShortEntry, DELETED, ENTRY_SIZE, FREE};
+use crate::events::{EntryKind, FatEvent};
 use crate::name;
 use crate::table;
 use fs_core::path;
 use fs_core::{DateTime, Disk, EntryInfo, Error, OpRecord, Region, RegionKind, Result};
+use std::collections::HashSet;
 
 pub struct FatFs {
     disk: Disk,
@@ -123,7 +125,6 @@ impl FatFs {
 
     /// Run `body` inside a recorded operation. On success the record is
     /// appended to history and returned; on failure it is discarded.
-    #[allow(dead_code)]
     fn run_op(
         &mut self,
         op: String,
@@ -138,7 +139,6 @@ impl FatFs {
     }
 
     /// `/` for the root, otherwise `/A/B` from components.
-    #[allow(dead_code)]
     fn dir_display_name(parts: &[String]) -> String {
         if parts.is_empty() {
             "/".to_string()
@@ -288,6 +288,152 @@ impl FatFs {
         }
         self.read_chain_data(located.entry.first_cluster(), located.entry.size as usize)
     }
+
+    pub fn create_file(&mut self, path: &str, data: &[u8]) -> Result<OpRecord> {
+        let (parent_parts, name) = path::split_parent(path)?;
+        name::validate_long_name(&name)?;
+        let parent = self.resolve_dir(&parent_parts)?;
+        if self.find_in_dir(parent, &name)?.is_some() {
+            return Err(Error::AlreadyExists);
+        }
+        let size = u32::try_from(data.len()).map_err(|_| Error::FileTooLarge)?;
+        let parent_name = Self::dir_display_name(&parent_parts);
+        self.run_op(format!("create_file {path}"), |fs| {
+            let clusters = fs.write_data(data)?;
+            let first = clusters.first().copied().unwrap_or(0);
+            if let Err(e) =
+                fs.write_new_entry(parent, &parent_name, &name, attr::ARCHIVE, first, size)
+            {
+                if first != 0 {
+                    table::free_chain(&mut fs.disk, &fs.geo, first)?;
+                }
+                return Err(e);
+            }
+            Ok(())
+        })
+    }
+
+    pub fn create_dir(&mut self, path: &str) -> Result<OpRecord> {
+        let (parent_parts, name) = path::split_parent(path)?;
+        name::validate_long_name(&name)?;
+        let parent = self.resolve_dir(&parent_parts)?;
+        if self.find_in_dir(parent, &name)?.is_some() {
+            return Err(Error::AlreadyExists);
+        }
+        let parent_name = Self::dir_display_name(&parent_parts);
+        let own_name = Self::dir_display_name(&[parent_parts.clone(), vec![name.clone()]].concat());
+        self.run_op(format!("create_dir {path}"), |fs| {
+            let cluster = table::allocate_chain(&mut fs.disk, &fs.geo, 1)?[0];
+            let base = fs.geo.cluster_offset(cluster);
+            let cs = fs.geo.cluster_size();
+            fs.disk.fill(base, cs, 0);
+            let parent_cluster = match parent {
+                DirLocation::Root => 0,
+                DirLocation::Cluster(c) => c,
+            };
+            let mut dot = ShortEntry::new(*b".          ", attr::DIRECTORY, &fs.now);
+            dot.set_first_cluster(cluster);
+            let mut dotdot = ShortEntry::new(*b"..         ", attr::DIRECTORY, &fs.now);
+            dotdot.set_first_cluster(parent_cluster);
+            for (slot, entry) in [(0, dot), (1, dotdot)] {
+                let off = base + slot * ENTRY_SIZE;
+                fs.disk.write(off, &entry.to_bytes());
+                fs.disk.event(Box::new(FatEvent::DirEntryWritten {
+                    dir: own_name.clone(),
+                    slot,
+                    kind: EntryKind::Short,
+                    range: off..off + ENTRY_SIZE,
+                }));
+            }
+            if let Err(e) =
+                fs.write_new_entry(parent, &parent_name, &name, attr::DIRECTORY, cluster, 0)
+            {
+                table::free_chain(&mut fs.disk, &fs.geo, cluster)?;
+                return Err(e);
+            }
+            Ok(())
+        })
+    }
+
+    /// Allocate a chain for `data` and write it cluster by cluster. The tail
+    /// of the last cluster is zeroed so cluster contents are deterministic.
+    fn write_data(&mut self, data: &[u8]) -> Result<Vec<u32>> {
+        let cs = self.geo.cluster_size();
+        let needed = data.len().div_ceil(cs) as u32;
+        let clusters = table::allocate_chain(&mut self.disk, &self.geo, needed)?;
+        for (i, &cluster) in clusters.iter().enumerate() {
+            let chunk = &data[i * cs..((i + 1) * cs).min(data.len())];
+            let off = self.geo.cluster_offset(cluster);
+            self.disk.write(off, chunk);
+            if chunk.len() < cs {
+                self.disk.fill(off + chunk.len(), cs - chunk.len(), 0);
+            }
+            self.disk.event(Box::new(FatEvent::DataWritten {
+                cluster,
+                bytes: chunk.len(),
+                range: off..off + cs,
+            }));
+        }
+        Ok(clusters)
+    }
+
+    /// Write the LFN entries (if the name needs them) and the short entry
+    /// into the first free run of slots, growing the directory as needed.
+    fn write_new_entry(
+        &mut self,
+        parent: DirLocation,
+        parent_name: &str,
+        name: &str,
+        attributes: u8,
+        first_cluster: u32,
+        size: u32,
+    ) -> Result<()> {
+        let (short, chunks) = match name::to_short_name_bytes(name) {
+            Some(short) => (short, Vec::new()),
+            None => {
+                let taken: HashSet<[u8; 11]> = self
+                    .scan_dir(parent)?
+                    .iter()
+                    .map(|l| l.entry.name)
+                    .collect();
+                let short = name::generate_short_name(name, &|c| taken.contains(c))?;
+                (short, name::lfn_chunks(name))
+            }
+        };
+        let needed = chunks.len() + 1;
+        let start = loop {
+            if let Some(i) = dir::find_free_run(&self.disk, &self.geo, parent, needed)? {
+                break i;
+            }
+            dir::grow(&mut self.disk, &self.geo, parent, parent_name)?;
+        };
+        let slots = dir::slots(&self.disk, &self.geo, parent)?;
+        let checksum = dir_entry::lfn_checksum(&short);
+        let n = chunks.len();
+        for (i, chunk) in chunks.iter().enumerate().rev() {
+            let entry = LfnEntry::new((i + 1) as u8, i == n - 1, checksum, chunk);
+            let slot = slots[start + (n - 1 - i)];
+            self.disk.write(slot.offset, &entry.to_bytes());
+            self.disk.event(Box::new(FatEvent::DirEntryWritten {
+                dir: parent_name.to_string(),
+                slot: slot.index,
+                kind: EntryKind::Lfn,
+                range: slot.offset..slot.offset + ENTRY_SIZE,
+            }));
+        }
+        let mut entry = ShortEntry::new(short, attributes, &self.now);
+        entry.set_first_cluster(first_cluster);
+        entry.size = size;
+        let slot = slots[start + n];
+        self.disk.write(slot.offset, &entry.to_bytes());
+        self.disk.event(Box::new(FatEvent::DirEntryWritten {
+            dir: parent_name.to_string(),
+            slot: slot.index,
+            kind: EntryKind::Short,
+            range: slot.offset..slot.offset + ENTRY_SIZE,
+        }));
+        Ok(())
+    }
 }
 
 /// A directory entry found on disk, with where it lives.
@@ -349,6 +495,17 @@ mod tests {
     use super::*;
     use crate::table;
     use fs_core::{Error, RegionKind};
+
+    fn tiny_fs() -> FatFs {
+        FatFs::format(FormatOptions {
+            total_sectors: 128,
+            sectors_per_cluster: 1,
+            root_entries: 16,
+            enforce_fat16_range: false,
+            ..Default::default()
+        })
+        .unwrap()
+    }
 
     #[test]
     fn format_writes_boot_sector_and_fat_headers() {
@@ -598,5 +755,192 @@ mod tests {
             .collect();
         assert_eq!(names, vec!["INNER.TXT"]);
         assert_eq!(fs.stat("/sub/inner.txt").unwrap().name, "INNER.TXT");
+    }
+
+    #[test]
+    fn create_file_round_trips_and_records_the_operation() {
+        let mut fs = FatFs::format(FormatOptions::default()).unwrap();
+        fs.set_now(DateTime::new(2026, 9, 21, 8, 30, 0));
+        let cs = fs.geo.cluster_size();
+        let data: Vec<u8> = (0..cs * 2 + 10).map(|i| i as u8).collect();
+        let rec = fs.create_file("/HELLO.TXT", &data).unwrap();
+        assert_eq!(rec.op, "create_file /HELLO.TXT");
+        assert!(!rec.changes.is_empty());
+        let kinds = rec.event_kinds();
+        assert_eq!(
+            kinds.iter().filter(|k| **k == "cluster_allocated").count(),
+            3
+        );
+        assert_eq!(kinds.iter().filter(|k| **k == "data_written").count(), 3);
+        assert_eq!(
+            kinds.iter().filter(|k| **k == "dir_entry_written").count(),
+            1
+        );
+        assert_eq!(fs.read_file("/hello.txt").unwrap(), data);
+        let info = fs.stat("/HELLO.TXT").unwrap();
+        assert_eq!(info.size, data.len() as u64);
+        assert_eq!(info.created, Some(DateTime::new(2026, 9, 21, 8, 30, 0)));
+        assert_eq!(fs.history().len(), 1);
+        assert_eq!(
+            fs.create_file("/hello.txt", b"x").unwrap_err(),
+            Error::AlreadyExists
+        );
+        assert_eq!(fs.history().len(), 1);
+    }
+
+    #[test]
+    fn empty_file_has_no_clusters() {
+        let mut fs = FatFs::format(FormatOptions::default()).unwrap();
+        let rec = fs.create_file("/EMPTY", b"").unwrap();
+        assert!(!rec.event_kinds().contains(&"cluster_allocated"));
+        assert_eq!(fs.read_file("/EMPTY").unwrap(), Vec::<u8>::new());
+        assert_eq!(table::count_free(&fs.disk, &fs.geo), fs.geo.cluster_count);
+    }
+
+    #[test]
+    fn exact_cluster_multiple_uses_no_extra_cluster() {
+        let mut fs = FatFs::format(FormatOptions::default()).unwrap();
+        let cs = fs.geo.cluster_size();
+        fs.create_file("/TWO.BIN", &vec![7u8; cs * 2]).unwrap();
+        assert_eq!(
+            table::count_free(&fs.disk, &fs.geo),
+            fs.geo.cluster_count - 2
+        );
+        assert_eq!(fs.read_file("/TWO.BIN").unwrap().len(), cs * 2);
+    }
+
+    #[test]
+    fn long_names_get_lfn_entries_and_tilde_aliases() {
+        let mut fs = FatFs::format(FormatOptions::default()).unwrap();
+        let rec = fs.create_file("/My First File.txt", b"1").unwrap();
+        assert_eq!(
+            rec.event_kinds()
+                .iter()
+                .filter(|k| **k == "dir_entry_written")
+                .count(),
+            3
+        );
+        fs.create_file("/My Second File.txt", b"2").unwrap();
+        let list = fs.list_dir("/").unwrap();
+        assert_eq!(list[0].name, "My First File.txt");
+        assert_eq!(list[1].name, "My Second File.txt");
+        assert_eq!(fs.stat("/MYFIRS~1.TXT").unwrap().name, "My First File.txt");
+        assert_eq!(fs.stat("/MYSECO~1.TXT").unwrap().name, "My Second File.txt");
+        fs.create_file("/my first file.doc", b"3").unwrap();
+        assert_eq!(fs.stat("/MYFIRS~1.DOC").unwrap().name, "my first file.doc");
+        fs.create_file("/My First File (copy).txt", b"4").unwrap();
+        assert_eq!(
+            fs.stat("/MYFIRS~2.TXT").unwrap().name,
+            "My First File (copy).txt"
+        );
+        assert_eq!(fs.read_file("/MY FIRST FILE (COPY).TXT").unwrap(), b"4");
+        assert_eq!(
+            fs.create_file("/bad*name", b"").unwrap_err(),
+            Error::InvalidName
+        );
+        assert_eq!(fs.create_file("/", b"").unwrap_err(), Error::InvalidPath);
+    }
+
+    #[test]
+    fn create_dir_writes_dot_entries_and_nests() {
+        let mut fs = FatFs::format(FormatOptions::default()).unwrap();
+        let rec = fs.create_dir("/DOCS").unwrap();
+        assert_eq!(
+            rec.event_kinds()
+                .iter()
+                .filter(|k| **k == "dir_entry_written")
+                .count(),
+            3
+        );
+        assert!(fs.stat("/DOCS").unwrap().is_dir);
+        assert_eq!(fs.list_dir("/DOCS").unwrap(), Vec::new());
+        fs.create_dir("/DOCS/NOTES").unwrap();
+        fs.create_file("/DOCS/NOTES/a.txt", b"hi").unwrap();
+        assert_eq!(fs.read_file("/docs/notes/A.TXT").unwrap(), b"hi");
+        assert_eq!(fs.list_dir("/DOCS").unwrap()[0].name, "NOTES");
+        let docs = fs.resolve("/DOCS").unwrap().unwrap();
+        let notes = fs.resolve("/DOCS/NOTES").unwrap().unwrap();
+        let base = fs.geo.cluster_offset(notes.entry.first_cluster());
+        let dot = ShortEntry::parse(fs.disk.read(base, ENTRY_SIZE));
+        let dotdot = ShortEntry::parse(fs.disk.read(base + ENTRY_SIZE, ENTRY_SIZE));
+        assert_eq!(dot.name, *b".          ");
+        assert_eq!(dot.first_cluster(), notes.entry.first_cluster());
+        assert_eq!(dotdot.name, *b"..         ");
+        assert_eq!(dotdot.first_cluster(), docs.entry.first_cluster());
+        let docs_base = fs.geo.cluster_offset(docs.entry.first_cluster());
+        assert_eq!(
+            ShortEntry::parse(fs.disk.read(docs_base + ENTRY_SIZE, ENTRY_SIZE)).first_cluster(),
+            0
+        );
+        assert_eq!(fs.create_dir("/DOCS").unwrap_err(), Error::AlreadyExists);
+        assert_eq!(
+            fs.create_file("/DOCS/NOTES/a.txt/x", b"").unwrap_err(),
+            Error::NotADirectory
+        );
+        assert_eq!(fs.create_file("/NOPE/x", b"").unwrap_err(), Error::NotFound);
+    }
+
+    #[test]
+    fn subdirectory_grows_when_its_cluster_fills() {
+        let mut fs = tiny_fs();
+        fs.create_dir("/SUB").unwrap();
+        let free_before = table::count_free(&fs.disk, &fs.geo);
+        // 16 slots per 512-byte cluster; two are taken by . and ..
+        let mut grew = false;
+        for i in 0..20 {
+            let rec = fs.create_file(&format!("/SUB/F{i}"), b"").unwrap();
+            grew |= rec.event_kinds().contains(&"directory_grown");
+        }
+        assert!(grew);
+        assert_eq!(fs.list_dir("/SUB").unwrap().len(), 20);
+        assert_eq!(table::count_free(&fs.disk, &fs.geo), free_before - 1);
+    }
+
+    #[test]
+    fn root_directory_full_and_disk_full_leave_nothing_behind() {
+        let mut fs = tiny_fs();
+        for i in 0..16 {
+            fs.create_file(&format!("/F{i}"), b"").unwrap();
+        }
+        assert_eq!(
+            fs.create_file("/F16", b"").unwrap_err(),
+            Error::DirectoryFull
+        );
+        assert_eq!(
+            fs.create_file("/Long name needs two slots", b"")
+                .unwrap_err(),
+            Error::DirectoryFull
+        );
+        assert_eq!(fs.list_dir("/").unwrap().len(), 16);
+        assert_eq!(fs.history().len(), 16);
+
+        let mut fs = tiny_fs();
+        let free = table::count_free(&fs.disk, &fs.geo) as usize;
+        let cs = fs.geo.cluster_size();
+        assert_eq!(
+            fs.create_file("/BIG", &vec![1u8; (free + 1) * cs])
+                .unwrap_err(),
+            Error::DiskFull
+        );
+        assert_eq!(fs.list_dir("/").unwrap(), Vec::new());
+        assert_eq!(table::count_free(&fs.disk, &fs.geo) as usize, free);
+        fs.create_file("/FITS", &vec![1u8; free * cs]).unwrap();
+        assert_eq!(table::count_free(&fs.disk, &fs.geo), 0);
+        assert_eq!(fs.create_dir("/D").unwrap_err(), Error::DiskFull);
+        assert_eq!(fs.history().len(), 1);
+    }
+
+    #[test]
+    fn create_in_full_root_with_data_frees_the_clusters_again() {
+        let mut fs = tiny_fs();
+        for i in 0..16 {
+            fs.create_file(&format!("/F{i}"), b"").unwrap();
+        }
+        let free = table::count_free(&fs.disk, &fs.geo);
+        assert_eq!(
+            fs.create_file("/X", b"data").unwrap_err(),
+            Error::DirectoryFull
+        );
+        assert_eq!(table::count_free(&fs.disk, &fs.geo), free);
     }
 }
