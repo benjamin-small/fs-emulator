@@ -565,6 +565,7 @@ impl FatFs {
     /// Which file or directory each allocated cluster belongs to.
     fn cluster_owners(&self) -> BTreeMap<u32, (String, bool)> {
         let mut owners = BTreeMap::new();
+        let mut visited = HashSet::new();
         let mut stack = vec![(DirLocation::Root, String::new())];
         while let Some((loc, prefix)) = stack.pop() {
             let Ok(entries) = self.scan_dir(loc) else {
@@ -579,7 +580,7 @@ impl FatFs {
                             owners.insert(c, (path.clone(), l.entry.is_dir()));
                         }
                     }
-                    if l.entry.is_dir() {
+                    if l.entry.is_dir() && visited.insert(first) {
                         stack.push((DirLocation::Cluster(first), path));
                     }
                 }
@@ -1587,6 +1588,29 @@ mod tests {
         let unused = fs.annotate_sector(n_sector + 8);
         assert_eq!(unused[0].value, "free cluster");
         assert!(fs.annotate_sector(g.total_sectors).is_empty());
+    }
+
+    #[test]
+    fn annotate_sector_terminates_on_a_self_referencing_directory() {
+        let mut fs = FatFs::format(FormatOptions::default()).unwrap();
+        fs.create_dir("/LOOP").unwrap();
+        fs.create_file("/DATA.BIN", b"x").unwrap();
+        let loop_cluster = fs.resolve("/LOOP").unwrap().unwrap().entry.first_cluster();
+        // Corrupt the image: an entry inside /LOOP that points back at /LOOP itself.
+        let base = fs.geo.cluster_offset(loop_cluster);
+        let mut evil = ShortEntry::new(*b"EVIL       ", attr::DIRECTORY, &DateTime::default());
+        evil.set_first_cluster(loop_cluster);
+        fs.disk.write(base + 2 * ENTRY_SIZE, &evil.to_bytes());
+        let data_cluster = fs
+            .resolve("/DATA.BIN")
+            .unwrap()
+            .unwrap()
+            .entry
+            .first_cluster();
+        let g = fs.geo.clone();
+        let sector = g.first_data_sector + (data_cluster as u64 - 2) * g.sectors_per_cluster as u64;
+        let ann = fs.annotate_sector(sector);
+        assert_eq!(ann[0].value, "data of /DATA.BIN");
     }
 
     #[test]
