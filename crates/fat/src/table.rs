@@ -3,7 +3,7 @@
 
 use std::fmt;
 
-use crate::boot_sector::Geometry;
+use crate::boot_sector::{FatVariant, Geometry};
 use crate::events::FatEvent;
 use fs_core::{Disk, Error, Result};
 
@@ -48,10 +48,25 @@ pub fn encode16(entry: FatEntry) -> u16 {
     }
 }
 
+/// Decode a raw FAT entry according to the volume's variant, so a future
+/// FAT32 addition cannot silently be read with the FAT16 width.
+fn decode(geo: &Geometry, raw: &[u8]) -> FatEntry {
+    match geo.variant {
+        FatVariant::Fat16 => decode16(u16::from_le_bytes([raw[0], raw[1]])),
+    }
+}
+
+/// Encode a FAT entry according to the volume's variant.
+fn encode(geo: &Geometry, entry: FatEntry) -> Vec<u8> {
+    match geo.variant {
+        FatVariant::Fat16 => encode16(entry).to_le_bytes().to_vec(),
+    }
+}
+
 pub fn read_entry_from(disk: &Disk, geo: &Geometry, fat: u8, cluster: u32) -> FatEntry {
     let off = geo.fat_entry_offset(fat, cluster);
     let b = disk.read(off, 2);
-    decode16(u16::from_le_bytes([b[0], b[1]]))
+    decode(geo, b)
 }
 
 /// Read from the first FAT, which is the one drivers trust.
@@ -61,7 +76,7 @@ pub fn read_entry(disk: &Disk, geo: &Geometry, cluster: u32) -> FatEntry {
 
 /// Write the entry into every FAT copy.
 pub fn write_entry(disk: &mut Disk, geo: &Geometry, cluster: u32, value: FatEntry) {
-    let raw = encode16(value).to_le_bytes();
+    let raw = encode(geo, value);
     for fat in 0..geo.fat_count {
         let off = geo.fat_entry_offset(fat, cluster);
         disk.write(off, &raw);

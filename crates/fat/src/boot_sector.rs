@@ -301,6 +301,13 @@ impl BootSector {
                 "{cluster_count} clusters means FAT12, which is not supported"
             )));
         }
+        let fat_bytes = self.sectors_per_fat as u64 * bps;
+        if fat_bytes < (cluster_count as u64 + 2) * 2 {
+            return Err(Error::CorruptImage(format!(
+                "FAT of {fat_bytes} bytes cannot hold {} entries",
+                cluster_count + 2
+            )));
+        }
         Ok(Geometry {
             variant: FatVariant::Fat16,
             bytes_per_sector: bps as usize,
@@ -524,6 +531,13 @@ mod tests {
             BootSector::from_options(&opts),
             Err(Error::InvalidGeometry(_))
         ));
+    }
+
+    #[test]
+    fn geometry_rejects_a_fat_too_small_for_the_cluster_count() {
+        let mut bs = BootSector::from_options(&FormatOptions::default()).unwrap();
+        bs.sectors_per_fat = 1;
+        assert!(matches!(bs.geometry(), Err(Error::CorruptImage(_))));
     }
 
     #[test]

@@ -128,7 +128,9 @@ impl FatFs {
     }
 
     /// Run `body` inside a recorded operation. On success the record is
-    /// appended to history and returned; on failure it is discarded.
+    /// appended to history and returned. On failure the operation is rolled
+    /// back byte-for-byte (every recorded change is restored in reverse
+    /// order) and leaves no history entry; the error is then returned.
     fn run_op(
         &mut self,
         op: String,
@@ -137,7 +139,13 @@ impl FatFs {
         self.disk.begin_op(op);
         let result = body(self);
         let record = self.disk.end_op();
-        result?;
+        if let Err(e) = result {
+            // The op is closed, so these restores are not re-journaled.
+            for change in record.changes.iter().rev() {
+                self.disk.write(change.offset, &change.before);
+            }
+            return Err(e);
+        }
         self.history.push(record.clone());
         Ok(record)
     }
@@ -240,7 +248,9 @@ impl FatFs {
     }
 
     fn read_chain_data(&self, first: u32, size: usize) -> Result<Vec<u8>> {
-        let mut out = Vec::with_capacity(size);
+        // `size` comes straight off disk; a corrupt entry claiming e.g. 4 GiB
+        // must not be used to pre-allocate that much memory.
+        let mut out = Vec::with_capacity(size.min(self.disk.len()));
         if size == 0 {
             return Ok(out);
         }
@@ -305,14 +315,7 @@ impl FatFs {
         self.run_op(format!("create_file {path}"), |fs| {
             let clusters = fs.write_data(data)?;
             let first = clusters.first().copied().unwrap_or(0);
-            if let Err(e) =
-                fs.write_new_entry(parent, &parent_name, &name, attr::ARCHIVE, first, size)
-            {
-                if first != 0 {
-                    table::free_chain(&mut fs.disk, &fs.geo, first)?;
-                }
-                return Err(e);
-            }
+            fs.write_new_entry(parent, &parent_name, &name, attr::ARCHIVE, first, size)?;
             Ok(())
         })
     }
@@ -349,12 +352,7 @@ impl FatFs {
                     range: off..off + ENTRY_SIZE,
                 }));
             }
-            if let Err(e) =
-                fs.write_new_entry(parent, &parent_name, &name, attr::DIRECTORY, cluster, 0)
-            {
-                table::free_chain(&mut fs.disk, &fs.geo, cluster)?;
-                return Err(e);
-            }
+            fs.write_new_entry(parent, &parent_name, &name, attr::DIRECTORY, cluster, 0)?;
             Ok(())
         })
     }
@@ -535,8 +533,13 @@ impl FatFs {
         Ok(())
     }
 
-    /// Every entry of one FAT copy, indexed by cluster number.
+    /// Every entry of one FAT copy, indexed by cluster number. Returns an
+    /// empty vector for a FAT index that does not exist, rather than
+    /// running off the buffer.
     pub fn fat_entries(&self, fat: u8) -> Vec<FatEntry> {
+        if fat >= self.geo.fat_count {
+            return Vec::new();
+        }
         (0..self.geo.cluster_count + 2)
             .map(|c| {
                 if c < 2 {
@@ -1000,6 +1003,13 @@ mod tests {
             FatFs::from_image(short),
             Err(Error::CorruptImage(_))
         ));
+
+        let mut tiny_fat = image.clone();
+        tiny_fat[22..24].copy_from_slice(&1u16.to_le_bytes());
+        assert!(matches!(
+            FatFs::from_image(tiny_fat),
+            Err(Error::CorruptImage(_))
+        ));
     }
 
     #[test]
@@ -1163,6 +1173,18 @@ mod tests {
     }
 
     #[test]
+    fn absurd_size_does_not_preallocate() {
+        let mut fs = FatFs::format(FormatOptions::default()).unwrap();
+        let mut e = short(b"BROKEN  BIN", attr::ARCHIVE);
+        e.size = u32::MAX;
+        write_root_slot(&mut fs, 0, &e.to_bytes());
+        assert!(matches!(
+            fs.read_file("/BROKEN.BIN"),
+            Err(Error::CorruptImage(_))
+        ));
+    }
+
+    #[test]
     fn nested_directory_is_resolved_through_its_cluster() {
         let mut fs = FatFs::format(FormatOptions::default()).unwrap();
         let c = table::allocate_chain(&mut fs.disk, &fs.geo, 1).unwrap()[0];
@@ -1276,6 +1298,39 @@ mod tests {
     }
 
     #[test]
+    fn create_file_writes_the_standard_lfn_layout() {
+        let mut fs = FatFs::format(FormatOptions::default()).unwrap();
+        let name = "A very long file name that needs several LFN entries.txt"; // 56 chars -> 5 LFN entries
+        fs.create_file(&format!("/{name}"), b"x").unwrap();
+        let base = fs.geo.root_dir_offset();
+        let short = *b"AVERYL~1TXT";
+        let sum = dir_entry::lfn_checksum(&short);
+        let units = name::to_ucs2(name);
+        for i in 0..5 {
+            let slot = fs.disk.read(base + i * ENTRY_SIZE, ENTRY_SIZE);
+            let order = 5 - i as u8;
+            let expected_seq = if i == 0 { order | 0x40 } else { order };
+            assert_eq!(slot[0], expected_seq, "slot {i} sequence");
+            assert_eq!(slot[11], attr::LFN);
+            assert_eq!(slot[13], sum);
+            assert_eq!(&slot[26..28], &[0, 0]);
+            let entry = LfnEntry::parse(slot);
+            let chars = entry.chars();
+            let start = (order as usize - 1) * 13;
+            for (j, c) in chars.iter().enumerate() {
+                let expected = match units.get(start + j) {
+                    Some(u) => *u,
+                    None if start + j == units.len() => 0x0000,
+                    None => 0xFFFF,
+                };
+                assert_eq!(*c, expected, "slot {i} char {j}");
+            }
+        }
+        let short_slot = fs.disk.read(base + 5 * ENTRY_SIZE, ENTRY_SIZE);
+        assert_eq!(&short_slot[0..11], &short);
+    }
+
+    #[test]
     fn create_dir_writes_dot_entries_and_nests() {
         let mut fs = FatFs::format(FormatOptions::default()).unwrap();
         let rec = fs.create_dir("/DOCS").unwrap();
@@ -1362,6 +1417,44 @@ mod tests {
         assert_eq!(table::count_free(&fs.disk, &fs.geo), 0);
         assert_eq!(fs.create_dir("/D").unwrap_err(), Error::DiskFull);
         assert_eq!(fs.history().len(), 1);
+    }
+
+    #[test]
+    fn disk_full_during_directory_growth_rolls_back_the_grown_cluster() {
+        let mut fs = FatFs::format(FormatOptions {
+            total_sectors: 200,
+            sectors_per_cluster: 1,
+            root_entries: 16,
+            enforce_fat16_range: false,
+            ..Default::default()
+        })
+        .unwrap();
+        fs.create_dir("/D").unwrap();
+        // Fill the disk except one cluster.
+        let cs = fs.geo.cluster_size();
+        let free = table::count_free(&fs.disk, &fs.geo) as usize;
+        fs.create_file("/FILL", &vec![0u8; (free - 1) * cs])
+            .unwrap();
+        // Occupy the free slots in /D's single cluster (16 slots: . .. + 14).
+        for i in 0..14 {
+            fs.create_file(&format!("/D/F{i}"), b"").unwrap();
+        }
+        let chain_before = fs
+            .cluster_chain(fs.resolve("/D").unwrap().unwrap().entry.first_cluster())
+            .unwrap();
+        let free_before = table::count_free(&fs.disk, &fs.geo);
+        let image_before = fs.disk.as_bytes().to_vec();
+        let history_before = fs.history().len();
+        // 200-character name -> 16 LFN entries + 1 short = 17 slots: needs two grows, only one cluster is free.
+        let long = "L".repeat(200);
+        assert_eq!(
+            fs.create_file(&format!("/D/{long}"), b"").unwrap_err(),
+            Error::DiskFull
+        );
+        assert_eq!(table::count_free(&fs.disk, &fs.geo), free_before);
+        assert_eq!(fs.cluster_chain(chain_before[0]).unwrap(), chain_before);
+        assert_eq!(fs.history().len(), history_before);
+        assert_eq!(fs.disk.as_bytes(), &image_before[..]);
     }
 
     #[test]
@@ -1516,6 +1609,7 @@ mod tests {
         assert_eq!(fs.fat_entries(1), entries);
         assert_eq!(fs.cluster_chain(2).unwrap(), vec![2, 3, 4]);
         assert!(matches!(fs.cluster_chain(0), Err(Error::CorruptImage(_))));
+        assert!(fs.fat_entries(2).is_empty());
     }
 
     #[test]
