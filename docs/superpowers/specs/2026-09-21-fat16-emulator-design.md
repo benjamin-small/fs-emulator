@@ -1,5 +1,7 @@
 # FAT16 Emulator Library — Design
 
+*Project: fs-emulator (renamed from fat16-emulator after this spec was written).*
+
 **Date:** 2026-09-21
 **Status:** Approved
 
@@ -26,7 +28,7 @@ ext2 and ext3 can be added later without changing what the UI depends on.
 ## Workspace layout
 
 ```
-fat16-emulator/
+fs-emulator/
   Cargo.toml              # workspace root
   crates/fs-core/         # filesystem-agnostic: disk, trace, trait, shared types
   crates/fat/             # FAT16 now; FAT32 later in the same crate

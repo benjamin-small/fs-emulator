@@ -1,7 +1,8 @@
-# fat16-emulator
+# fs-emulator
 
-A byte-accurate FAT16 filesystem on an in-memory virtual disk, written in Rust
-as a learning tool. Every operation records exactly which bytes changed and
+Filesystem emulators on an in-memory virtual disk, written in Rust as a
+learning tool. FAT16 is implemented today, byte-accurately; FAT32 and ext2/ext3
+are planned on the same filesystem-agnostic core. Every operation records exactly which bytes changed and
 why, so a UI can show how the disk evolves. Exported images mount on macOS and
 Linux.
 
