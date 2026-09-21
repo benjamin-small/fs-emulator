@@ -565,8 +565,9 @@ impl FatFs {
             .collect())
     }
 
-    /// Which file or directory each allocated cluster belongs to.
-    fn cluster_owners(&self) -> BTreeMap<u32, (String, bool)> {
+    /// Which file or directory each allocated cluster belongs to. One full
+    /// directory-tree walk; call once and reuse across `annotate_sector_with`.
+    pub fn cluster_owners(&self) -> BTreeMap<u32, ClusterOwner> {
         let mut owners = BTreeMap::new();
         let mut visited = HashSet::new();
         let mut stack = vec![(DirLocation::Root, String::new())];
@@ -580,7 +581,14 @@ impl FatFs {
                 if first != 0 {
                     if let Ok(chain) = table::chain(&self.disk, &self.geo, first) {
                         for c in chain {
-                            owners.insert(c, (path.clone(), l.entry.is_dir()));
+                            owners.insert(
+                                c,
+                                ClusterOwner {
+                                    path: path.clone(),
+                                    is_dir: l.entry.is_dir(),
+                                    first_cluster: first,
+                                },
+                            );
                         }
                     }
                     if l.entry.is_dir() && visited.insert(first) {
@@ -593,6 +601,17 @@ impl FatFs {
     }
 
     pub fn annotate_sector(&self, sector: u64) -> Vec<Annotation> {
+        self.annotate_sector_with(sector, &self.cluster_owners())
+    }
+
+    /// Same as `annotate_sector`, but reuses a cluster-owner map computed
+    /// once (with `cluster_owners`) instead of recomputing it for every
+    /// sector.
+    pub fn annotate_sector_with(
+        &self,
+        sector: u64,
+        owners: &BTreeMap<u32, ClusterOwner>,
+    ) -> Vec<Annotation> {
         let g = &self.geo;
         if sector >= g.total_sectors {
             return Vec::new();
@@ -611,7 +630,9 @@ impl FatFs {
             return self.annotate_fat_sector(sector);
         }
         if sector < g.first_data_sector {
-            return self.annotate_dir_sector(sector);
+            let entries_per_sector = g.bytes_per_sector / ENTRY_SIZE;
+            let first_slot = (sector - g.first_root_dir_sector) as usize * entries_per_sector;
+            return self.annotate_dir_sector(sector, first_slot);
         }
         let Some(cluster) = g.cluster_of_sector(sector) else {
             return vec![annotation(
@@ -620,12 +641,24 @@ impl FatFs {
                 "sector beyond the last cluster",
             )];
         };
-        match self.cluster_owners().get(&cluster) {
-            Some((_, true)) => self.annotate_dir_sector(sector),
-            Some((path, false)) => vec![annotation(
+        match owners.get(&cluster) {
+            Some(owner) if owner.is_dir => {
+                let entries_per_sector = g.bytes_per_sector / ENTRY_SIZE;
+                let cluster_size_slots = g.cluster_size() / ENTRY_SIZE;
+                let pos = table::chain(&self.disk, g, owner.first_cluster)
+                    .ok()
+                    .and_then(|c| c.iter().position(|&x| x == cluster))
+                    .unwrap_or(0);
+                let first_sector_of_cluster =
+                    g.first_data_sector + (cluster - 2) as u64 * g.sectors_per_cluster as u64;
+                let first_slot = pos * cluster_size_slots
+                    + (sector - first_sector_of_cluster) as usize * entries_per_sector;
+                self.annotate_dir_sector(sector, first_slot)
+            }
+            Some(owner) => vec![annotation(
                 0..g.bytes_per_sector,
                 format!("cluster {cluster}"),
-                format!("data of {path}"),
+                format!("data of {}", owner.path),
             )],
             None => {
                 let state = match table::read_entry(&self.disk, g, cluster) {
@@ -724,7 +757,7 @@ impl FatFs {
             .collect()
     }
 
-    fn annotate_dir_sector(&self, sector: u64) -> Vec<Annotation> {
+    fn annotate_dir_sector(&self, sector: u64, first_slot: usize) -> Vec<Annotation> {
         let g = &self.geo;
         let base = sector as usize * g.bytes_per_sector;
         (0..g.bytes_per_sector / ENTRY_SIZE)
@@ -733,7 +766,7 @@ impl FatFs {
                 let raw = RawEntry::parse(self.disk.read(off, ENTRY_SIZE));
                 annotation(
                     i * ENTRY_SIZE..(i + 1) * ENTRY_SIZE,
-                    format!("slot {i}"),
+                    format!("slot {}", first_slot + i),
                     raw.describe(),
                 )
             })
@@ -741,9 +774,19 @@ impl FatFs {
     }
 }
 
+/// Which file or directory a data cluster belongs to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClusterOwner {
+    /// Absolute path, e.g. `/DOCS/NOTES.TXT`.
+    pub path: String,
+    pub is_dir: bool,
+    /// First cluster of the owner's chain.
+    pub first_cluster: u32,
+}
+
 /// A directory entry found on disk, with where it lives.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Located {
+pub(crate) struct Located {
     pub dir: DirLocation,
     /// Slot index of the short entry.
     pub slot: usize,
@@ -754,13 +797,13 @@ pub struct Located {
 }
 
 impl Located {
-    pub fn name(&self) -> String {
+    pub(crate) fn name(&self) -> String {
         self.long_name
             .clone()
             .unwrap_or_else(|| self.entry.display_name())
     }
 
-    pub fn info(&self) -> EntryInfo {
+    pub(crate) fn info(&self) -> EntryInfo {
         EntryInfo {
             name: self.name(),
             is_dir: self.entry.is_dir(),
@@ -866,7 +909,11 @@ fn assemble_lfn(pending: &[(usize, LfnEntry)], short_name: &[u8; 11]) -> Option<
 }
 
 fn names_match(a: &str, b: &str) -> bool {
-    a.to_uppercase() == b.to_uppercase()
+    if a.is_ascii() && b.is_ascii() {
+        a.eq_ignore_ascii_case(b)
+    } else {
+        a.to_uppercase() == b.to_uppercase()
+    }
 }
 
 impl FileSystem for FatFs {
@@ -1705,6 +1752,110 @@ mod tests {
         let sector = g.first_data_sector + (data_cluster as u64 - 2) * g.sectors_per_cluster as u64;
         let ann = fs.annotate_sector(sector);
         assert_eq!(ann[0].value, "data of /DATA.BIN");
+    }
+
+    #[test]
+    fn cluster_owners_maps_every_cluster_to_its_path() {
+        let mut fs = FatFs::format(FormatOptions::default()).unwrap();
+        fs.create_dir("/DOCS").unwrap();
+        let cs = fs.geo.cluster_size();
+        fs.create_file("/DOCS/N.TXT", &vec![0u8; cs * 2 + 1])
+            .unwrap();
+        let owners = fs.cluster_owners();
+        assert_eq!(owners.len(), 4);
+        let docs_cluster = fs.resolve("/DOCS").unwrap().unwrap().entry.first_cluster();
+        assert_eq!(
+            owners.get(&docs_cluster),
+            Some(&ClusterOwner {
+                path: "/DOCS".to_string(),
+                is_dir: true,
+                first_cluster: docs_cluster,
+            })
+        );
+        let n_first = fs
+            .resolve("/DOCS/N.TXT")
+            .unwrap()
+            .unwrap()
+            .entry
+            .first_cluster();
+        let n_chain = table::chain(&fs.disk, &fs.geo, n_first).unwrap();
+        assert_eq!(n_chain.len(), 3);
+        for c in n_chain {
+            assert_eq!(
+                owners.get(&c),
+                Some(&ClusterOwner {
+                    path: "/DOCS/N.TXT".to_string(),
+                    is_dir: false,
+                    first_cluster: n_first,
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn annotate_sector_with_matches_annotate_sector() {
+        let mut fs = FatFs::format(FormatOptions::default()).unwrap();
+        fs.create_dir("/DOCS").unwrap();
+        let cs = fs.geo.cluster_size();
+        fs.create_file("/DOCS/N.TXT", &vec![0u8; cs * 2 + 1])
+            .unwrap();
+        let owners = fs.cluster_owners();
+        let g = fs.geo.clone();
+        let docs_cluster = fs.resolve("/DOCS").unwrap().unwrap().entry.first_cluster();
+        let docs_sector =
+            g.first_data_sector + (docs_cluster as u64 - 2) * g.sectors_per_cluster as u64;
+        let n_first = fs
+            .resolve("/DOCS/N.TXT")
+            .unwrap()
+            .unwrap()
+            .entry
+            .first_cluster();
+        let n_sector = g.first_data_sector + (n_first as u64 - 2) * g.sectors_per_cluster as u64;
+        for s in [
+            0,
+            g.reserved_sectors,
+            g.first_root_dir_sector,
+            docs_sector,
+            n_sector,
+        ] {
+            assert_eq!(fs.annotate_sector_with(s, &owners), fs.annotate_sector(s));
+        }
+    }
+
+    #[test]
+    fn root_directory_slots_are_numbered_across_sectors() {
+        let fs = FatFs::format(FormatOptions::default()).unwrap();
+        let g = fs.geo.clone();
+        assert_eq!(
+            fs.annotate_sector(g.first_root_dir_sector + 1)[0].label,
+            "slot 16"
+        );
+    }
+
+    #[test]
+    fn subdirectory_slots_are_numbered_across_clusters() {
+        let mut fs = tiny_fs();
+        fs.create_dir("/SUB").unwrap();
+        for i in 0..20 {
+            fs.create_file(&format!("/SUB/F{i}"), b"").unwrap();
+        }
+        let sub_first = fs.resolve("/SUB").unwrap().unwrap().entry.first_cluster();
+        let chain = table::chain(&fs.disk, &fs.geo, sub_first).unwrap();
+        assert_eq!(chain.len(), 2);
+        let g = fs.geo.clone();
+        let second_sector =
+            g.first_data_sector + (chain[1] as u64 - 2) * g.sectors_per_cluster as u64;
+        let ann = fs.annotate_sector(second_sector);
+        assert_eq!(ann[0].label, "slot 16");
+        assert!(ann[0].value.contains("F14"), "value was {}", ann[0].value);
+    }
+
+    #[test]
+    fn names_match_is_case_insensitive_for_ascii_and_unicode() {
+        assert!(names_match("readme.txt", "README.TXT"));
+        assert!(!names_match("readme.txt", "README.TX"));
+        assert!(names_match("héllo", "HÉLLO"));
+        assert!(!names_match("héllo", "hello"));
     }
 
     #[test]

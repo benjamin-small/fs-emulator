@@ -70,6 +70,12 @@ impl Disk {
     /// Write bytes at an absolute offset. Recorded if an operation is open.
     /// Writing past the end of the disk is a programmer error and panics.
     pub fn write(&mut self, offset: usize, data: &[u8]) {
+        assert!(
+            offset + data.len() <= self.bytes.len(),
+            "write of {} bytes at offset {offset} runs past the end of the {}-byte disk",
+            data.len(),
+            self.bytes.len()
+        );
         let end = offset + data.len();
         if let Some(op) = self.open_op.as_mut() {
             op.changes.push(ByteChange {
@@ -198,6 +204,14 @@ mod tests {
         disk.event(Box::new(Dummy)); // must not panic
         disk.begin_op("x");
         assert!(disk.end_op().events.is_empty());
+    }
+
+    #[test]
+    #[should_panic(expected = "runs past the end")]
+    fn write_past_the_end_panics_with_a_clear_message() {
+        let mut disk = Disk::new(4, 1);
+        let len = disk.len();
+        disk.write(len - 1, &[1, 2]);
     }
 
     #[test]

@@ -32,7 +32,9 @@ pub fn pack_date(dt: &DateTime) -> u16 {
 
 /// FAT time: bits 15..11 hour, 10..5 minute, 4..0 seconds / 2.
 pub fn pack_time(dt: &DateTime) -> u16 {
-    ((dt.hour as u16) << 11) | ((dt.minute as u16 & 0x3F) << 5) | (dt.second as u16 / 2)
+    ((dt.hour as u16 & 0x1F) << 11)
+        | ((dt.minute as u16 & 0x3F) << 5)
+        | ((dt.second as u16 / 2) & 0x1F)
 }
 
 /// `None` when the date is zero, which FAT uses for "not set".
@@ -284,6 +286,14 @@ mod tests {
         let dt = DateTime::new(2026, 9, 21, 12, 34, 57);
         assert_eq!(unpack(pack_date(&dt), pack_time(&dt)).unwrap().second, 56);
         assert_eq!(unpack(0, 0), None);
+    }
+
+    #[test]
+    fn out_of_range_time_fields_stay_in_their_bits() {
+        let dt = DateTime::new(2000, 1, 1, 99, 99, 99);
+        assert_eq!(pack_time(&dt) >> 11, 99 & 0x1F);
+        assert_eq!((pack_time(&dt) >> 5) & 0x3F, 99 & 0x3F);
+        assert_eq!(pack_time(&dt) & 0x1F, (99 / 2) & 0x1F);
     }
 
     #[test]
