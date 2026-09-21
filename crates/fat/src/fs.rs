@@ -355,6 +355,102 @@ impl FatFs {
         })
     }
 
+    pub fn delete_file(&mut self, path: &str) -> Result<OpRecord> {
+        let located = self.resolve(path)?.ok_or(Error::InvalidPath)?;
+        if located.entry.is_dir() {
+            return Err(Error::IsADirectory);
+        }
+        let dir_name = Self::parent_display_name(path)?;
+        self.run_op(format!("delete_file {path}"), |fs| {
+            fs.remove_entry(&located, &dir_name)
+        })
+    }
+
+    pub fn remove_dir(&mut self, path: &str) -> Result<OpRecord> {
+        let located = self.resolve(path)?.ok_or(Error::InvalidPath)?;
+        if !located.entry.is_dir() {
+            return Err(Error::NotADirectory);
+        }
+        let contents = self.scan_dir(DirLocation::Cluster(located.entry.first_cluster()))?;
+        if contents.iter().any(|l| !l.entry.is_dot_entry()) {
+            return Err(Error::DirectoryNotEmpty);
+        }
+        let dir_name = Self::parent_display_name(path)?;
+        self.run_op(format!("remove_dir {path}"), |fs| {
+            fs.remove_entry(&located, &dir_name)
+        })
+    }
+
+    pub fn write_file(&mut self, path: &str, data: &[u8]) -> Result<OpRecord> {
+        let located = self.resolve(path)?.ok_or(Error::InvalidPath)?;
+        if located.entry.is_dir() {
+            return Err(Error::IsADirectory);
+        }
+        let size = u32::try_from(data.len()).map_err(|_| Error::FileTooLarge)?;
+        let needed = data.len().div_ceil(self.geo.cluster_size()) as u32;
+        let old_first = located.entry.first_cluster();
+        let old_len = if old_first == 0 {
+            0
+        } else {
+            table::chain(&self.disk, &self.geo, old_first)?.len() as u32
+        };
+        if table::count_free(&self.disk, &self.geo) + old_len < needed {
+            return Err(Error::DiskFull);
+        }
+        let dir_name = Self::parent_display_name(path)?;
+        self.run_op(format!("write_file {path}"), |fs| {
+            if old_first != 0 {
+                table::free_chain(&mut fs.disk, &fs.geo, old_first)?;
+            }
+            let clusters = fs.write_data(data)?;
+            let mut entry = located.entry.clone();
+            entry.set_first_cluster(clusters.first().copied().unwrap_or(0));
+            entry.size = size;
+            entry.write_time = dir_entry::pack_time(&fs.now);
+            entry.write_date = dir_entry::pack_date(&fs.now);
+            entry.access_date = dir_entry::pack_date(&fs.now);
+            let slots = dir::slots(&fs.disk, &fs.geo, located.dir)?;
+            let slot = slots[located.slot];
+            fs.disk.write(slot.offset, &entry.to_bytes());
+            fs.disk.event(Box::new(FatEvent::DirEntryWritten {
+                dir: dir_name.clone(),
+                slot: slot.index,
+                kind: EntryKind::Short,
+                range: slot.offset..slot.offset + ENTRY_SIZE,
+            }));
+            Ok(())
+        })
+    }
+
+    /// Mark the entry and its LFN entries deleted and free its chain. Data
+    /// bytes are left in place, exactly as a real driver leaves them.
+    fn remove_entry(&mut self, located: &Located, dir_name: &str) -> Result<()> {
+        let slots = dir::slots(&self.disk, &self.geo, located.dir)?;
+        for &i in located
+            .lfn_slots
+            .iter()
+            .chain(std::iter::once(&located.slot))
+        {
+            let off = slots[i].offset;
+            self.disk.write(off, &[DELETED]);
+            self.disk.event(Box::new(FatEvent::DirEntryDeleted {
+                dir: dir_name.to_string(),
+                slot: i,
+                range: off..off + ENTRY_SIZE,
+            }));
+        }
+        let first = located.entry.first_cluster();
+        if first != 0 {
+            table::free_chain(&mut self.disk, &self.geo, first)?;
+        }
+        Ok(())
+    }
+
+    fn parent_display_name(path: &str) -> Result<String> {
+        let (parts, _) = path::split_parent(path)?;
+        Ok(Self::dir_display_name(&parts))
+    }
+
     /// Allocate a chain for `data` and write it cluster by cluster. The tail
     /// of the last cluster is zeroed so cluster contents are deterministic.
     fn write_data(&mut self, data: &[u8]) -> Result<Vec<u32>> {
@@ -494,6 +590,7 @@ fn names_match(a: &str, b: &str) -> bool {
 mod tests {
     use super::*;
     use crate::table;
+    use crate::table::FatEntry;
     use fs_core::{Error, RegionKind};
 
     fn tiny_fs() -> FatFs {
@@ -942,5 +1039,125 @@ mod tests {
             Error::DirectoryFull
         );
         assert_eq!(table::count_free(&fs.disk, &fs.geo), free);
+    }
+
+    #[test]
+    fn delete_marks_entries_frees_chain_and_leaves_data() {
+        let mut fs = FatFs::format(FormatOptions::default()).unwrap();
+        fs.create_file("/My File.txt", b"keep me around").unwrap();
+        let located = fs.resolve("/My File.txt").unwrap().unwrap();
+        let first = located.entry.first_cluster();
+        let data_off = fs.geo.cluster_offset(first);
+        let rec = fs.delete_file("/my file.txt").unwrap();
+        assert_eq!(rec.op, "delete_file /my file.txt");
+        let kinds = rec.event_kinds();
+        assert_eq!(
+            kinds.iter().filter(|k| **k == "dir_entry_deleted").count(),
+            2
+        );
+        assert_eq!(kinds.iter().filter(|k| **k == "cluster_freed").count(), 1);
+        assert_eq!(fs.stat("/My File.txt"), Err(Error::NotFound));
+        assert_eq!(fs.list_dir("/").unwrap(), Vec::new());
+        let slots = dir::slots(&fs.disk, &fs.geo, DirLocation::Root).unwrap();
+        assert_eq!(fs.disk.read(slots[0].offset, 1)[0], DELETED);
+        assert_eq!(fs.disk.read(slots[1].offset, 1)[0], DELETED);
+        assert_eq!(&fs.disk.read(slots[1].offset + 1, 10), b"YFILE~1TXT");
+        assert_eq!(fs.disk.read(data_off, 14), b"keep me around");
+        assert_eq!(table::read_entry(&fs.disk, &fs.geo, first), FatEntry::Free);
+        assert_eq!(fs.delete_file("/My File.txt").unwrap_err(), Error::NotFound);
+        assert_eq!(fs.delete_file("/").unwrap_err(), Error::InvalidPath);
+        fs.create_dir("/D").unwrap();
+        assert_eq!(fs.delete_file("/D").unwrap_err(), Error::IsADirectory);
+    }
+
+    #[test]
+    fn deleted_slots_are_reused() {
+        let mut fs = FatFs::format(FormatOptions::default()).unwrap();
+        fs.create_file("/A", b"").unwrap();
+        fs.create_file("/B", b"").unwrap();
+        fs.delete_file("/A").unwrap();
+        fs.create_file("/C", b"").unwrap();
+        let names: Vec<String> = fs
+            .list_dir("/")
+            .unwrap()
+            .into_iter()
+            .map(|e| e.name)
+            .collect();
+        assert_eq!(names, vec!["C", "B"]);
+    }
+
+    #[test]
+    fn remove_dir_requires_empty() {
+        let mut fs = FatFs::format(FormatOptions::default()).unwrap();
+        fs.create_dir("/D").unwrap();
+        fs.create_file("/D/X", b"1").unwrap();
+        assert_eq!(fs.remove_dir("/D").unwrap_err(), Error::DirectoryNotEmpty);
+        fs.delete_file("/D/X").unwrap();
+        let free = table::count_free(&fs.disk, &fs.geo);
+        fs.remove_dir("/D").unwrap();
+        assert_eq!(table::count_free(&fs.disk, &fs.geo), free + 1);
+        assert_eq!(fs.stat("/D"), Err(Error::NotFound));
+        fs.create_file("/F", b"").unwrap();
+        assert_eq!(fs.remove_dir("/F").unwrap_err(), Error::NotADirectory);
+        assert_eq!(fs.remove_dir("/").unwrap_err(), Error::InvalidPath);
+    }
+
+    #[test]
+    fn write_file_replaces_data_and_reuses_the_entry() {
+        let mut fs = FatFs::format(FormatOptions::default()).unwrap();
+        let cs = fs.geo.cluster_size();
+        fs.create_file("/F.TXT", &vec![1u8; cs * 3]).unwrap();
+        let free = table::count_free(&fs.disk, &fs.geo);
+        let slot_before = fs.resolve("/F.TXT").unwrap().unwrap().slot;
+        fs.set_now(DateTime::new(2027, 1, 2, 3, 4, 6));
+        let rec = fs.write_file("/F.TXT", b"small").unwrap();
+        assert_eq!(
+            rec.event_kinds()
+                .iter()
+                .filter(|k| **k == "cluster_freed")
+                .count(),
+            3
+        );
+        assert_eq!(
+            rec.event_kinds()
+                .iter()
+                .filter(|k| **k == "cluster_allocated")
+                .count(),
+            1
+        );
+        assert_eq!(fs.read_file("/F.TXT").unwrap(), b"small");
+        assert_eq!(table::count_free(&fs.disk, &fs.geo), free + 2);
+        let after = fs.resolve("/F.TXT").unwrap().unwrap();
+        assert_eq!(after.slot, slot_before);
+        let info = after.info();
+        assert_eq!(info.modified, Some(DateTime::new(2027, 1, 2, 3, 4, 6)));
+        assert_eq!(info.created, Some(DateTime::default()));
+        fs.write_file("/F.TXT", &vec![2u8; cs * 5]).unwrap();
+        assert_eq!(fs.read_file("/F.TXT").unwrap().len(), cs * 5);
+        assert_eq!(table::count_free(&fs.disk, &fs.geo), free - 2);
+        fs.write_file("/F.TXT", b"").unwrap();
+        assert_eq!(
+            fs.resolve("/F.TXT").unwrap().unwrap().entry.first_cluster(),
+            0
+        );
+        assert_eq!(fs.write_file("/NOPE", b"").unwrap_err(), Error::NotFound);
+        fs.create_dir("/D").unwrap();
+        assert_eq!(fs.write_file("/D", b"").unwrap_err(), Error::IsADirectory);
+    }
+
+    #[test]
+    fn write_file_can_grow_into_its_own_old_clusters() {
+        let mut fs = tiny_fs();
+        let free = table::count_free(&fs.disk, &fs.geo) as usize;
+        let cs = fs.geo.cluster_size();
+        fs.create_file("/F", &vec![1u8; (free - 1) * cs]).unwrap();
+        fs.write_file("/F", &vec![2u8; free * cs]).unwrap();
+        assert_eq!(table::count_free(&fs.disk, &fs.geo), 0);
+        assert_eq!(
+            fs.write_file("/F", &vec![3u8; (free + 1) * cs])
+                .unwrap_err(),
+            Error::DiskFull
+        );
+        assert_eq!(fs.read_file("/F").unwrap()[0], 2);
     }
 }
