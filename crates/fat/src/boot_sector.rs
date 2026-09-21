@@ -119,8 +119,7 @@ impl BootSector {
             return Err(geo_err("fat_count must be at least 1".into()));
         }
         if opts.root_entries == 0
-            || !(opts.root_entries as u32 * 32)
-                .is_multiple_of(opts.bytes_per_sector as u32)
+            || !(opts.root_entries as u32 * 32).is_multiple_of(opts.bytes_per_sector as u32)
         {
             return Err(geo_err(format!(
                 "root_entries {} must be non-zero and fill whole sectors",
