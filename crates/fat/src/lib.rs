@@ -1,6 +1,7 @@
 //! Byte-accurate FAT16 filesystem on an in-memory disk.
 
 pub mod boot_sector;
+pub mod dir;
 pub mod dir_entry;
 pub mod events;
 pub mod name;
