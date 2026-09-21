@@ -65,9 +65,10 @@ RawEntry      tagged union on "kind": { kind: "free" } | { kind: "deleted", byte
 ClusterOwner  { cluster: u32, path: String, is_dir: bool, first_cluster: u32 }   // one per owned cluster
 ```
 
-Serialization uses `serde_wasm_bindgen::Serializer::json_compatible()` so
-maps become plain objects and `u64` becomes a JS number (all values here are
-far below 2^53).
+Serialization uses `serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true).serialize_missing_as_null(true)`
+so maps become plain objects, `Option::None` becomes `null`, byte vectors stay
+`Uint8Array` (the `json_compatible` preset would turn them into plain arrays),
+and `u64` becomes a JS number (all values here are far below 2^53).
 
 ### Errors (`error.rs`)
 
