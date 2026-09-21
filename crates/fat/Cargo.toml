@@ -1,0 +1,9 @@
+[package]
+name = "fat"
+description = "Byte-accurate FAT16 filesystem emulator on an in-memory disk"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+fs-core = { path = "../fs-core" }
