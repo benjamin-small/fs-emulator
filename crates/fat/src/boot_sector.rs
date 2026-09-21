@@ -84,7 +84,7 @@ fn root_dir_sectors(root_entries: u64, bytes_per_sector: u64) -> u64 {
 /// Smallest FAT size (in sectors) that has an entry for every cluster plus
 /// the two reserved entries. Grows one sector at a time; each extra FAT
 /// sector removes clusters, so this converges quickly.
-fn sectors_per_fat(opts: &FormatOptions) -> u16 {
+fn sectors_per_fat(opts: &FormatOptions) -> Result<u16> {
     let bps = opts.bytes_per_sector as u64;
     let spc = opts.sectors_per_cluster as u64;
     let total = opts.total_sectors as u64;
@@ -94,7 +94,11 @@ fn sectors_per_fat(opts: &FormatOptions) -> u16 {
         let data_sectors = total.saturating_sub(fixed + opts.fat_count as u64 * spf);
         let entries_needed = data_sectors / spc + 2;
         if spf * bps / 2 >= entries_needed {
-            return spf as u16;
+            return u16::try_from(spf).map_err(|_| {
+                Error::InvalidGeometry(format!(
+                    "volume needs {spf} sectors per FAT, more than FAT16 allows"
+                ))
+            });
         }
         spf += 1;
     }
@@ -129,7 +133,7 @@ impl BootSector {
         if opts.reserved_sectors == 0 {
             return Err(geo_err("reserved_sectors must be at least 1".into()));
         }
-        let spf = sectors_per_fat(opts);
+        let spf = sectors_per_fat(opts)?;
         let (total_16, total_32) = if opts.total_sectors < 0x1_0000 {
             (opts.total_sectors as u16, 0)
         } else {
@@ -272,6 +276,11 @@ impl BootSector {
             self.reserved_sectors as u64 + self.fat_count as u64 * self.sectors_per_fat as u64;
         let first_data_sector = first_root_dir_sector + root_dir_sectors;
         let total_sectors = self.total_sectors() as u64;
+        if usize::try_from(total_sectors * bps).is_err() {
+            return Err(Error::InvalidGeometry(format!(
+                "volume of {total_sectors} sectors x {bps} bytes is too large for this platform"
+            )));
+        }
         if first_data_sector >= total_sectors {
             return Err(Error::InvalidGeometry(format!(
                 "metadata needs {first_data_sector} sectors but the volume has only {total_sectors}"
@@ -501,5 +510,30 @@ mod tests {
             reserved_sectors: 0,
             ..Default::default()
         }));
+    }
+
+    #[test]
+    fn huge_total_sectors_exceeds_fat_size() {
+        let opts = FormatOptions {
+            total_sectors: u32::MAX,
+            sectors_per_cluster: 1,
+            enforce_fat16_range: false,
+            ..Default::default()
+        };
+        assert!(matches!(
+            BootSector::from_options(&opts),
+            Err(Error::InvalidGeometry(_))
+        ));
+    }
+
+    #[test]
+    fn oversized_volumes_are_rejected() {
+        let mut bs = BootSector::from_options(&FormatOptions::default()).unwrap();
+        bs.total_sectors_16 = 0;
+        bs.total_sectors_32 = u32::MAX;
+        assert!(matches!(
+            bs.geometry(),
+            Err(Error::InvalidGeometry(_)) | Err(Error::Unsupported(_))
+        ));
     }
 }
