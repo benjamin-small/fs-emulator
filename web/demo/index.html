@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>fs-emulator demo</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 1rem; display: grid; gap: 1rem; grid-template-columns: 1fr 1fr; }
+      section { border: 1px solid #ccc; border-radius: 6px; padding: 0.75rem; }
+      h2 { margin-top: 0; font-size: 1rem; }
+      table { border-collapse: collapse; width: 100%; }
+      td, th { text-align: left; padding: 2px 6px; border-bottom: 1px solid #eee; font-size: 0.9rem; }
+      pre { font-family: ui-monospace, monospace; font-size: 0.8rem; line-height: 1.4; }
+      .hex span { padding: 0 1px; }
+      .hex span.hl { background: #ffe58a; }
+      #status { grid-column: 1 / -1; color: #a00; min-height: 1.2em; }
+      textarea { width: 100%; }
+      ul { padding-left: 1.2rem; }
+    </style>
+  </head>
+  <body>
+    <div id="status"></div>
+    <section>
+      <h2>Actions</h2>
+      <label>Path <input id="path" value="/Hello world.txt" size="30" /></label>
+      <textarea id="content" rows="4">Hello from the browser</textarea>
+      <div>
+        <button id="add">Add file</button>
+        <button id="overwrite">Overwrite</button>
+        <button id="delete">Delete</button>
+        <button id="mkdir">Mkdir</button>
+      </div>
+      <div style="margin-top: 0.5rem">
+        <label>Load image <input id="load" type="file" /></label>
+        <a id="export" href="#" download="volume.img">Export image</a>
+      </div>
+    </section>
+    <section>
+      <h2>Root listing</h2>
+      <div id="listing"></div>
+    </section>
+    <section>
+      <h2>Last operation</h2>
+      <div id="lastop"></div>
+    </section>
+    <section>
+      <h2>Sector view</h2>
+      <label>Sector <input id="sector" type="number" value="0" min="0" /></label>
+      <span id="region"></span>
+      <pre id="hex" class="hex"></pre>
+      <ul id="annotations"></ul>
+    </section>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

@@ -23,3 +23,30 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
       - run: cargo build --workspace --target wasm32-unknown-unknown
+
+  wasm:
+    name: wasm-pack test, build, demo
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-pack
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/demo/pnpm-lock.yaml
+      - run: wasm-pack test --node crates/wasm
+      - run: wasm-pack build crates/wasm --target bundler
+      - run: pnpm install --frozen-lockfile
+        working-directory: web/demo
+      - run: pnpm build
+        working-directory: web/demo
