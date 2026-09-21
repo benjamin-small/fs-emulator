@@ -3,11 +3,15 @@
 
 pub mod disk;
 pub mod error;
+pub mod fs;
+pub mod layout;
 pub mod path;
 pub mod trace;
 pub mod types;
 
 pub use disk::Disk;
 pub use error::{Error, Result};
+pub use fs::FileSystem;
+pub use layout::{Annotation, Region, RegionKind};
 pub use trace::{ByteChange, Event, OpRecord};
 pub use types::{DateTime, EntryInfo};
