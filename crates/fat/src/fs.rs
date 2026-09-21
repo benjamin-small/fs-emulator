@@ -237,7 +237,7 @@ impl FatFs {
 
     fn read_chain_data(&self, first: u32, size: usize) -> Result<Vec<u8>> {
         let mut out = Vec::with_capacity(size);
-        if first == 0 || size == 0 {
+        if size == 0 {
             return Ok(out);
         }
         for cluster in table::chain(&self.disk, &self.geo, first)? {
@@ -823,6 +823,18 @@ mod tests {
         assert_eq!(fs.read_file("/"), Err(Error::IsADirectory));
         assert_eq!(fs.read_file("/MISSING"), Err(Error::NotFound));
         assert_eq!(fs.list_dir("/DATA.BIN"), Err(Error::NotADirectory));
+    }
+
+    #[test]
+    fn nonzero_size_with_no_cluster_is_corrupt() {
+        let mut fs = FatFs::format(FormatOptions::default()).unwrap();
+        let mut e = short(b"BROKEN  BIN", attr::ARCHIVE);
+        e.size = 10;
+        write_root_slot(&mut fs, 0, &e.to_bytes());
+        assert!(matches!(
+            fs.read_file("/BROKEN.BIN"),
+            Err(Error::CorruptImage(_))
+        ));
     }
 
     #[test]
