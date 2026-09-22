@@ -11,13 +11,25 @@ export function applyChanges(buf: Uint8Array, changes: ByteChangeLike[], directi
   }
 }
 
-/** Sorted, de-duplicated sector numbers touched by the changes. */
+/** Sorted, de-duplicated sector numbers touched by the changes. An empty change
+ *  (the core allows a zero-length raw write, even at the very end of the disk)
+ *  touches no sector. */
 export function changedSectors(changes: ByteChangeLike[], sectorSize: number): number[] {
   const set = new Set<number>();
   for (const c of changes) {
+    if (c.after.length === 0) continue;
     const first = Math.floor(c.offset / sectorSize);
-    const last = Math.floor((c.offset + Math.max(c.after.length, 1) - 1) / sectorSize);
+    const last = Math.floor((c.offset + c.after.length - 1) / sectorSize);
     for (let s = first; s <= last; s++) set.add(s);
   }
   return [...set].sort((a, b) => a - b);
+}
+
+/** Bytes the FAT core re-parses as the boot sector after a raw write. */
+export const BOOT_SECTOR_LEN = 512;
+
+/** True when any change starts inside the boot sector. The core may then have adopted
+ *  a new geometry, so the store must re-read `geometry` and `layout`. */
+export function touchesBootSector(changes: ByteChangeLike[]): boolean {
+  return changes.some((c) => c.offset < BOOT_SECTOR_LEN);
 }
