@@ -43,9 +43,9 @@
     </aside>
     <main class="col center"><HexView /></main>
     <aside class="col right">
-      <Inspector />
-      <StringsPanel />
       <StepPanel />
+      <StringsPanel />
+      <Inspector />
     </aside>
   </div>
   <footer id="timeline-slot"><Timeline /></footer>
