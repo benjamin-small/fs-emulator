@@ -9,7 +9,7 @@ pub mod path;
 pub mod trace;
 pub mod types;
 
-pub use disk::Disk;
+pub use disk::{raw_write, raw_write_op, Disk};
 pub use error::{Error, Result};
 pub use fs::FileSystem;
 pub use layout::{Annotation, Region, RegionKind};

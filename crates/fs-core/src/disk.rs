@@ -1,8 +1,9 @@
 //! The virtual disk: a flat byte buffer addressed by sector. Every write goes
 //! through `write`/`fill` so it can be journaled into the open operation.
 
-use crate::trace::{ByteChange, Event, OpRecord};
+use crate::trace::{ByteChange, Event, OpRecord, RawWrite};
 use crate::{Error, Result};
+use std::ops::Range;
 
 pub struct Disk {
     bytes: Vec<u8>,
@@ -115,6 +116,40 @@ impl Disk {
     }
 }
 
+/// The op name every filesystem uses for a raw write, e.g. `write_raw 0x200 +512`.
+pub fn raw_write_op(offset: u64, len: usize) -> String {
+    format!("write_raw 0x{offset:x} +{len}")
+}
+
+/// Bounds-check, then write `bytes` at `offset` and report one `RawWrite`
+/// event. Journaled only if the caller has an operation open; the caller
+/// (a filesystem's `run_op`) owns begin/end and history. Nothing is written
+/// on `OutOfBounds`, so a rollback has nothing to undo. Empty `bytes` is
+/// bounds-checked but records no `ByteChange` and no event. Returns the
+/// absolute byte range written.
+pub fn raw_write(disk: &mut Disk, offset: u64, bytes: &[u8]) -> Result<Range<usize>> {
+    let disk_len = disk.len() as u64;
+    let len = bytes.len() as u64;
+    let Some(end) = offset.checked_add(len).filter(|&e| e <= disk_len) else {
+        return Err(Error::OutOfBounds {
+            offset,
+            len,
+            disk_len,
+        });
+    };
+    // Both are <= disk.len(), which fits in usize by construction.
+    let (start, end) = (offset as usize, end as usize);
+    if bytes.is_empty() {
+        return Ok(start..start);
+    }
+    disk.write(start, bytes);
+    disk.event(Box::new(RawWrite {
+        offset: start,
+        len: bytes.len(),
+    }));
+    Ok(start..end)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -220,6 +255,105 @@ mod tests {
         disk.write(4, &[1, 2, 3, 4]);
         assert_eq!(disk.sector(1), &[1, 2, 3, 4]);
         assert_eq!(disk.sector(2), &[0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn raw_write_op_formats_lowercase_hex_and_length() {
+        assert_eq!(raw_write_op(512, 3), "write_raw 0x200 +3");
+        assert_eq!(raw_write_op(0, 0), "write_raw 0x0 +0");
+        assert_eq!(raw_write_op(0xABCD, 16), "write_raw 0xabcd +16");
+    }
+
+    #[test]
+    fn raw_write_inside_an_op_records_change_and_event() {
+        let mut disk = Disk::new(512, 2);
+        disk.begin_op("t");
+        assert_eq!(raw_write(&mut disk, 512, &[1, 2, 3]), Ok(512..515));
+        let record = disk.end_op();
+        assert_eq!(
+            record.changes,
+            vec![ByteChange {
+                offset: 512,
+                before: vec![0, 0, 0],
+                after: vec![1, 2, 3]
+            }]
+        );
+        assert_eq!(record.event_kinds(), vec!["raw_write"]);
+        assert_eq!(record.events[0].region(), Some(512..515));
+        assert_eq!(record.events[0].to_string(), "wrote 3 raw bytes at 0x200");
+        assert_eq!(record.changed_sectors(512), vec![1]);
+        assert_eq!(disk.read(512, 3), &[1, 2, 3]);
+    }
+
+    #[test]
+    fn raw_write_outside_an_op_changes_bytes_without_recording() {
+        let mut disk = Disk::new(512, 1);
+        assert_eq!(raw_write(&mut disk, 5, &[9, 9]), Ok(5..7));
+        assert_eq!(disk.read(5, 2), &[9, 9]);
+        assert!(!disk.op_open());
+    }
+
+    #[test]
+    fn raw_write_rejects_ranges_past_the_end_without_touching_the_disk() {
+        let mut disk = Disk::new(4, 1);
+        assert_eq!(
+            raw_write(&mut disk, 3, &[1, 2]),
+            Err(Error::OutOfBounds {
+                offset: 3,
+                len: 2,
+                disk_len: 4
+            })
+        );
+        assert_eq!(
+            raw_write(&mut disk, 4, &[1]),
+            Err(Error::OutOfBounds {
+                offset: 4,
+                len: 1,
+                disk_len: 4
+            })
+        );
+        assert_eq!(
+            raw_write(&mut disk, u64::MAX, &[1]),
+            Err(Error::OutOfBounds {
+                offset: u64::MAX,
+                len: 1,
+                disk_len: 4
+            })
+        );
+        assert_eq!(
+            raw_write(&mut disk, u64::MAX, &[]),
+            Err(Error::OutOfBounds {
+                offset: u64::MAX,
+                len: 0,
+                disk_len: 4
+            })
+        );
+        assert!(disk.as_bytes().iter().all(|&b| b == 0));
+        disk.begin_op("t");
+        assert!(raw_write(&mut disk, 3, &[1, 2]).is_err());
+        let record = disk.end_op();
+        assert!(record.changes.is_empty());
+        assert!(record.events.is_empty());
+    }
+
+    #[test]
+    fn raw_write_of_zero_bytes_is_bounds_checked_but_records_nothing() {
+        let mut disk = Disk::new(4, 1);
+        assert_eq!(raw_write(&mut disk, 4, &[]), Ok(4..4));
+        assert_eq!(raw_write(&mut disk, 1, &[]), Ok(1..1));
+        assert_eq!(
+            raw_write(&mut disk, 5, &[]),
+            Err(Error::OutOfBounds {
+                offset: 5,
+                len: 0,
+                disk_len: 4
+            })
+        );
+        disk.begin_op("t");
+        assert_eq!(raw_write(&mut disk, 2, &[]), Ok(2..2));
+        let record = disk.end_op();
+        assert!(record.changes.is_empty());
+        assert!(record.events.is_empty());
     }
 
     #[test]
