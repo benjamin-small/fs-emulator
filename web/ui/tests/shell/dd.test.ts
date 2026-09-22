@@ -203,6 +203,17 @@ describe("dd copies", () => {
     const none = await callErr(defs, "dd", {});
     expect(none.message).toBe("no input");
     expect(none.help).toContain("--if=");
+    // The engine hands a command an explicit null only at the terminal boundary (never
+    // mid-pipeline), but a caller driving `dd` directly could still pass one.
+    expect((await callErr(defs, "dd", {}, null)).message).toBe("no input");
+  });
+
+  it("treats an empty piped list, what the real engine sends for no pipe, as no input", async () => {
+    const { defs } = setup();
+    // browser-terminal's stream collector turns "nothing piped" into Value::List([]), not null
+    // (crates/bterm-core/src/stream.rs) -- `--if` alone must still work, and read normally.
+    const r = await call(defs, "dd", { flags: { if: "/dev/hda", count: "1" } }, []);
+    expect((r.value as BytesBlob).length).toBe(512);
   });
 
   it("discards into /dev/null and refuses /dev/zero and directories as sinks", async () => {

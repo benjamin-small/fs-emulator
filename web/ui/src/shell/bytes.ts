@@ -36,6 +36,18 @@ export function fromBytes(b: Uint8Array): BytesBlob {
   return { bytes: hex(b), length: b.length };
 }
 
+/**
+ * True when `v` carries real piped input. browser-terminal's stream collector turns a
+ * pipe with nothing written to it into `Value::List([])`, not `null` — only the
+ * terminal-boundary path (not a mid-pipeline command) ever hands a command `null`
+ * (`crates/bterm-core/src/stream.rs`, `crates/bterm-wasm/src/js_command.rs`). So a
+ * command deciding "was anything piped in?" must treat both `null` and `[]` as "no
+ * input", not just `null`.
+ */
+export function hasInput(v: Value | undefined): boolean {
+  return !(v === undefined || v === null || (Array.isArray(v) && v.length === 0));
+}
+
 export function decodeText(b: Uint8Array): string {
   return new TextDecoder("utf-8", { fatal: false }).decode(b);
 }

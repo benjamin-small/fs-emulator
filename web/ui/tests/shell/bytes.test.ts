@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BYTES_HELP, decodeText, fromBytes, hex, isBlob, toBytes, unhex } from "../../src/shell/bytes";
+import { BYTES_HELP, decodeText, fromBytes, hasInput, hex, isBlob, toBytes, unhex } from "../../src/shell/bytes";
 import { ShellError } from "../../src/shell/errors";
 
 const u8 = (...b: number[]) => new Uint8Array(b);
@@ -60,6 +60,20 @@ describe("toBytes (the pipe convention)", () => {
     expect((caught as ShellError).message).toBe("expected text or bytes, found a record");
     try { toBytes([["x"]]); } catch (e) { caught = e; }
     expect((caught as ShellError).message).toBe("expected text or bytes, found a list with nested values");
+  });
+});
+
+describe("hasInput", () => {
+  it("an empty list, null, and undefined are all 'nothing piped'", () => {
+    expect(hasInput([])).toBe(false);
+    expect(hasInput(null)).toBe(false);
+    expect(hasInput(undefined)).toBe(false);
+  });
+  it("anything else, including an empty string, is real input", () => {
+    expect(hasInput("")).toBe(true);
+    expect(hasInput([0])).toBe(true);
+    expect(hasInput(["a"])).toBe(true);
+    expect(hasInput(fromBytes(new Uint8Array()))).toBe(true);
   });
 });
 

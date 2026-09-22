@@ -1,6 +1,6 @@
 import type { CommandCtx, Value } from "./types";
 import { SIZE_HELP, parseSize } from "./addr";
-import { fromBytes, toBytes, type BytesBlob } from "./bytes";
+import { fromBytes, hasInput, toBytes, type BytesBlob } from "./bytes";
 import { ShellError, fsCall, wrapFs } from "./errors";
 import { selectPath, type ShellHost } from "./host";
 import type { Vfs } from "./vfs";
@@ -108,12 +108,12 @@ function readSource(host: ShellHost, vfs: Vfs, opts: DdOpts, input: Value): Uint
     return all.subarray(Math.min(start, all.length), Math.min(start, all.length) + len);
   };
   if (opts.if === undefined) {
-    if (input === null) {
+    if (!hasInput(input)) {
       throw new ShellError("no input", { help: "give --if=<path> or pipe bytes in, e.g. cat --bytes /mnt/a | dd --of=/mnt/b" });
     }
     return slice(toBytes(input));
   }
-  if (input !== null) {
+  if (hasInput(input)) {
     throw new ShellError("both --if and piped input given", { help: "drop --if to copy the piped bytes, or drop the pipe" });
   }
   const src = vfs.resolve(opts.if);

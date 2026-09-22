@@ -84,8 +84,13 @@ function bindArgs(args: CallArgs): { positionals: Value[]; flags: Record<string,
   return { positionals: args.positionals ?? [], flags: args.flags ?? {} };
 }
 
-/** Run one registered command the way the engine would: bound args, piped input, a fake ctx. */
-export async function call(defs: CommandDef[], name: string, args: CallArgs = [], input: Value = null): Promise<CallResult> {
+/**
+ * Run one registered command the way the engine would: bound args, piped input, a fake ctx.
+ * `input` defaults to `[]`, not `null` — browser-terminal's stream collector turns a pipe with
+ * nothing written to it into an empty list, and only ever hands a command `null` at the terminal
+ * boundary (never mid-pipeline), so `[]` is what a no-pipe command line actually receives.
+ */
+export async function call(defs: CommandDef[], name: string, args: CallArgs = [], input: Value = []): Promise<CallResult> {
   const def = defs.find((d) => d.spec.name === name);
   if (!def) throw new Error(`no command named "${name}" is registered`);
   const log: string[] = [];
@@ -97,7 +102,7 @@ export async function call(defs: CommandDef[], name: string, args: CallArgs = []
 }
 
 /** Like `call`, but the command must throw; returns what the engine would render. */
-export async function callErr(defs: CommandDef[], name: string, args: CallArgs = [], input: Value = null): Promise<ShellFailure> {
+export async function callErr(defs: CommandDef[], name: string, args: CallArgs = [], input: Value = []): Promise<ShellFailure> {
   try {
     await call(defs, name, args, input);
   } catch (e) {

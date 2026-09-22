@@ -72,6 +72,8 @@ describe("xxd command", () => {
     const none = await callErr(defs, "xxd", {});
     expect(none.message).toBe("nothing to dump");
     expect(none.help).toContain("| xxd");
+    // A caller driving `xxd` directly could still pass an explicit null.
+    expect((await callErr(defs, "xxd", {}, null)).message).toBe("nothing to dump");
     expect((await callErr(defs, "xxd", { positionals: ["/dev/zero"] })).message).toBe("/dev/zero: give --len");
     expect((await callErr(defs, "xxd", { positionals: ["/mnt"] })).message).toBe("/mnt: Is a directory");
     expect((await callErr(defs, "xxd", { positionals: ["/dev"] })).message).toBe("/dev: Is a directory");
@@ -80,6 +82,15 @@ describe("xxd command", () => {
     expect((await callErr(defs, "xxd", { positionals: ["/dev/hda"], flags: { offset: "0x1000000" } })).message)
       .toBe("0x1000000 is past the end of the disk (16777216 bytes)");
     expect((await callErr(defs, "xxd", { positionals: ["/dev/hda"], flags: { len: "2M" } })).help).toContain("--len");
+  });
+
+  it("treats an empty piped list, what the real engine sends for no pipe, as no input", async () => {
+    const { defs } = setup();
+    // browser-terminal's stream collector turns "nothing piped" into Value::List([]), not null
+    // (crates/bterm-core/src/stream.rs) -- `xxd` with no path and nothing piped must still refuse,
+    // not silently dump zero bytes.
+    const err = await callErr(defs, "xxd", {}, []);
+    expect(err.message).toBe("nothing to dump");
   });
 
   it("warns when dumping the disk or a file while rewound", async () => {

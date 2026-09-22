@@ -81,6 +81,8 @@ describe("write", () => {
     const none = await callErr(defs, "write", { positionals: ["/mnt/a.txt"] });
     expect(none.message).toBe("nothing to write");
     expect(none.help).toContain("echo hi | write");
+    // A caller driving `write` directly could still pass an explicit null.
+    expect((await callErr(defs, "write", { positionals: ["/mnt/a.txt"] }, null)).message).toBe("nothing to write");
     expect((await callErr(defs, "write", { positionals: ["/dev/hda"] }, "x")).message).toBe("/dev/hda: give --at <addr>");
     expect((await callErr(defs, "write", { positionals: ["/dev/hda"], flags: { at: "0", append: true } }, "x")).message).toBe("--append is not supported on /dev/hda");
     expect((await callErr(defs, "write", { positionals: ["/dev/hda"], flags: { at: "0" } }, "")).message).toBe("nothing to write");
@@ -90,6 +92,16 @@ describe("write", () => {
     expect((await callErr(defs, "write", { positionals: ["/"] }, "x")).message).toBe("/: Is a directory");
     expect((await callErr(defs, "write", { positionals: ["/dev/zero"] }, "x")).message).toBe("/dev/zero: cannot write to /dev/zero");
     expect((await callErr(defs, "write", { positionals: ["/mnt/nope/a.txt"] }, "x")).message).toBe("/mnt/nope/a.txt: No such file or directory");
+    expect(host.history).toEqual([]);
+  });
+
+  it("treats an empty piped list, what the real engine sends for no pipe, as no input", async () => {
+    const { host, defs } = setup();
+    // browser-terminal's stream collector turns "nothing piped" into Value::List([]), not null
+    // (crates/bterm-core/src/stream.rs) -- `write /mnt/x` with nothing piped must still refuse,
+    // not silently create a 0-byte file.
+    const err = await callErr(defs, "write", { positionals: ["/mnt/x"] }, []);
+    expect(err.message).toBe("nothing to write");
     expect(host.history).toEqual([]);
   });
 });

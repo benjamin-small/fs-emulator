@@ -4,7 +4,7 @@ import { clusterByteRange } from "../core/attribution";
 import { findEntrySlots } from "../core/direntry";
 import { buildChain } from "../core/fatchain";
 import { ADDR_HELP, SIZE_HELP, parseAddr, parseSize } from "./addr";
-import { decodeText, fromBytes, toBytes } from "./bytes";
+import { decodeText, fromBytes, hasInput, toBytes } from "./bytes";
 import { DD_MAX_BYTES, parseDd, runDd } from "./dd";
 import { ShellError, fsCall, wrapFs } from "./errors";
 import { atLatest, selectPath, type ShellHost } from "./host";
@@ -403,7 +403,7 @@ function mutationCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
     },
     fn: (args, input, ctx) => {
       const { r: target, display } = resolved(vfs, pathArg(args, 0));
-      if (input === null) throw new ShellError("nothing to write", { help: "pipe text or bytes in, e.g. echo hi | write /mnt/a.txt" });
+      if (!hasInput(input)) throw new ShellError("nothing to write", { help: "pipe text or bytes in, e.g. echo hi | write /mnt/a.txt" });
       const data = toBytes(input);
       const append = args.flags.append === true;
       const at = args.flags.at;
@@ -644,7 +644,7 @@ function ddXxdCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
 
     let bytes: Uint8Array;
     if (args.positionals.length === 0) {
-      if (input === null) throw new ShellError("nothing to dump", { help: "xxd <path>, or pipe bytes in: dd --if=/dev/hda --count=1 | xxd" });
+      if (!hasInput(input)) throw new ShellError("nothing to dump", { help: "xxd <path>, or pipe bytes in: dd --if=/dev/hda --count=1 | xxd" });
       bytes = slice(toBytes(input));
     } else {
       const { r: target, display } = resolved(vfs, String(args.positionals[0]));
