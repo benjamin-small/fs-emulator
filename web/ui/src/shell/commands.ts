@@ -386,6 +386,227 @@ export function readCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
   ];
 }
 
+/** `vol.stat(path)`, or `null` when the path does not exist; other failures become ShellErrors. */
+function statIfExists(vol: Volume, path: string, display: string): EntryInfo | null {
+  try {
+    return vol.stat(path);
+  } catch (e) {
+    if ((e as { code?: string }).code === "NotFound") return null;
+    throw wrapFs(display, e);
+  }
+}
+
+/** `write`, `mkdir`, `rmdir`, `rm`, `touch`, `cp`, `mkfs`: every disk change goes through `host.run`. */
+function mutationCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
+  const pathArg = (args: CommandArgs, i: number): string => String(args.positionals[i]);
+  const joinPath = (dir: string, name: string): string => (dir === "/" ? `/${name}` : `${dir}/${name}`);
+  const baseName = (p: string): string => p.slice(p.lastIndexOf("/") + 1);
+  /** The volume path behind `target`, or the ShellError for `/`, `/dev` and the devices. */
+  const volumePathOf = (target: Resolved, display: string, deviceMsg: string, dirMsg = "Is a directory"): string => {
+    if (target.kind === "volume") return target.path;
+    if (target.kind === "root" || target.kind === "dev") throw new ShellError(`${display}: ${dirMsg}`);
+    throw new ShellError(`${display}: ${deviceMsg}`);
+  };
+  const flagGiven = (v: unknown): boolean => v !== undefined && v !== null;
+
+  const write: CommandDef = {
+    spec: {
+      name: "write",
+      summary: "Write piped text or bytes to a file, or to /dev/hda --at <addr>",
+      required: [{ name: "path", shape: "str", desc: "/mnt/... or /dev/hda" }],
+      flags: [
+        { long: "append", desc: "read the file, append the input and rewrite the whole file" },
+        { long: "at", shape: "str", desc: `disk address for /dev/hda (${ADDR_HELP})` },
+      ],
+    },
+    fn: (args, input, ctx) => {
+      const { r: target, display } = resolved(vfs, pathArg(args, 0));
+      if (input === null) throw new ShellError("nothing to write", { help: "pipe text or bytes in, e.g. echo hi | write /mnt/a.txt" });
+      const data = toBytes(input);
+      const append = args.flags.append === true;
+      const at = args.flags.at;
+      if (target.kind === "null") {
+        ctx.log(`${data.length} bytes -> /dev/null`);
+        return;
+      }
+      if (target.kind === "zero") throw new ShellError("/dev/zero: cannot write to /dev/zero");
+      if (target.kind === "raw") {
+        if (append) throw new ShellError("--append is not supported on /dev/hda", { help: "give --at <addr> to place the bytes" });
+        if (!flagGiven(at)) throw new ShellError("/dev/hda: give --at <addr>", { help: ADDR_HELP });
+        if (data.length === 0) throw new ShellError("nothing to write", { help: "a raw write needs at least one byte" });
+        const off = parseAddr(String(at), host.vol.geometry());
+        const disk = host.vol.sectorCount() * host.vol.sectorSize();
+        if (off + data.length > disk) throw new ShellError("/dev/hda: Range runs past the end of the disk", { code: "OutOfBounds" });
+        fsCall(display, () => host.run((v) => v.writeRaw(off, data)));
+        ctx.log(`${data.length} bytes -> /dev/hda at 0x${off.toString(16)}`);
+        return;
+      }
+      if (target.kind !== "volume") throw new ShellError(`${display}: Is a directory`);
+      if (flagGiven(at)) throw new ShellError("--at only applies to /dev/hda");
+      const path = target.path;
+      const existing = statIfExists(host.vol, path, display);
+      if (existing?.isDir) throw new ShellError(`${display}: Is a directory`);
+      let out = data;
+      if (append && existing) {
+        const old = fsCall(display, () => host.vol.readFile(path));
+        out = new Uint8Array(old.length + data.length);
+        out.set(old, 0);
+        out.set(data, old.length);
+      }
+      const had = existing !== null;
+      fsCall(display, () => host.run((v) => (had ? v.writeFile(path, out) : v.createFile(path, out))));
+      if (append && had) ctx.log(`appended ${data.length} bytes by rewriting the whole file (FAT has no append; the old chain is freed and reallocated)`);
+      ctx.log(`${out.length} bytes -> ${display}`);
+      selectPath(host, path);
+    },
+  };
+
+  const mkdir: CommandDef = {
+    spec: {
+      name: "mkdir",
+      summary: "Create a directory under /mnt",
+      required: [{ name: "path", shape: "str", desc: "/mnt/..." }],
+    },
+    fn: (args) => {
+      const { r: target, display } = resolved(vfs, pathArg(args, 0));
+      const path = volumePathOf(target, display, "cannot create a directory on a device", "File exists");
+      if (path === "/") throw new ShellError("/mnt: File exists");
+      fsCall(display, () => host.run((v) => v.createDir(path)));
+      selectPath(host, path);
+    },
+  };
+
+  const rmdir: CommandDef = {
+    spec: {
+      name: "rmdir",
+      summary: "Remove an empty directory",
+      required: [{ name: "path", shape: "str", desc: "/mnt/..." }],
+    },
+    fn: (args) => {
+      const { r: target, display } = resolved(vfs, pathArg(args, 0));
+      const path = volumePathOf(target, display, "Not a directory", "cannot remove a virtual directory");
+      if (path === "/") throw new ShellError("/mnt: cannot remove the mount point");
+      const info = statIfExists(host.vol, path, display);
+      if (info === null) throw new ShellError(`${display}: No such file or directory`, { code: "NotFound" });
+      if (!info.isDir) throw new ShellError(`${display}: Not a directory`, { code: "NotADirectory" });
+      fsCall(display, () => host.run((v) => v.removeDir(path)));
+      host.select(null);
+    },
+  };
+
+  const rm: CommandDef = {
+    spec: {
+      name: "rm",
+      summary: "Delete a file",
+      required: [{ name: "path", shape: "str", desc: "/mnt/..." }],
+    },
+    fn: (args) => {
+      const { r: target, display } = resolved(vfs, pathArg(args, 0));
+      const path = volumePathOf(target, display, "cannot remove a device");
+      if (path === "/") throw new ShellError("/mnt: Is a directory", { help: "use rmdir" });
+      const info = statIfExists(host.vol, path, display);
+      if (info === null) throw new ShellError(`${display}: No such file or directory`, { code: "NotFound" });
+      if (info.isDir) throw new ShellError(`${display}: Is a directory`, { help: "use rmdir", code: "IsADirectory" });
+      fsCall(display, () => host.run((v) => v.deleteFile(path)));
+      host.select(null);
+    },
+  };
+
+  const touch: CommandDef = {
+    spec: {
+      name: "touch",
+      summary: "Create an empty file (an existing file is left alone)",
+      required: [{ name: "path", shape: "str", desc: "/mnt/..." }],
+    },
+    fn: (args, _input, ctx) => {
+      const { r: target, display } = resolved(vfs, pathArg(args, 0));
+      const path = volumePathOf(target, display, "cannot touch a device");
+      if (path === "/") throw new ShellError("/mnt: Is a directory");
+      const info = statIfExists(host.vol, path, display);
+      if (info?.isDir) throw new ShellError(`${display}: Is a directory`);
+      if (info) {
+        ctx.log(`${display} exists; FAT explorer has no timestamp-only update, nothing written`);
+      } else {
+        fsCall(display, () => host.run((v) => v.createFile(path, new Uint8Array(0))));
+        ctx.log(`created empty ${display}`);
+      }
+      selectPath(host, path);
+    },
+  };
+
+  const cp: CommandDef = {
+    spec: {
+      name: "cp",
+      summary: "Copy a file (into a directory keeps its name)",
+      required: [
+        { name: "src", shape: "str", desc: "/mnt/file" },
+        { name: "dst", shape: "str", desc: "/mnt/file or /mnt/dir" },
+      ],
+    },
+    fn: (args, _input, ctx) => {
+      const { r: src, display: srcDisplay } = resolved(vfs, pathArg(args, 0));
+      const { r: dst, display: dstDisplay0 } = resolved(vfs, pathArg(args, 1));
+      const srcPath = volumePathOf(src, srcDisplay, "use dd for devices");
+      const data = fsCall(srcDisplay, () => host.vol.readFile(srcPath));
+      let dstPath = volumePathOf(dst, dstDisplay0, "use dd for devices");
+      let dstDisplay = dstDisplay0;
+      let info = statIfExists(host.vol, dstPath, dstDisplay);
+      if (info?.isDir) {
+        dstPath = joinPath(canonicalize(host.vol, dstPath), baseName(canonicalize(host.vol, srcPath)));
+        dstDisplay = vfs.toVirtual(dstPath);
+        info = statIfExists(host.vol, dstPath, dstDisplay);
+        if (info?.isDir) throw new ShellError(`${dstDisplay}: Is a directory`);
+      }
+      const had = info !== null;
+      const path = dstPath;
+      fsCall(dstDisplay, () => host.run((v) => (had ? v.writeFile(path, data) : v.createFile(path, data))));
+      ctx.log(`${data.length} bytes -> ${dstDisplay}`);
+      selectPath(host, path);
+    },
+  };
+
+  const mkfs: CommandDef = {
+    spec: {
+      name: "mkfs",
+      summary: "Format /dev/hda as FAT16 (clears the timeline)",
+      flags: [
+        { long: "sectors", shape: "int", desc: "total sectors (default 32768 = 16 MB)" },
+        { long: "spc", shape: "int", desc: "sectors per cluster (default 4)" },
+        { long: "label", shape: "str", desc: "volume label, up to 11 characters" },
+        { long: "root-entries", shape: "int", desc: "root directory entries (default 512)" },
+        { long: "fats", shape: "int", desc: "FAT copies (default 2)" },
+        { long: "reserved", shape: "int", desc: "reserved sectors (default 1)" },
+      ],
+    },
+    fn: (args, _input, ctx) => {
+      const int = (name: string): number | undefined => {
+        const v = args.flags[name];
+        if (!flagGiven(v)) return undefined;
+        if (typeof v !== "number" || !Number.isInteger(v) || v < 0) throw new ShellError(`--${name} must be a non-negative integer`);
+        return v;
+      };
+      const options: FormatOptions = {};
+      const sectors = int("sectors");
+      if (sectors !== undefined) options.totalSectors = sectors;
+      const spc = int("spc");
+      if (spc !== undefined) options.sectorsPerCluster = spc;
+      const rootEntries = int("root-entries");
+      if (rootEntries !== undefined) options.rootEntries = rootEntries;
+      const fats = int("fats");
+      if (fats !== undefined) options.fatCount = fats;
+      const reserved = int("reserved");
+      if (reserved !== undefined) options.reservedSectors = reserved;
+      const label = args.flags.label;
+      if (flagGiven(label)) options.volumeLabel = String(label);
+      fsCall("/dev/hda", () => host.format(options));
+      vfs.cwd = "/mnt";
+      ctx.log("formatted /dev/hda as FAT16; the timeline was cleared");
+    },
+  };
+
+  return [write, mkdir, rmdir, rm, touch, cp, mkfs];
+}
+
 /** `dd`, `xxd` and its alias `hexdump`. */
 function ddXxdCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
   const dd: CommandDef = {
@@ -490,5 +711,5 @@ function ddXxdCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
  * and is not registered here. `vfs` holds the one working directory per page.
  */
 export function createCommands(host: ShellHost, vfs: Vfs = new Vfs()): CommandDef[] {
-  return [...readCommands(host, vfs), ...ddXxdCommands(host, vfs)];
+  return [...readCommands(host, vfs), ...mutationCommands(host, vfs), ...ddXxdCommands(host, vfs)];
 }
