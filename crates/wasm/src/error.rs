@@ -19,6 +19,7 @@ pub fn code_of(err: &fs_core::Error) -> &'static str {
         InvalidGeometry(_) => "InvalidGeometry",
         CorruptImage(_) => "CorruptImage",
         Unsupported(_) => "Unsupported",
+        OutOfBounds { .. } => "OutOfBounds",
     }
 }
 

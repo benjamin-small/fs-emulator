@@ -16,6 +16,12 @@ pub enum Error {
     InvalidGeometry(String),
     CorruptImage(String),
     Unsupported(String),
+    /// A raw byte range that does not lie inside the disk.
+    OutOfBounds {
+        offset: u64,
+        len: u64,
+        disk_len: u64,
+    },
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -36,6 +42,14 @@ impl fmt::Display for Error {
             Error::InvalidGeometry(msg) => write!(f, "invalid geometry: {msg}"),
             Error::CorruptImage(msg) => write!(f, "corrupt image: {msg}"),
             Error::Unsupported(msg) => write!(f, "unsupported: {msg}"),
+            Error::OutOfBounds {
+                offset,
+                len,
+                disk_len,
+            } => write!(
+                f,
+                "out of bounds: {len} bytes at offset {offset} run past the end of the {disk_len}-byte disk"
+            ),
         }
     }
 }
@@ -52,6 +66,15 @@ mod tests {
         assert_eq!(
             Error::InvalidGeometry("too small".into()).to_string(),
             "invalid geometry: too small"
+        );
+        assert_eq!(
+            Error::OutOfBounds {
+                offset: 3,
+                len: 2,
+                disk_len: 4
+            }
+            .to_string(),
+            "out of bounds: 2 bytes at offset 3 run past the end of the 4-byte disk"
         );
     }
 
