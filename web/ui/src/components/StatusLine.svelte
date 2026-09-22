@@ -23,6 +23,10 @@
   const message = $derived.by(() => {
     const s = volume.status;
     if (!s) return "";
+    // A CorruptImage status while the volume is actually corrupt came from a raw write, not
+    // from loading a foreign image, so say what is wrong with this volume instead of the
+    // load-time phrase above.
+    if (s.code === "CorruptImage" && volume.corruption) return volume.corruption;
     return (s.code && FRIENDLY[s.code]) || s.text;
   });
 </script>
@@ -31,6 +35,8 @@
     <span>Viewing step {volume.cursor + 1} of {volume.history.length}</span>
     <button onclick={() => volume.backToNow()}>Back to now</button>
   {/if}
-  {#if volume.corruption && !volume.status}<span>Volume not mounted: {volume.corruption}</span>{/if}
+  <!-- Shown whenever the volume is unmounted, status or no status: a failed op does not make
+       the corruption go away, and the two say different things. -->
+  {#if volume.corruption}<span>Volume not mounted: {volume.corruption}</span>{/if}
   {#if volume.status}<span class="err">{message}{#if volume.status.code}{" "}<span class="muted">{volume.status.code}</span>{/if}</span>{/if}
 </div>

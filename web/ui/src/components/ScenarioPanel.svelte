@@ -57,6 +57,9 @@
   }
 
   function onKeydown(e: KeyboardEvent) {
+    // A modifier means the chord belongs to the browser or the OS (Cmd-N, Cmd-P), so a
+    // scenario step is not ours to advance; the same guard App.svelte's handler uses.
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
     if (!scenarios.current || inTextEntry(e)) return;
     if (e.key === "n") advance();
     else if (e.key === "p") scenarios.prev();
