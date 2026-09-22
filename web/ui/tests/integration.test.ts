@@ -41,7 +41,7 @@ describe("package integration", () => {
     const root = g.firstRootDirSector * g.bytesPerSector;
     expect(findEntrySlots(vol, g, fat, owners, "/My long name.txt")).toEqual({ start: root, end: root + 3 * 32 });   // 2 LFN + short
     expect(findEntrySlots(vol, g, fat, owners, "/D")).toEqual({ start: root + 3 * 32, end: root + 4 * 32 });
-    const dStart = g.firstDataSector * g.bytesPerSector; // /D is cluster 2
+    const dStart = clusterByteRange(g, owners.find((o) => o.path === "/D")!.firstCluster).start; // /D's own cluster
     expect(findEntrySlots(vol, g, fat, owners, "/D/inner.txt")).toEqual({ start: dStart + 2 * 32, end: dStart + 3 * 32 });   // after . and ..
     expect(findEntrySlots(vol, g, fat, owners, "/nope")).toBeNull();
     expect(findEntrySlots(vol, g, fat, owners, "/")).toBeNull();
