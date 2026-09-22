@@ -47,7 +47,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, [tabindex]:fo
 .hexview { overflow: auto; height: 100%; position: relative; padding: 0; }
 .spacer { position: relative; }
 .window { position: absolute; left: 0; right: 0; will-change: transform; }
-.row { display: grid; grid-template-columns: 9ch 1fr 17ch auto; gap: 12px; height: var(--row-h); line-height: var(--row-h); padding-left: 10px; border-left: 3px solid transparent; white-space: pre; }
+/* Fixed columns sized in the dump's mono font: offset (8 chars), 16 x 3ch hex cells, 16 x 1ch
+   ASCII cells, then whatever is left for the sector/cluster label. Rows with and without a
+   label must place the hex and ASCII columns identically. */
+.row { display: grid; grid-template-columns: 8ch 48ch 16ch minmax(0, 1fr); gap: 12px; height: var(--row-h); line-height: var(--row-h); padding-left: 10px; padding-right: 8px; border-left: 3px solid transparent; white-space: pre; font: var(--dump-size)/var(--row-h) var(--font-mono); }
 .row.sector-start { border-top: 1px solid var(--hairline); }
 .row.cluster-start { border-top-color: var(--ink-muted); }
 .row.own-1 { border-left-color: var(--own-1); } .row.own-1 .b { background: color-mix(in srgb, var(--own-1) 14%, transparent); }
@@ -68,7 +71,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, [tabindex]:fo
 .is-remnant { background-image: repeating-linear-gradient(45deg, transparent 0 3px, color-mix(in srgb, var(--ink-muted) 35%, transparent) 3px 4px); }
 .is-cur { outline: 2px solid var(--focus); }
 .gap { display: block; width: 100%; height: var(--row-h); border: 0; background: transparent; color: var(--ink-muted); text-align: left; padding-left: 10px; }
-.lbl { font: 11px var(--font-display); }
+.lbl { grid-column: 4; font: 11px/var(--row-h) var(--font-display); text-align: right; overflow: hidden; text-overflow: ellipsis; }
 @keyframes diffin { from { background: transparent; } }
 
 /* Replay staleness notes (panels that always describe the latest state) */
