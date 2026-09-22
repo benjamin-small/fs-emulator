@@ -394,7 +394,8 @@ describe("attribution", () => {
     expect(clusterOfSector(geo, 97)).toBe(2);
     expect(clusterOfSector(geo, 100)).toBe(2);
     expect(clusterOfSector(geo, 101)).toBe(3);
-    expect(clusterOfSector(geo, 32767)).toBe(8168);
+    expect(clusterOfSector(geo, 32764)).toBe(8168);
+    expect(clusterOfSector(geo, 32767)).toBeUndefined(); // past the last full cluster
     expect(clusterByteRange(geo, 2)).toEqual({ start: 97 * 512, end: 97 * 512 + 2048 });
   });
   it("attributes metadata regions", () => {
