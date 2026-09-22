@@ -4,6 +4,7 @@
   import FatMap from "./components/FatMap.svelte";
   import HexView from "./components/HexView.svelte";
   import Inspector from "./components/Inspector.svelte";
+  import ScenarioPanel from "./components/ScenarioPanel.svelte";
   import StatusLine from "./components/StatusLine.svelte";
   import StepPanel from "./components/StepPanel.svelte";
   import StringsPanel from "./components/StringsPanel.svelte";
@@ -23,7 +24,7 @@
 <div class="app">
   <header class="topbar">
     <h1>FAT explorer</h1>
-    <div id="scenario-slot"></div>
+    <div id="scenario-slot"><ScenarioPanel /></div>
     <StatusLine />
   </header>
   <div id="ribbon-slot" class="ribbon-slot"></div>
