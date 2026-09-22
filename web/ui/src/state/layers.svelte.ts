@@ -1,4 +1,5 @@
 import { clusterByteRange } from "../core/attribution";
+import { findEntrySlots } from "../core/direntry";
 import { buildChain } from "../core/fatchain";
 import { intervalsToSectors, normalize, type Interval } from "../core/intervals";
 import { selection } from "./selection.svelte";
@@ -22,7 +23,10 @@ export class LayersStore {
     return owner ? buildChain(volume.fat, owner.firstCluster) : [];
   });
 
-  sel: Interval[] = $derived(normalize([...this.chain.map((c) => clusterByteRange(volume.geometry, c)), ...this.extraSel]));
+  /** Byte range of the selected path's LFN + short directory entries, if any (Task 6). */
+  entry: Interval | null = $derived(selection.path ? (volume.epoch, findEntrySlots(volume.vol, volume.geometry, volume.fat, volume.owners, selection.path)) : null);
+
+  sel: Interval[] = $derived(normalize([...this.chain.map((c) => clusterByteRange(volume.geometry, c)), ...(this.entry ? [this.entry] : []), ...this.extraSel]));
 
   pinnedSectors: Set<number> = $derived.by(() => {
     const s = new Set<number>([...intervalsToSectors(this.diff, volume.sectorSize), ...intervalsToSectors(this.sel, volume.sectorSize)]);
