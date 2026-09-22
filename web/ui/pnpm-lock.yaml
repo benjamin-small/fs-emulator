@@ -11,6 +11,12 @@ importers:
 
   .:
     dependencies:
+      '@benjamin-small/browser-terminal':
+        specifier: 0.2.0
+        version: 0.2.0
+      '@xterm/xterm':
+        specifier: ^6.0.0
+        version: 6.0.0
       fs-emulator-wasm:
         specifier: file:../../crates/wasm/pkg
         version: file:../../crates/wasm/pkg
@@ -44,6 +50,9 @@ importers:
         version: 3.2.7(@types/node@26.6.2)
 
 packages:
+
+  '@benjamin-small/browser-terminal@0.2.0':
+    resolution: {integrity: sha512-10+SBAPVcehmiR8JJOfTIAn3cWEwLzkQVpvbRGifQ1oOVClbMcoAhcA+UyFLEw/b6ZEchKDf5kMHg7vx3jDmYQ==}
 
   '@esbuild/aix-ppc64@0.25.12':
     resolution: {integrity: sha512-Hhmwd6CInZ3dwpuGTF8fJG6yoWmsToE+vYgD4nytZVxcu1ulHpUQRAB1UJ8+N1Am3Mz4+xOByoQoSZf4D+CpkA==}
@@ -518,6 +527,12 @@ packages:
   '@vitest/utils@3.2.7':
     resolution: {integrity: sha512-x6BDOd7dyo3PFLY3I9/HJ25X/6OurhGXk2/B9gOZNPF7XDVjeBK4k01lQE5uvDpbuheErh91qYuE1E2OEjK3Rw==}
 
+  '@xterm/addon-fit@0.11.0':
+    resolution: {integrity: sha512-jYcgT6xtVYhnhgxh3QgYDnnNMYTcf8ElbxxFzX0IZo+vabQqSPAjC3c1wJrKB5E19VwQei89QCiZZP86DCPF7g==}
+
+  '@xterm/xterm@6.0.0':
+    resolution: {integrity: sha512-TQwDdQGtwwDt+2cgKDLn0IRaSxYu1tSUjgKarSDkUM0ZNiSRXFpjxEsvc/Zgc5kq5omJ+V0a8/kIM2WD3sMOYg==}
+
   acorn@8.18.0:
     resolution: {integrity: sha512-lGq+9yr1/GuAWaVYIHRjvvySG5/4VfKIvC8EWxStPdcDh/Ka7FG3twP6v4d5BkravUilhIAsG4Qj83t02LWUPQ==}
     engines: {node: '>=0.4.0'}
@@ -844,6 +859,11 @@ packages:
 
 snapshots:
 
+  '@benjamin-small/browser-terminal@0.2.0':
+    dependencies:
+      '@xterm/addon-fit': 0.11.0
+      '@xterm/xterm': 6.0.0
+
   '@esbuild/aix-ppc64@0.25.12':
     optional: true
 
@@ -1159,6 +1179,10 @@ snapshots:
       '@vitest/pretty-format': 3.2.7
       loupe: 3.2.1
       tinyrainbow: 2.0.0
+
+  '@xterm/addon-fit@0.11.0': {}
+
+  '@xterm/xterm@6.0.0': {}
 
   acorn@8.18.0: {}
 

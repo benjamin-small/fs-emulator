@@ -8,5 +8,6 @@ export default defineConfig({
   base: process.env.VITE_BASE ?? "/",
   plugins: [svelte(), wasm(), topLevelAwait()],
   build: { target: "esnext" },
-  optimizeDeps: { exclude: ["fs-emulator-wasm"] },
+  // Both packages load their .wasm via `new URL(..., import.meta.url)`; pre-bundling would break that.
+  optimizeDeps: { exclude: ["fs-emulator-wasm", "@benjamin-small/browser-terminal"] },
 });
