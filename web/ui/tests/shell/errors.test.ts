@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Volume } from "../../src/lib/wasm";
-import { ShellError, fsPhrase, wrapFs } from "../../src/shell/errors";
+import { ShellError, fsCall, fsPhrase, wrapFs } from "../../src/shell/errors";
 import { atLatest, statusToError, type ShellHost } from "../../src/shell/host";
 
 describe("ShellError", () => {
@@ -65,5 +65,22 @@ describe("host helpers", () => {
     expect(e.message).toBe("disk full");
     expect(e.code).toBe("DiskFull");
     expect(statusToError(null).message).toBe("the operation failed without a message");
+  });
+  it("statusToError stays wrappable, so a command's fsCall still adds the path and the phrase", () => {
+    // The store host throws it from inside a command's fsCall, exactly where a raw wasm
+    // error would land. A ShellError would pass through wrapFs untouched and print the
+    // bare store text, so the app would say "already exists" where the tests say
+    // "/mnt/A.TXT: File exists".
+    let caught: unknown;
+    try {
+      fsCall("/mnt/A.TXT", () => {
+        throw statusToError({ text: "already exists", code: "AlreadyExists" });
+      });
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(ShellError);
+    expect((caught as ShellError).message).toBe("/mnt/A.TXT: File exists");
+    expect((caught as ShellError).code).toBe("AlreadyExists");
   });
 });

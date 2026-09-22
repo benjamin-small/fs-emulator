@@ -1,5 +1,4 @@
 import type { FormatOptions, OpRecord, Volume } from "../lib/wasm";
-import { ShellError } from "./errors";
 import { canonicalize } from "./vfs";
 
 /**
@@ -30,8 +29,15 @@ export function selectPath(host: ShellHost, path: string): void {
   host.select(canon === "/" ? null : canon);
 }
 
-/** What the store adapter throws when `VolumeStore.run`/`format` left a status instead of a record. */
+/**
+ * What the store adapter throws when `VolumeStore.run`/`format` left a status instead of a
+ * record. A plain `Error`, deliberately not a `ShellError`: the store's text is the raw wasm
+ * message, and every `host.run`/`host.format` call sits inside an `fsCall`, which passes a
+ * ShellError through untouched but wraps anything else as `${display}: ${phrase}`. So the
+ * app prints "/mnt/A.TXT: File exists" like the tests do, instead of the bare "already exists".
+ */
 export function statusToError(s: { text: string; code?: string } | null): Error & { code?: string } {
-  if (s === null) return new ShellError("the operation failed without a message");
-  return new ShellError(s.text, { code: s.code });
+  const e: Error & { code?: string } = new Error(s === null ? "the operation failed without a message" : s.text);
+  if (s?.code !== undefined) e.code = s.code;
+  return e;
 }
