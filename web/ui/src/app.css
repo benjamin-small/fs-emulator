@@ -76,6 +76,18 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, [tabindex]:fo
 .row-btn .meta { flex-shrink: 0; font-size: 11px; }
 .row-btn.selected, .row-btn[aria-selected="true"] { border-left-color: var(--focus); background: color-mix(in srgb, var(--focus) 10%, transparent); }
 
+/* Step panel */
+.step .events { list-style: none; padding: 0; margin: 8px 0 0; display: flex; flex-direction: column; gap: 2px; font-size: 12px; }
+
+/* Timeline */
+.timeline { padding: 4px 2px; }
+.tl-controls { display: flex; align-items: center; gap: 6px; }
+.tl-range { flex: 1; }
+.tl-steps { display: flex; margin-top: 4px; }
+.tl-step { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; text-align: center; border-radius: 0; border-width: 1px 0 0 1px; }
+.tl-step:last-child { border-right-width: 1px; }
+.tl-step.current { background: color-mix(in srgb, var(--focus) 15%, transparent); border-color: var(--focus); }
+
 /* Actions panel */
 .actions fieldset { border: 0; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; }
 .actions fieldset:disabled { opacity: 0.5; }

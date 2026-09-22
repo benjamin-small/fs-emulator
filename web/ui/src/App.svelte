@@ -4,7 +4,20 @@
   import HexView from "./components/HexView.svelte";
   import Inspector from "./components/Inspector.svelte";
   import StatusLine from "./components/StatusLine.svelte";
+  import StepPanel from "./components/StepPanel.svelte";
+  import Timeline from "./components/Timeline.svelte";
+  import { volume } from "./state/volume.svelte";
+
+  // `[` / `]` scrub the timeline from anywhere except a text field, so typing a
+  // path or file content in the Actions panel isn't hijacked.
+  function onKeydown(e: KeyboardEvent) {
+    const tag = (e.target as HTMLElement | null)?.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA") return;
+    if (e.key === "[") volume.seek(volume.cursor - 1);
+    else if (e.key === "]") volume.seek(volume.cursor + 1);
+  }
 </script>
+<svelte:window onkeydown={onKeydown} />
 <div class="app">
   <header class="topbar">
     <h1>FAT explorer</h1>
@@ -22,8 +35,8 @@
     <aside class="col right">
       <Inspector />
       <section class="panel"><h2>Strings</h2><p class="muted">Task 9</p></section>
-      <section class="panel"><h2>Step</h2><p class="muted">Task 7</p></section>
+      <StepPanel />
     </aside>
   </div>
-  <footer id="timeline-slot"></footer>
+  <footer id="timeline-slot"><Timeline /></footer>
 </div>
