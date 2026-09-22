@@ -22,6 +22,13 @@ pub trait FileSystem {
     fn stat(&self, path: &str) -> Result<EntryInfo>;
     /// The timestamp subsequent operations stamp onto entries.
     fn set_now(&mut self, now: DateTime);
+    /// Write bytes at an absolute disk offset, journaled like any other
+    /// operation (op name from `raw_write_op`). `OutOfBounds` if the range
+    /// runs past the disk. The filesystem re-reads any metadata the range
+    /// covers; a write that leaves its boot sector or superblock unparsable
+    /// makes path operations fail with `CorruptImage` until a later raw
+    /// write repairs it.
+    fn write_raw(&mut self, offset: u64, bytes: &[u8]) -> Result<OpRecord>;
 
     fn disk(&self) -> &Disk;
     fn layout(&self) -> Vec<Region>;
@@ -36,6 +43,7 @@ mod tests {
 
     struct NullFs {
         disk: Disk,
+        history: Vec<OpRecord>,
     }
 
     impl FileSystem for NullFs {
@@ -67,6 +75,14 @@ mod tests {
             Err(Error::NotFound)
         }
         fn set_now(&mut self, _: DateTime) {}
+        fn write_raw(&mut self, offset: u64, bytes: &[u8]) -> Result<OpRecord> {
+            self.disk.begin_op(crate::raw_write_op(offset, bytes.len()));
+            let written = crate::raw_write(&mut self.disk, offset, bytes);
+            let record = self.disk.end_op();
+            written?;
+            self.history.push(record.clone());
+            Ok(record)
+        }
         fn disk(&self) -> &Disk {
             &self.disk
         }
@@ -82,7 +98,7 @@ mod tests {
             Vec::new()
         }
         fn history(&self) -> &[OpRecord] {
-            &[]
+            &self.history
         }
     }
 
@@ -90,9 +106,33 @@ mod tests {
     fn trait_is_object_safe() {
         let fs: Box<dyn FileSystem> = Box::new(NullFs {
             disk: Disk::new(512, 1),
+            history: Vec::new(),
         });
         assert_eq!(fs.fs_type(), "null");
         assert_eq!(fs.layout()[0].kind, crate::layout::RegionKind::Other);
         assert_eq!(fs.list_dir("/").unwrap(), Vec::new());
+    }
+
+    #[test]
+    fn write_raw_is_journaled_through_the_trait() {
+        let mut fs: Box<dyn FileSystem> = Box::new(NullFs {
+            disk: Disk::new(512, 1),
+            history: Vec::new(),
+        });
+        let record = fs.write_raw(0, &[9]).unwrap();
+        assert_eq!(record.op, "write_raw 0x0 +1");
+        assert_eq!(record.event_kinds(), vec!["raw_write"]);
+        assert_eq!(fs.history().len(), 1);
+        assert_eq!(fs.disk().read(0, 1), &[9]);
+        assert_eq!(
+            fs.write_raw(512, &[1]).unwrap_err(),
+            Error::OutOfBounds {
+                offset: 512,
+                len: 1,
+                disk_len: 512
+            }
+        );
+        assert_eq!(fs.history().len(), 1);
+        assert!(!fs.disk().op_open());
     }
 }
