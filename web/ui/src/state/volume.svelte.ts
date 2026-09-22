@@ -16,6 +16,10 @@ export class VolumeStore {
   history = $state.raw<OpRecord[]>([]);
   cursor = $state(-1);
   status = $state<{ text: string; code?: string } | null>(null);
+  /** The `CorruptImage` message while a raw write has left the boot sector unparsable,
+   *  `null` while mounted. Refreshed alongside `owners`/`fat`, so it tracks the volume
+   *  through every op, format, and load. */
+  corruption = $state<string | null>(null);
 
   attribution: AttributionTable = $derived(buildAttribution(this.geometry, this.layout, this.owners));
   sectorSize = $derived(this.geometry.bytesPerSector);
@@ -39,6 +43,9 @@ export class VolumeStore {
   private refreshMeta() {
     this.owners = this.vol.clusterOwners();
     this.fat = this.vol.fatEntries(0);
+    // `corruption()` will throw `NotFat` on a non-FAT volume in the future; fall back to
+    // "not corrupt" rather than let that leave `this.corruption` stale.
+    try { this.corruption = this.vol.corruption(); } catch { this.corruption = null; }
   }
 
   format(options?: FormatOptions) {
