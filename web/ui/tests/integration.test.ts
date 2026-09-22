@@ -4,8 +4,39 @@ import { applyChanges, changedSectors } from "../src/core/patch";
 import { attrAtOffset, buildAttribution, clusterByteRange } from "../src/core/attribution";
 import { buildTree } from "../src/core/tree";
 import { findEntrySlots } from "../src/core/direntry";
+import type { OpRecord, Volume as VolumeType } from "../src/lib/wasm";
 
 describe("package integration", () => {
+  it("seek round trip: the same loops VolumeStore.seek runs reproduce every step's image", () => {
+    const vol = Volume.formatFat16(undefined);
+    const fresh = Buffer.from(vol.image()); // the disk before any operation (cursor -1)
+    const ops: ((v: VolumeType) => OpRecord)[] = [
+      (v) => v.createFile("/A.TXT", new TextEncoder().encode("alpha")),
+      (v) => v.createDir("/D"),
+      (v) => v.createFile("/D/B.BIN", new Uint8Array(3000)),
+      (v) => v.deleteFile("/A.TXT"),
+    ];
+    const history: OpRecord[] = [];
+    const snaps: Buffer[] = [];
+    for (const op of ops) { history.push(op(vol)); snaps.push(Buffer.from(vol.image())); }
+
+    // The cached image the store patches, starting where the store's cursor is: the last step.
+    const image = vol.image();
+    let cursor = history.length - 1;
+    const imageAt = (step: number) => (step === -1 ? fresh : snaps[step]);
+
+    for (let step = cursor - 1; step >= -1; step--) {
+      for (let i = cursor; i > step; i--) applyChanges(image, history[i].changes, "reverse"); // seek(), step < cursor
+      cursor = step;
+      expect(Buffer.compare(Buffer.from(image), imageAt(step)), `reverse to step ${step}`).toBe(0);
+    }
+    for (let step = 0; step < history.length; step++) {
+      for (let i = cursor + 1; i <= step; i++) applyChanges(image, history[i].changes, "forward"); // seek(), step > cursor
+      cursor = step;
+      expect(Buffer.compare(Buffer.from(image), imageAt(step)), `forward to step ${step}`).toBe(0);
+    }
+    expect(Buffer.compare(Buffer.from(image), Buffer.from(vol.image()))).toBe(0);
+  });
   it("patching the cached image from OpRecord.changes matches vol.image()", () => {
     const vol = Volume.formatFat16(undefined);
     const image = vol.image();

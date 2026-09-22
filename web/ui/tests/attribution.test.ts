@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { attrAtOffset, attrAtSector, buildAttribution, clusterByteRange, clusterOfSector } from "../src/core/attribution";
-import { colorIndexForPath } from "../src/core/palette";
+import { COLOR_FAT_ALT, colorIndexForPath } from "../src/core/palette";
 import type { ClusterOwner, Geometry, Region } from "../src/lib/wasm";
 
 export const geo: Geometry = { variant: "fat16", bytesPerSector: 512, sectorsPerCluster: 4, reservedSectors: 1, fatCount: 2, sectorsPerFat: 32, rootEntries: 512, rootDirSectors: 32, firstRootDirSector: 65, firstDataSector: 97, totalSectors: 32768, clusterCount: 8167 };
@@ -31,7 +31,7 @@ describe("attribution", () => {
   it("attributes metadata regions", () => {
     expect(attrAtSector(t, 0)).toMatchObject({ regionKind: "boot", colorIndex: 1, free: false });
     expect(attrAtSector(t, 1)).toMatchObject({ regionName: "FAT 0", colorIndex: 2 });
-    expect(attrAtSector(t, 64)).toMatchObject({ regionName: "FAT 1", colorIndex: 2 });
+    expect(attrAtSector(t, 64)).toMatchObject({ regionName: "FAT 1", colorIndex: COLOR_FAT_ALT }); // the mirror copy gets its own lighter hue
     expect(attrAtSector(t, 65)).toMatchObject({ regionKind: "directory", colorIndex: 3 });
   });
   it("attributes data clusters to owners and free space", () => {
