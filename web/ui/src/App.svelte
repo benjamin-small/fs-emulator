@@ -9,8 +9,10 @@
   import StatusLine from "./components/StatusLine.svelte";
   import StepPanel from "./components/StepPanel.svelte";
   import StringsPanel from "./components/StringsPanel.svelte";
+  import TerminalPanel from "./components/TerminalPanel.svelte";
   import Timeline from "./components/Timeline.svelte";
   import { inTextEntry } from "./core/keys";
+  import { terminal } from "./state/terminal.svelte";
   import { volume } from "./state/volume.svelte";
 
   // `[` / `]` scrub the timeline and `/` jumps to the path field, all from anywhere
@@ -20,7 +22,12 @@
   // entry too (see core/keys.ts for the Ctrl-B chord case).
   function onKeydown(e: KeyboardEvent) {
     if (inTextEntry(e)) return;
-    if (e.key === "[") volume.seek(Math.max(0, volume.cursor - 1));
+    if (e.key === "`") {
+      // Toggle the terminal from anywhere outside text entry. Inside the terminal the
+      // key is typed (xterm cancels it), so closing is exit / Close / Escape on the bar.
+      e.preventDefault();
+      terminal.toggle();
+    } else if (e.key === "[") volume.seek(Math.max(0, volume.cursor - 1));
     else if (e.key === "]") volume.seek(volume.cursor + 1);
     else if (e.key === "/") {
       e.preventDefault();
@@ -29,9 +36,17 @@
   }
 </script>
 <svelte:window onkeydown={onKeydown} />
-<div class="app">
+<div class="app" style:--term-h="{terminal.height}px">
   <header class="topbar">
     <h1>FAT explorer</h1>
+    <button
+      id="terminal-toggle"
+      type="button"
+      aria-pressed={terminal.open}
+      aria-controls="terminal-drawer"
+      title="Toggle the terminal (`)"
+      onclick={() => terminal.toggle()}
+    >Terminal</button>
     <div id="scenario-slot"><ScenarioPanel /></div>
     <StatusLine />
   </header>
@@ -50,4 +65,5 @@
     </aside>
   </div>
   <footer id="timeline-slot"><Timeline /></footer>
+  <TerminalPanel />
 </div>

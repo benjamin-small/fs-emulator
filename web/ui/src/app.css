@@ -12,7 +12,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, [tabindex]:fo
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
 
 /* Layout */
-.app { display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; height: 100vh; gap: 8px; padding: 8px; }
+/* The terminal drawer is the implicit fifth row: `grid-auto-rows` sizes it from `--term-h`
+   (set on .app by App.svelte), and a hidden drawer generates no grid item, so it adds
+   neither a track nor a gap. */
+.app { display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; grid-auto-rows: var(--term-h, 220px); height: 100vh; gap: 8px; padding: 8px; }
 .topbar { display: flex; align-items: center; gap: 16px; }
 .topbar h1 { font: 500 18px var(--font-display); margin: 0; }
 .grid { display: grid; grid-template-columns: 220px minmax(0, 1fr) 260px; gap: 8px; min-height: 0; }
@@ -30,6 +33,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, [tabindex]:fo
 @media (max-width: 760px) {
   .grid { grid-template-columns: minmax(0, 1fr); }
   .left, .right { max-height: 40vh; }
+  .app { grid-auto-rows: min(var(--term-h, 220px), 40vh); }
 }
 
 /* Ribbon */
@@ -151,3 +155,40 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, [tabindex]:fo
 .actions .cluster-count { margin: 0 0 6px; font-size: 12px; }
 .actions .warn { color: var(--diff-ink); }
 .actions .using-bytes { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 12px; }
+
+/* Terminal drawer */
+/* browser-terminal renders into .terminal-mount with no shadow DOM and no stylesheet of
+   its own (TerminalPanel imports xterm's), and it hard-codes a dark theme: an inline
+   background on each pane div, xterm's injected `.xterm-dom-renderer-owner-N` rules for
+   text color and font, and an inline background on the scrollable viewport. The
+   token-driven `!important` rules below win over all of those, and because the tokens
+   swap under `prefers-color-scheme: dark`, the terminal follows the OS theme with no JS.
+   Font: xterm measures the cell width on an offscreen canvas in its own option font and
+   then letter-spaces `.xterm-rows` so every glyph fills exactly one cell, so overriding
+   the rendered font (and the `.xterm-char-measure-element` it uses for glyph widths)
+   keeps text, cursor, selection, and mouse position aligned. */
+.terminal-drawer { display: flex; flex-direction: column; min-height: 0; padding: 0; overflow: hidden; }
+.terminal-drawer[hidden] { display: none; }
+.terminal-drawer:focus-within { border-color: var(--focus); }
+.term-bar { display: flex; align-items: center; gap: 8px; padding: 4px 10px; border-bottom: 1px solid var(--hairline); cursor: row-resize; user-select: none; touch-action: none; font: 500 12px var(--font-display); }
+.term-bar button { margin-left: auto; cursor: pointer; }
+.term-note { margin: 4px 10px; font-size: 12px; }
+.terminal-drawer .err { color: var(--diff-ink); }
+.terminal-mount { flex: 1; min-height: 0; position: relative; }
+.terminal-mount > div { background: var(--panel) !important; }
+.terminal-mount .xterm,
+.terminal-mount .xterm .xterm-viewport,
+.terminal-mount .xterm .xterm-scrollable-element,
+.terminal-mount .xterm .xterm-screen { background-color: var(--panel) !important; }
+.terminal-mount .xterm .xterm-rows { color: var(--ink) !important; }
+/* Cursor: 5 classes outrank xterm's injected 4-class rule without `!important`, which
+   would also freeze the blink animation (important declarations beat keyframes). */
+.terminal-mount .xterm .xterm-rows .xterm-cursor.xterm-cursor-block { background-color: var(--focus); color: var(--panel); }
+.terminal-mount .xterm .xterm-rows .xterm-cursor.xterm-cursor-outline { outline-color: var(--focus); }
+.terminal-mount .xterm .xterm-rows .xterm-cursor.xterm-cursor-bar { box-shadow: 1px 0 0 var(--focus) inset; }
+.terminal-mount .xterm .xterm-rows .xterm-cursor.xterm-cursor-underline { border-bottom-color: var(--focus); }
+.terminal-mount .xterm, .terminal-mount .xterm * { font-family: var(--font-mono) !important; }
+.terminal-mount .xterm .xterm-rows, .terminal-mount .xterm .xterm-char-measure-element { font-size: 12px !important; }
+/* app.css gives every focused textarea/[tabindex] an outline; xterm's helper textarea
+   sits off-screen and the .xterm box would otherwise get a ring inside the drawer. */
+.terminal-mount .xterm:focus-visible, .terminal-mount .xterm-helper-textarea:focus-visible { outline: none; }
