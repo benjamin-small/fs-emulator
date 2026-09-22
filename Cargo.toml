@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/fs-core", "crates/fat"]
+members = ["crates/fs-core", "crates/fat", "crates/wasm"]
 
 [workspace.package]
 version = "0.1.0"

@@ -1,0 +1,24 @@
+[package]
+name = "fs-emulator-wasm"
+description = "wasm-bindgen wrapper exposing the fs-emulator filesystems to a browser UI"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "fs_emulator_wasm"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+fs-core = { path = "../fs-core" }
+fat = { path = "../fat" }
+wasm-bindgen = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_bytes = "0.11"
+serde-wasm-bindgen = "0.6"
+js-sys = "0.3"
+console_error_panic_hook = "0.1"
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3"
