@@ -5,7 +5,10 @@ whole-disk hex dump with ASCII and a strings overlay, a disk ribbon and FAT
 cluster map for seeing where files land, an operation timeline with
 byte-diff replay, and seven guided scenarios. It runs entirely in the
 browser against the `fs-emulator-wasm` package — nothing is sent over the
-network, and there is no server component.
+network, and there is no server component. The build from `main` is
+published at https://benjamin-small.github.io/fs-emulator/ by
+`.github/workflows/pages.yml`, which sets `VITE_BASE=/fs-emulator/` so
+asset URLs resolve under the repository path.
 
 ## Prerequisite
 

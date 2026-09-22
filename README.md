@@ -49,6 +49,8 @@ browser. Build the wasm package first with
 
 ## Explorer UI
 
+Live at https://benjamin-small.github.io/fs-emulator/ (built from `main` by the Pages workflow).
+
 `web/ui` is the learning UI (Svelte 5) for exploring FAT volumes: a
 whole-disk hex dump, a disk ribbon and FAT cluster map, an operation
 timeline with byte-diff replay, and guided scenarios. Build the wasm
