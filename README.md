@@ -46,3 +46,9 @@ Design: `docs/superpowers/specs/2026-09-21-fat16-emulator-design.md`.
 `web/demo` is a Vite + TypeScript page that exercises the `wasm` crate in a
 browser. Build the wasm package first with
 `wasm-pack build crates/wasm --target bundler`, then `cd web/demo && pnpm install && pnpm dev`.
+
+## Explorer UI
+
+`web/ui` is the learning UI (Svelte 5) for exploring FAT volumes. Build the
+wasm package first with `wasm-pack build crates/wasm --target bundler`, then
+`cd web/ui && pnpm install && pnpm dev`.

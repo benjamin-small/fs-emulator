@@ -1,0 +1,12 @@
+@import "./styles/tokens.css";
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--canvas); color: var(--ink); font: 13px/1.45 var(--font-body); }
+button, input, textarea, select { font: inherit; color: inherit; }
+button { background: var(--panel); border: 1px solid var(--hairline); border-radius: var(--radius); padding: 4px 10px; cursor: pointer; }
+button:hover { border-color: var(--ink-muted); }
+button:focus-visible, input:focus-visible, textarea:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.panel { background: var(--panel); border: 1px solid var(--hairline); border-radius: var(--radius); padding: 8px 10px; min-width: 0; }
+.panel > h2 { margin: 0 0 6px; font: 500 15px/1.2 var(--font-display); }
+.mono { font-family: var(--font-mono); font-size: var(--dump-size); }
+.muted { color: var(--ink-muted); }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }

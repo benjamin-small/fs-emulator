@@ -43,10 +43,16 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-          cache-dependency-path: web/demo/pnpm-lock.yaml
+          cache-dependency-path: web/*/pnpm-lock.yaml
       - run: wasm-pack test --node crates/wasm
       - run: wasm-pack build crates/wasm --target bundler
       - run: pnpm install --frozen-lockfile
         working-directory: web/demo
       - run: pnpm build
         working-directory: web/demo
+      - run: pnpm install --frozen-lockfile
+        working-directory: web/ui
+      - run: pnpm test
+        working-directory: web/ui
+      - run: pnpm build
+        working-directory: web/ui
