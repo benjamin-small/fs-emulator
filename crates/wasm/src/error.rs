@@ -55,10 +55,16 @@ mod tests {
             Error::InvalidGeometry("x".into()),
             Error::CorruptImage("x".into()),
             Error::Unsupported("x".into()),
+            Error::OutOfBounds {
+                offset: 1,
+                len: 2,
+                disk_len: 3,
+            },
         ];
         let codes: Vec<&str> = all.iter().map(code_of).collect();
         assert_eq!(codes[0], "NotFound");
         assert_eq!(codes[11], "CorruptImage");
+        assert_eq!(codes[13], "OutOfBounds");
         let mut unique = codes.clone();
         unique.sort_unstable();
         unique.dedup();
