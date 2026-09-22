@@ -6,6 +6,7 @@
   import Inspector from "./components/Inspector.svelte";
   import StatusLine from "./components/StatusLine.svelte";
   import StepPanel from "./components/StepPanel.svelte";
+  import StringsPanel from "./components/StringsPanel.svelte";
   import Timeline from "./components/Timeline.svelte";
   import { volume } from "./state/volume.svelte";
 
@@ -35,7 +36,7 @@
     <main class="col center"><HexView /></main>
     <aside class="col right">
       <Inspector />
-      <section class="panel"><h2>Strings</h2><p class="muted">Task 9</p></section>
+      <StringsPanel />
       <StepPanel />
     </aside>
   </div>

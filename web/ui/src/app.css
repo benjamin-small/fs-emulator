@@ -94,6 +94,14 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, [tabindex]:fo
 .tl-step:last-child { border-right-width: 1px; }
 .tl-step.current { background: color-mix(in srgb, var(--focus) 15%, transparent); border-color: var(--focus); }
 
+/* Strings panel */
+.strings .toggle { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; font-size: 12px; }
+.strings .strings-controls { display: flex; gap: 8px; margin-bottom: 6px; }
+.strings .field { display: flex; flex-direction: column; gap: 2px; font-size: 12px; flex: 1; min-width: 0; }
+.strings .field input, .strings .field select { width: 100%; border: 1px solid var(--hairline); border-radius: var(--radius); background: var(--panel); padding: 3px 6px; }
+.strings .hit-list { list-style: none; padding: 0; margin: 8px 0 0; display: flex; flex-direction: column; gap: 2px; max-height: 40vh; overflow: auto; font-size: 12px; }
+.strings .hit-list .link { display: block; width: 100%; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
 /* Actions panel */
 .actions fieldset { border: 0; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; }
 .actions fieldset:disabled { opacity: 0.5; }
