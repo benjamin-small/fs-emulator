@@ -1,0 +1,21 @@
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500&family=IBM+Plex+Sans:wght@400;500&display=swap");
+
+:root {
+  --canvas: #eef1f4; --panel: #ffffff; --ink: #111827; --ink-muted: #5b6472; --hairline: #d5dae1;
+  --focus: #378add; --diff: #ef9f27; --diff-ink: #854f0b;
+  --own-0: transparent; --own-1: #8b93a1; --own-2: #7f77dd; --own-3: #1d9e75;
+  --own-4: #5dcaa5; --own-5: #f0997b; --own-6: #ed93b1; --own-7: #85b7eb; --own-8: #97c459; --own-9: #fac775;
+  --own-10: #afa9ec; /* FAT 1: --own-2 a shade lighter, so the mirror copy reads as related */
+  --font-display: "IBM Plex Sans Condensed", system-ui, sans-serif;
+  --font-body: "IBM Plex Sans", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --row-h: 17px; --dump-size: 11px;
+  --radius: 4px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --canvas: #14181d; --panel: #1b2027; --ink: #e6eaf0; --ink-muted: #98a2b3; --hairline: #2a313b;
+    --focus: #85b7eb; --diff: #fac775; --diff-ink: #412402;
+    --own-1: #6b7380; --own-2: #afa9ec; --own-3: #5dcaa5; --own-10: #cecbf6;
+  }
+}
