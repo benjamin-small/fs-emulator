@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { inTextEntry } from "../core/keys";
   import { all } from "../scenarios";
   import { scenarios } from "../state/scenarios.svelte";
 
@@ -56,9 +57,7 @@
   }
 
   function onKeydown(e: KeyboardEvent) {
-    if (!scenarios.current) return;
-    const tag = (e.target as HTMLElement | null)?.tagName;
-    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+    if (!scenarios.current || inTextEntry(e)) return;
     if (e.key === "n") advance();
     else if (e.key === "p") scenarios.prev();
   }

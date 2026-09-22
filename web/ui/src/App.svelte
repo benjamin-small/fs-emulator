@@ -10,15 +10,16 @@
   import StepPanel from "./components/StepPanel.svelte";
   import StringsPanel from "./components/StringsPanel.svelte";
   import Timeline from "./components/Timeline.svelte";
+  import { inTextEntry } from "./core/keys";
   import { volume } from "./state/volume.svelte";
 
   // `[` / `]` scrub the timeline and `/` jumps to the path field, all from anywhere
-  // except a text field, so typing a path or file content in the Actions panel isn't
+  // except text entry, so typing a path or file content in the Actions panel isn't
   // hijacked. `n` / `p` (scenario step) are handled by ScenarioPanel itself, since
-  // they only apply while a scenario is running.
+  // they only apply while a scenario is running. The terminal drawer counts as text
+  // entry too (see core/keys.ts for the Ctrl-B chord case).
   function onKeydown(e: KeyboardEvent) {
-    const tag = (e.target as HTMLElement | null)?.tagName;
-    if (tag === "INPUT" || tag === "TEXTAREA") return;
+    if (inTextEntry(e)) return;
     if (e.key === "[") volume.seek(Math.max(0, volume.cursor - 1));
     else if (e.key === "]") volume.seek(volume.cursor + 1);
     else if (e.key === "/") {
