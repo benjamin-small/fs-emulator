@@ -13,7 +13,7 @@ import { statusToError, type ShellHost } from "./host";
  * into a thrown error so the shell prints it in red while StatusLine keeps showing
  * the same code, exactly as after a failed form action.
  */
-export function createStoreHost(closeTerminal: () => void): ShellHost {
+export function createStoreHost(closeTerminal: () => void, applyPrompt: (prefix: string) => void): ShellHost {
   return {
     get vol(): Volume {
       return volume.vol;
@@ -41,6 +41,9 @@ export function createStoreHost(closeTerminal: () => void): ShellHost {
     },
     jumpTo(offset: number): void {
       selection.jumpTo(offset);
+    },
+    setPrompt(prefix: string): void {
+      applyPrompt(prefix);
     },
     closeTerminal,
   };

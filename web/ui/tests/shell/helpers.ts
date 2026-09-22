@@ -15,6 +15,7 @@ export class TestHost implements ShellHost {
   cursor = -1;
   selected: (string | null)[] = [];
   jumps: number[] = [];
+  prompts: string[] = [];
   formats: FormatOptions[] = [];
   closed = false;
 
@@ -47,6 +48,10 @@ export class TestHost implements ShellHost {
 
   jumpTo(offset: number): void {
     this.jumps.push(offset);
+  }
+
+  setPrompt(prefix: string): void {
+    this.prompts.push(prefix);
   }
 
   closeTerminal(): void {

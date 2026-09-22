@@ -109,6 +109,13 @@ and it rewinds the same way. The drawer bar can be dragged to resize
 the Close button, or `exit` close it, and `help` or `<command> --help`
 describe every command.
 
+The shell already hands the terminal its working directory as a prompt
+prefix — on startup and after every `cd` or `mkfs` — so the prompt reads
+`/mnt/DOCS ❯` once the pin moves to browser-terminal 0.3.0, which adds
+`setPrompt` ([issue
+#12](https://github.com/benjamin-small/browser-terminal/issues/12)). Under
+the pinned 0.2.0 the call is a no-op and the prompt is the bare `❯`.
+
 | Command | Does |
 |---|---|
 | `ls [path] [-l]` / `dir` | List a directory as a table of name, type, size (`-l` adds the modified time); entries keep their on-disk order. `ls /` shows `dev` and `mnt`; `ls /dev` shows `hda`, `zero`, `null` |

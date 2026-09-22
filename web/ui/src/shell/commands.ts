@@ -8,7 +8,7 @@ import { decodeText, fromBytes, hasInput, toBytes } from "./bytes";
 import { DD_MAX_BYTES, parseDd, runDd } from "./dd";
 import { CORRUPT_HELP, ShellError, fsCall, wrapFs } from "./errors";
 import { atLatest, corruptionOf, selectPath, type ShellHost } from "./host";
-import { canonicalize, Vfs, resolved, type Resolved } from "./vfs";
+import { canonicalize, Vfs, promptFor, resolved, type Resolved } from "./vfs";
 import { formatXxd } from "./xxd";
 
 export type { CommandDef } from "./types";
@@ -123,9 +123,13 @@ export function readCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
   const cd: CommandDef = {
     spec: { name: "cd", summary: "Change the working directory", optional: [P("path", "directory; defaults to /mnt")] },
     fn: (args) => {
+      // Every arm that moves `cwd` ends in `landed()`, so the prompt and the working
+      // directory can never disagree; a `cd` that throws leaves both alone.
+      const landed = () => host.setPrompt(promptFor(vfs.cwd));
       const target = posStr(args, 0);
       if (target === undefined) {
         vfs.cwd = "/mnt";
+        landed();
         return;
       }
       const r = vfs.resolve(target);
@@ -133,9 +137,11 @@ export function readCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
       switch (r.kind) {
         case "root":
           vfs.cwd = "/";
+          landed();
           return;
         case "dev":
           vfs.cwd = "/dev";
+          landed();
           return;
         case "volume": {
           let info: EntryInfo;
@@ -146,6 +152,7 @@ export function readCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
           }
           if (!info.isDir) throw new ShellError(`${display}: Not a directory`, { code: "NotADirectory" });
           vfs.cwd = vfs.toVirtual(canonicalize(host.vol, r.path));
+          landed();
           return;
         }
         default:
@@ -587,6 +594,7 @@ function mutationCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
       if (flagGiven(label)) options.volumeLabel = String(label);
       fsCall("/dev/hda", () => host.format(options));
       vfs.cwd = "/mnt";
+      host.setPrompt(promptFor(vfs.cwd));
       ctx.log("formatted /dev/hda as FAT16; the timeline was cleared");
     },
   };

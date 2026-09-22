@@ -9,11 +9,16 @@
   import type { BrowserTerminal } from "@benjamin-small/browser-terminal";
   import { createCommands } from "../shell/commands";
   import { createStoreHost } from "../shell/storeHost.svelte";
+  import { Vfs, promptFor } from "../shell/vfs";
   import { terminal } from "../state/terminal.svelte";
 
   let mountEl = $state<HTMLDivElement>();
   let bt: BrowserTerminal | null = null;
   let creating: Promise<void> | null = null;
+
+  // One working directory per page (the commands' own rule), owned here so the prompt
+  // can be seeded from it as soon as the commands are registered.
+  const vfs = new Vfs();
 
   /** Close the drawer and hand focus to the topbar button, since the element that had
    *  focus (xterm's helper textarea) is about to be hidden. `exit`, the Close button,
@@ -44,9 +49,18 @@
       const { BrowserTerminal } = await import("@benjamin-small/browser-terminal");
       const term = await BrowserTerminal.create({ mount });
       try {
+        // `setPrompt` lands in browser-terminal 0.3.0
+        // (https://github.com/benjamin-small/browser-terminal/issues/12); the pinned 0.2.0
+        // has no such method, so this optional call is a no-op until the pin moves and the
+        // prompt starts showing the working directory before the `❯`.
+        const applyPrompt = (prefix: string) => (term as { setPrompt?: (p: string) => void }).setPrompt?.(prefix);
         // Commands read live store fields through the host on every call, so registering
         // once is enough (same pattern as browser-terminal's Svelte demo).
-        for (const { spec, fn } of createCommands(createStoreHost(close))) term.registerCommand(spec, fn);
+        const host = createStoreHost(close, applyPrompt);
+        for (const { spec, fn } of createCommands(host, vfs)) term.registerCommand(spec, fn);
+        // Seed the prompt with the directory the shell starts in; `cd` and `mkfs` keep it
+        // in step from there.
+        host.setPrompt(promptFor(vfs.cwd));
       } catch (e) {
         // A half-registered instance would still hold the library's one-per-page slot, so
         // every later open would fail to create and sit behind a permanent error banner.

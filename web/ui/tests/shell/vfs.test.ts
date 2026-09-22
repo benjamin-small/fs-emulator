@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Volume } from "../../src/lib/wasm";
 import { ShellError } from "../../src/shell/errors";
-import { DEVICE_HELP, MOUNT, PATH_HELP, Vfs, basename, canonicalize, joinVolume } from "../../src/shell/vfs";
+import { DEVICE_HELP, MOUNT, PATH_HELP, Vfs, basename, canonicalize, joinVolume, promptFor } from "../../src/shell/vfs";
 
 function thrown(fn: () => unknown): ShellError {
   try { fn(); } catch (e) { return e as ShellError; }
@@ -102,5 +102,10 @@ describe("path helpers", () => {
     expect(basename("/")).toBe("");
     expect(joinVolume("/", "A")).toBe("/A");
     expect(joinVolume("/D", "A")).toBe("/D/A");
+  });
+  it("promptFor puts one space between the working directory and the terminal's ❯", () => {
+    expect(promptFor("/mnt")).toBe("/mnt ");
+    expect(promptFor("/mnt/DOCS")).toBe("/mnt/DOCS ");
+    expect(promptFor("/")).toBe("/ ");
   });
 });

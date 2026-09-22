@@ -91,12 +91,24 @@ describe("cd and pwd", () => {
     expect((await call(defs, "pwd")).value).toBe("/mnt");
   });
 
+  it("hands the terminal a new prompt prefix for every directory it lands in", async () => {
+    const { host, defs } = setup();
+    await call(defs, "cd", ["/mnt/docs"]);
+    expect(host.prompts).toEqual(["/mnt/DOCS "]); // the canonical case, as pwd reports it
+    await call(defs, "cd", [".."]);
+    await call(defs, "cd", ["/"]);
+    await call(defs, "cd", ["dev"]);
+    await call(defs, "cd");
+    expect(host.prompts).toEqual(["/mnt/DOCS ", "/mnt ", "/ ", "/dev ", "/mnt "]);
+  });
+
   it("refuses files, devices, and missing paths", async () => {
-    const { defs } = setup();
+    const { host, defs } = setup();
     expect(await callErr(defs, "cd", ["/mnt/Hello world.txt"])).toMatchObject({ message: "/mnt/Hello world.txt: Not a directory", code: "NotADirectory" });
     expect(await callErr(defs, "cd", ["/dev/hda"])).toMatchObject({ message: "/dev/hda: Not a directory", code: "NotADirectory" });
     expect(await callErr(defs, "cd", ["/mnt/nope"])).toMatchObject({ message: "/mnt/nope: No such file or directory", code: "NotFound" });
     expect((await call(defs, "pwd")).value).toBe("/mnt"); // a failed cd leaves cwd alone
+    expect(host.prompts).toEqual([]); // ... and leaves the prompt alone with it
   });
 });
 

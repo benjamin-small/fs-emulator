@@ -234,6 +234,7 @@ describe("mkfs", () => {
     expect(host.historyLength).toBe(0);
     expect(host.vol.listDir("/")).toEqual([]);
     expect(vfs.cwd).toBe("/mnt");
+    expect(host.prompts).toEqual(["/mnt "]); // the prompt follows the reset cwd
     expect(host.selected.at(-1)).toBe("/D"); // mkfs selects nothing; the host adapter resets the selection
   });
 

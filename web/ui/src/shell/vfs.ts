@@ -97,6 +97,11 @@ export function canonicalize(vol: Volume, volumePath: string): string {
   return "/" + out.join("/");
 }
 
+/** The prompt prefix for a working directory: the path, then one space before the `❯`. */
+export function promptFor(cwd: string): string {
+  return `${cwd} `;
+}
+
 export function basename(p: string): string {
   const i = p.lastIndexOf("/");
   return i < 0 ? p : p.slice(i + 1);
