@@ -1,6 +1,7 @@
 export interface StringHit { offset: number; length: number; text: string }
 
 const isPrintable = (b: number) => b >= 0x20 && b <= 0x7e;
+const latin1 = new TextDecoder("latin1");
 
 /** Printable ASCII runs of at least `minRun` bytes within [start, end). */
 export function findStrings(buf: Uint8Array, start: number, end: number, minRun = 4, limit = 2000): StringHit[] {
@@ -9,7 +10,7 @@ export function findStrings(buf: Uint8Array, start: number, end: number, minRun 
   let runStart = -1;
   const flush = (at: number) => {
     if (runStart >= 0 && at - runStart >= minRun) {
-      hits.push({ offset: runStart, length: at - runStart, text: String.fromCharCode(...buf.subarray(runStart, at)) });
+      hits.push({ offset: runStart, length: at - runStart, text: latin1.decode(buf.subarray(runStart, at)) });
     }
     runStart = -1;
   };

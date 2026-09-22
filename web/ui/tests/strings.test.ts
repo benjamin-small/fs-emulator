@@ -21,4 +21,11 @@ describe("findStrings", () => {
     const buf = bytes("xxxxyyyy");
     expect(findStrings(buf, 0, 8, 4)).toEqual([{ offset: 0, length: 8, text: "xxxxyyyy" }]);
   });
+  it("handles a run longer than the spread argument limit", () => {
+    const buf = new Uint8Array(300_000).fill(0x41);
+    const hits = findStrings(buf, 0, buf.length);
+    expect(hits.length).toBe(1);
+    expect(hits[0].length).toBe(300_000);
+    expect(hits[0].text.length).toBe(300_000);
+  });
 });
