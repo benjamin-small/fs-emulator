@@ -1,12 +1,27 @@
 <script lang="ts">
-  import { volume } from "./state/volume.svelte";
-  import { buildTree } from "./core/tree";
-  const tree = $derived((volume.epoch, buildTree(volume.vol, volume.owners)));
+  import HexView from "./components/HexView.svelte";
+  import Inspector from "./components/Inspector.svelte";
+  import StatusLine from "./components/StatusLine.svelte";
 </script>
-<main class="panel" style="margin: 16px">
-  <h2>FAT explorer</h2>
-  <p class="muted">{volume.vol.fsType()} · {volume.geometry.totalSectors} sectors · epoch {volume.epoch}</p>
-  <button onclick={() => volume.run((v) => v.createFile(`/FILE${volume.history.length}.TXT`, new TextEncoder().encode("hello")))}>Add file</button>
-  <ul class="mono">{#each tree.children as n}<li>{n.name} · {n.size} bytes · cluster {n.firstCluster}</li>{/each}</ul>
-  {#if volume.status}<p style="color: var(--diff-ink)">{volume.status.text} <span class="muted">{volume.status.code}</span></p>{/if}
-</main>
+<div class="app">
+  <header class="topbar">
+    <h1>FAT explorer</h1>
+    <div id="scenario-slot"></div>
+    <StatusLine />
+  </header>
+  <div id="ribbon-slot" class="ribbon-slot"></div>
+  <div class="grid">
+    <aside class="col left">
+      <section class="panel"><h2>Files</h2><p class="muted">Task 6</p></section>
+      <section class="panel"><h2>FAT map</h2><p class="muted">Task 8</p></section>
+      <section class="panel"><h2>Actions</h2><p class="muted">Task 6</p></section>
+    </aside>
+    <main class="col center"><HexView /></main>
+    <aside class="col right">
+      <Inspector />
+      <section class="panel"><h2>Strings</h2><p class="muted">Task 9</p></section>
+      <section class="panel"><h2>Step</h2><p class="muted">Task 7</p></section>
+    </aside>
+  </div>
+  <footer id="timeline-slot"></footer>
+</div>
