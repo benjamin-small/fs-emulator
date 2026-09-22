@@ -65,6 +65,12 @@ export class Vfs {
   }
 }
 
+/** Resolve `s` and its display string together — the pair almost every command needs first. */
+export function resolved(vfs: Vfs, s: string): { r: Resolved; display: string } {
+  const r = vfs.resolve(s);
+  return { r, display: vfs.display(r) };
+}
+
 const namesMatch = (a: string, b: string): boolean => a.toUpperCase() === b.toUpperCase();
 
 /**

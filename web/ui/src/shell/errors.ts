@@ -40,3 +40,12 @@ export function wrapFs(display: string, e: unknown): ShellError {
   const code = typeof err?.code === "string" ? err.code : undefined;
   return new ShellError(`${display}: ${fsPhrase(code, raw)}`, { code });
 }
+
+/** Run `fn`; a thrown `ShellError` passes through unchanged, anything else becomes `wrapFs(display, e)`. */
+export function fsCall<T>(display: string, fn: () => T): T {
+  try {
+    return fn();
+  } catch (e) {
+    throw wrapFs(display, e);
+  }
+}

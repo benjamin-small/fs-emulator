@@ -162,6 +162,16 @@ describe("dd copies", () => {
     expect(host.history).toEqual([]);
   });
 
+  it("refuses a huge --seek onto a volume file before allocating anything", async () => {
+    const { host, defs } = setup();
+    // seek*bs (default bs=512) is far past the disk, and would previously overflow
+    // Uint8Array's max length or allocate tens of megabytes before the core's DiskFull check.
+    const err = await callErr(defs, "dd", { flags: { of: "/mnt/b.txt", seek: "100000000" } }, "x");
+    expect(err.message).toBe("/mnt/b.txt: Range runs past the end of the disk");
+    expect(err.help).toContain("--seek");
+    expect(host.history).toEqual([]);
+  });
+
   it("skipping past the end of the source reads nothing", async () => {
     const { defs } = setup();
     const r = await call(defs, "dd", { flags: { if: "/dev/hda", skip: "40000" } });

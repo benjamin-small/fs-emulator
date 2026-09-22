@@ -1,5 +1,6 @@
 import type { FormatOptions, OpRecord, Volume } from "../lib/wasm";
 import { ShellError } from "./errors";
+import { canonicalize } from "./vfs";
 
 /**
  * The seam between the commands and the explorer. The app implements it over the runes
@@ -22,6 +23,12 @@ export interface ShellHost {
 }
 
 export const atLatest = (h: ShellHost): boolean => h.cursor === h.historyLength - 1;
+
+/** Select the canonical volume path (a root path, "/", becomes `null`), the rule `select` uses inline. */
+export function selectPath(host: ShellHost, path: string): void {
+  const canon = canonicalize(host.vol, path);
+  host.select(canon === "/" ? null : canon);
+}
 
 /** What the store adapter throws when `VolumeStore.run`/`format` left a status instead of a record. */
 export function statusToError(s: { text: string; code?: string } | null): Error & { code?: string } {

@@ -6,12 +6,15 @@ import { buildChain } from "../core/fatchain";
 import { ADDR_HELP, SIZE_HELP, parseAddr, parseSize } from "./addr";
 import { decodeText, fromBytes, toBytes } from "./bytes";
 import { DD_MAX_BYTES, parseDd, runDd } from "./dd";
-import { ShellError, wrapFs } from "./errors";
-import { atLatest, type ShellHost } from "./host";
-import { canonicalize, Vfs, type Resolved } from "./vfs";
+import { ShellError, fsCall, wrapFs } from "./errors";
+import { atLatest, selectPath, type ShellHost } from "./host";
+import { canonicalize, Vfs, resolved, type Resolved } from "./vfs";
 import { formatXxd } from "./xxd";
 
 export type { CommandDef } from "./types";
+export { fsCall } from "./errors";
+export { resolved } from "./vfs";
+export { selectPath } from "./host";
 
 export const RAW_DEVICE_HELP = "read a range with: dd --if=/dev/hda --bs=512 --skip=0 --count=1 | xxd";
 export const CORRUPT_HELP =
@@ -35,27 +38,6 @@ export function warnIfRewound(host: ShellHost, ctx: CommandCtx): void {
 export function assertMounted(host: ShellHost, display: string): void {
   const c = host.vol.corruption();
   if (c) throw new ShellError(`${display}: ${c}`, { code: "CorruptImage", help: CORRUPT_HELP });
-}
-
-/** Resolve `s` and its display string together — the pair almost every command needs first. */
-export function resolved(vfs: Vfs, s: string): { r: Resolved; display: string } {
-  const r = vfs.resolve(s);
-  return { r, display: vfs.display(r) };
-}
-
-/** Run `fn`; a thrown `ShellError` passes through unchanged, anything else becomes `wrapFs(display, e)`. */
-export function fsCall<T>(display: string, fn: () => T): T {
-  try {
-    return fn();
-  } catch (e) {
-    throw wrapFs(display, e);
-  }
-}
-
-/** Select the canonical volume path (a root path, "/", becomes `null`), the rule `select` uses inline. */
-export function selectPath(host: ShellHost, path: string): void {
-  const canon = canonicalize(host.vol, path);
-  host.select(canon === "/" ? null : canon);
 }
 
 export function posStr(args: CommandArgs, i: number): string | undefined {

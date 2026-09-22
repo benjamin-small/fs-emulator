@@ -1,9 +1,9 @@
 import type { CommandCtx, Value } from "./types";
 import { SIZE_HELP, parseSize } from "./addr";
 import { fromBytes, toBytes, type BytesBlob } from "./bytes";
-import { ShellError, wrapFs } from "./errors";
-import type { ShellHost } from "./host";
-import { canonicalize, type Vfs } from "./vfs";
+import { ShellError, fsCall, wrapFs } from "./errors";
+import { selectPath, type ShellHost } from "./host";
+import type { Vfs } from "./vfs";
 
 /**
  * Per-invocation cap on the bytes `dd` reads (and therefore writes). Every journaled byte is
@@ -129,15 +129,8 @@ function readSource(host: ShellHost, vfs: Vfs, opts: DdOpts, input: Value): Uint
     }
     case "null":
       return new Uint8Array(0);
-    case "volume": {
-      let file: Uint8Array;
-      try {
-        file = host.vol.readFile(src.path);
-      } catch (e) {
-        throw wrapFs(display, e);
-      }
-      return slice(file);
-    }
+    case "volume":
+      return slice(fsCall(display, () => host.vol.readFile(src.path)));
     default:
       throw new ShellError(`${display}: Is a directory`);
   }
@@ -145,6 +138,12 @@ function readSource(host: ShellHost, vfs: Vfs, opts: DdOpts, input: Value): Uint
 
 /** Overlay `data` at `off` on the file at `path` (zero-padded; FAT has no partial writes). */
 function writeVolumeFile(host: ShellHost, path: string, display: string, off: number, data: Uint8Array, ctx: CommandCtx): void {
+  const disk = host.vol.sectorCount() * host.vol.sectorSize();
+  // Bounded before the allocation below: `off` is skip*bs, an unbounded non-negative integer,
+  // so an unchecked --seek would either allocate a huge buffer or overflow Uint8Array's length.
+  if (off + data.length > disk) {
+    throw new ShellError(`${display}: Range runs past the end of the disk`, { code: "OutOfBounds", help: "lower --seek or --bs" });
+  }
   let existing: Uint8Array | null = null;
   try {
     existing = host.vol.readFile(path);
@@ -155,13 +154,9 @@ function writeVolumeFile(host: ShellHost, path: string, display: string, off: nu
   if (existing) out.set(existing, 0);
   out.set(data, off);
   const had = existing !== null;
-  try {
-    host.run((v) => (had ? v.writeFile(path, out) : v.createFile(path, out)));
-  } catch (e) {
-    throw wrapFs(display, e);
-  }
+  fsCall(display, () => host.run((v) => (had ? v.writeFile(path, out) : v.createFile(path, out))));
   if (had || off > 0) ctx.log("FAT has no partial writes; the whole file was rewritten");
-  host.select(canonicalize(host.vol, path));
+  selectPath(host, path);
 }
 
 /**
@@ -188,13 +183,7 @@ export function runDd(host: ShellHost, vfs: Vfs, opts: DdOpts, input: Value, ctx
         const disk = host.vol.sectorCount() * host.vol.sectorSize();
         // Checked here as well as in Rust so an offset above 2^32 never reaches the u32 binding.
         if (off + data.length > disk) throw new ShellError("/dev/hda: Range runs past the end of the disk", { code: "OutOfBounds" });
-        if (data.length > 0) {
-          try {
-            host.run((v) => v.writeRaw(off, data));
-          } catch (e) {
-            throw wrapFs(display, e);
-          }
-        }
+        if (data.length > 0) fsCall(display, () => host.run((v) => v.writeRaw(off, data)));
         break;
       }
       case "volume":
