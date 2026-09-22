@@ -49,6 +49,9 @@ browser. Build the wasm package first with
 
 ## Explorer UI
 
-`web/ui` is the learning UI (Svelte 5) for exploring FAT volumes. Build the
-wasm package first with `wasm-pack build crates/wasm --target bundler`, then
-`cd web/ui && pnpm install && pnpm dev`.
+`web/ui` is the learning UI (Svelte 5) for exploring FAT volumes: a
+whole-disk hex dump, a disk ribbon and FAT cluster map, an operation
+timeline with byte-diff replay, and guided scenarios. Build the wasm
+package first with `wasm-pack build crates/wasm --target bundler`, then
+`cd web/ui && pnpm install && pnpm dev`. See `web/ui/README.md` for the
+panes, keyboard shortcuts, and other commands.

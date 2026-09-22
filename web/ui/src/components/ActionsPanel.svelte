@@ -79,7 +79,7 @@
   <fieldset disabled={!volume.atLatest}>
     <label class="field">
       Path
-      <input class="mono" type="text" bind:value={path} />
+      <input id="action-path" class="mono" type="text" bind:value={path} />
     </label>
     <label class="field">
       Content
