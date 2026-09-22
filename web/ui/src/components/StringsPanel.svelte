@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { findStrings, type StringHit } from "../core/strings";
+  import { findStrings, scanChunked, type StringHit } from "../core/strings";
   import { normalize } from "../core/intervals";
   import { attrAtOffset } from "../core/attribution";
   import { volume } from "../state/volume.svelte";
@@ -26,11 +26,14 @@
 
   const hits: StringHit[] = $derived(scope === "whole" ? scanHits : visibleHits);
 
-  // Chunked whole-disk scan, 1 MiB per animation frame, skipping chunks whose sectors
-  // are all zero. Restarts whenever the toggle, scope, min length, or the volume
-  // itself (epoch) changes; deliberately does NOT depend on hover/cursor/selection so
-  // it never re-runs on every mouse move. The returned cleanup cancels the pending
-  // frame both when the effect re-runs and when the component unmounts.
+  // Chunked whole-disk scan, one 1 MiB chunk of `scanChunked` per animation frame,
+  // skipping chunks whose sectors are all zero. `scanChunked` (src/core/strings.ts)
+  // carries a printable run that straddles a chunk boundary into the next chunk
+  // instead of splitting it into two hits at the seam. Restarts whenever the toggle,
+  // scope, min length, or the volume itself (epoch) changes; deliberately does NOT
+  // depend on hover/cursor/selection so it never re-runs on every mouse move. The
+  // returned cleanup cancels the pending frame both when the effect re-runs and when
+  // the component unmounts.
   $effect(() => {
     const on = selection.stringsOn;
     const wantsWhole = scope === "whole";
@@ -46,33 +49,30 @@
     const image = volume.image;
     const zeros = volume.zeros;
     const sectorSize = volume.sectorSize;
-    const total = image.length;
-    const found: StringHit[] = [];
-    let pos = 0;
+    const isSkippable = (chunkStart: number, chunkEnd: number) => {
+      const s0 = Math.floor(chunkStart / sectorSize);
+      const s1 = Math.ceil(chunkEnd / sectorSize);
+      for (let s = s0; s < s1; s++) if (!zeros[s]) return false;
+      return true;
+    };
+    const gen = scanChunked(image, CHUNK, mr, SCAN_LIMIT, isSkippable);
     let cancelled = false;
     let rafId = 0;
 
     scanHits = [];
-    scanPct = total > 0 ? 0 : null;
+    scanPct = image.length > 0 ? 0 : null;
 
     function step() {
       if (cancelled) return;
-      const end = Math.min(total, pos + CHUNK);
-      const s0 = Math.floor(pos / sectorSize);
-      const s1 = Math.ceil(end / sectorSize);
-      let allZero = true;
-      for (let s = s0; s < s1; s++) { if (!zeros[s]) { allZero = false; break; } }
-      if (!allZero && found.length < SCAN_LIMIT) {
-        found.push(...findStrings(image, pos, end, mr, SCAN_LIMIT - found.length));
-        scanHits = found.slice();
-      }
-      pos = end;
-      if (pos >= total || found.length >= SCAN_LIMIT) {
+      const r = gen.next();
+      if (r.done) {
+        scanHits = r.value;
         scanPct = null;
-      } else {
-        scanPct = Math.floor((pos / total) * 100);
-        rafId = requestAnimationFrame(step);
+        return;
       }
+      scanHits = r.value.hits;
+      scanPct = r.value.pct;
+      rafId = requestAnimationFrame(step);
     }
     rafId = requestAnimationFrame(step);
 
