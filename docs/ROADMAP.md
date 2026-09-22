@@ -127,17 +127,26 @@ the test harness's `callErr` swallows harness errors.
 Changes in `@benjamin-small/browser-terminal` that would let the explorer's
 shell drop its workarounds, in order of value:
 
-1. `>`, `>>`, and `<` redirection with a host-pluggable file hook (the parser
+1. A prompt prefix (`setPrompt`), so the prompt can show the working
+   directory: https://github.com/benjamin-small/browser-terminal/issues/12.
+   The explorer already calls `host.setPrompt(promptFor(vfs.cwd))` on startup
+   and after every `cd` and `mkfs`; under 0.2.0 the call is a no-op, and the
+   pin moves to 0.3.0 when it lands.
+2. `>`, `>>`, and `<` redirection with a host-pluggable file hook (the parser
    already lexes them and rejects them as reserved); the explorer would
    register its `/mnt` and `/dev` resolver and the same commands gain real
-   redirection.
-2. `key=value` barewords, so `dd if=/dev/hda count=1` lexes without quotes.
-3. A bytes `Value`, replacing the `{ bytes: "<hex>", length }` blob record.
-4. A session or pane id on `ctx`, so each shell can keep its own working
-   directory.
-5. `CreateOptions.terminal` (theme, font family, font size), replacing the
-   `!important` CSS overrides.
-6. A public `focus()`, replacing the `.xterm-helper-textarea` query.
+   redirection: https://github.com/benjamin-small/browser-terminal/issues/13.
+3. `key=value` barewords, so `dd if=/dev/hda count=1` lexes without quotes:
+   https://github.com/benjamin-small/browser-terminal/issues/14.
+4. A bytes `Value`, replacing the `{ bytes: "<hex>", length }` blob record:
+   https://github.com/benjamin-small/browser-terminal/issues/15.
+5. A session or pane id on `ctx`, so each shell can keep its own working
+   directory: https://github.com/benjamin-small/browser-terminal/issues/16.
+6. `CreateOptions.terminal` (theme, font family, font size), replacing the
+   `!important` CSS overrides:
+   https://github.com/benjamin-small/browser-terminal/issues/17.
+7. A public `focus()`, replacing the `.xterm-helper-textarea` query:
+   https://github.com/benjamin-small/browser-terminal/issues/18.
 
 Until then the explorer pins the package exactly (0.2.0) so none of these
 workarounds break on a minor release.
