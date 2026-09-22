@@ -12,8 +12,17 @@
   import TerminalPanel from "./components/TerminalPanel.svelte";
   import Timeline from "./components/Timeline.svelte";
   import { inTextEntry } from "./core/keys";
+  import { focusHistoryStep } from "./state/navigate.svelte";
   import { terminal } from "./state/terminal.svelte";
   import { volume } from "./state/volume.svelte";
+
+  /** Scrub to `n` and recenter the dump on what that step changed, like the Timeline's
+   *  own controls. Scrubbing is explicit navigation; running an operation is not, and
+   *  leaves the dump where it is. */
+  function step(n: number) {
+    volume.seek(n);
+    focusHistoryStep(n);
+  }
 
   // `[` / `]` scrub the timeline and `/` jumps to the path field, all from anywhere
   // except text entry, so typing a path or file content in the Actions panel isn't
@@ -29,8 +38,8 @@
       // key is typed (xterm cancels it), so closing is exit / Close / Escape on the bar.
       e.preventDefault();
       terminal.toggle();
-    } else if (e.key === "[") volume.seek(Math.max(0, volume.cursor - 1));
-    else if (e.key === "]") volume.seek(volume.cursor + 1);
+    } else if (e.key === "[") step(Math.max(0, volume.cursor - 1));
+    else if (e.key === "]") step(volume.cursor + 1);
     else if (e.key === "/") {
       e.preventDefault();
       document.getElementById("action-path")?.focus();

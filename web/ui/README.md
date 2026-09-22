@@ -68,7 +68,11 @@ timeline along the bottom.
 - **Step / Timeline** — the current operation's plain-language events and
   changed sectors, with Prev/Next/Play scrubbing through history. Replay
   reconstructs the disk as it was after any step and highlights what that
-  step changed, in amber, in both the dump and the ribbon.
+  step changed, in amber, in both the dump and the ribbon. Running a command
+  never moves the dump: it highlights the changed bytes and leaves the view
+  where you left it. The dump scrolls only when you navigate — pick a step
+  (a step button, Prev/Next/Play, the slider, or `[`/`]`), click the ribbon
+  or a tree node, or run `seek`.
 - **Scenarios** (top bar) — guided walkthroughs: format an empty disk, add
   a small file, add a long-named file (LFN entries), overwrite with a
   larger file (chain grows), delete and see what remains, fill the disk,
