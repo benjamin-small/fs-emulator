@@ -23,6 +23,19 @@ export interface ShellHost {
 
 export const atLatest = (h: ShellHost): boolean => h.cursor === h.historyLength - 1;
 
+/**
+ * `vol.corruption()`, or `null` when the call itself throws. `corruption()` will throw
+ * `NotFat` on a non-FAT volume in the future, and a read command must not die on that;
+ * VolumeStore.refreshMeta guards it the same way.
+ */
+export function corruptionOf(vol: Volume): string | null {
+  try {
+    return vol.corruption();
+  } catch {
+    return null;
+  }
+}
+
 /** Select the canonical volume path (a root path, "/", becomes `null`), the rule `select` uses inline. */
 export function selectPath(host: ShellHost, path: string): void {
   const canon = canonicalize(host.vol, path);

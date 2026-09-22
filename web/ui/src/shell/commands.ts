@@ -6,8 +6,8 @@ import { buildChain } from "../core/fatchain";
 import { ADDR_HELP, SIZE_HELP, parseAddr, parseSize } from "./addr";
 import { decodeText, fromBytes, hasInput, toBytes } from "./bytes";
 import { DD_MAX_BYTES, parseDd, runDd } from "./dd";
-import { ShellError, fsCall, wrapFs } from "./errors";
-import { atLatest, selectPath, type ShellHost } from "./host";
+import { CORRUPT_HELP, ShellError, fsCall, wrapFs } from "./errors";
+import { atLatest, corruptionOf, selectPath, type ShellHost } from "./host";
 import { canonicalize, Vfs, resolved, type Resolved } from "./vfs";
 import { formatXxd } from "./xxd";
 
@@ -17,8 +17,6 @@ export { resolved } from "./vfs";
 export { selectPath } from "./host";
 
 export const RAW_DEVICE_HELP = "read a range with: dd --if=/dev/hda --bs=512 --skip=0 --count=1 | xxd";
-export const CORRUPT_HELP =
-  "the boot sector no longer parses; rewind on the timeline, or write the saved sector back with: <blob> | dd --of=/dev/hda";
 
 // Spec builders. Every positional is "str" so a bareword like `true` or `512`
 // still arrives as text; size and address flags parse their own strings.
@@ -36,7 +34,7 @@ export function warnIfRewound(host: ShellHost, ctx: CommandCtx): void {
 
 /** Path-based commands refuse to run while the boot sector does not parse (the Rust gate says the same). */
 export function assertMounted(host: ShellHost, display: string): void {
-  const c = host.vol.corruption();
+  const c = corruptionOf(host.vol);
   if (c) throw new ShellError(`${display}: ${c}`, { code: "CorruptImage", help: CORRUPT_HELP });
 }
 
@@ -183,6 +181,19 @@ export function readCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
         case "null":
           return asBlob ? fromBytes(new Uint8Array(0)) : "";
         case "volume": {
+          // The size comes from `stat`, so the cap is checked before the file is read and it
+          // covers `--bytes` too: a blob is twice the bytes again as hex.
+          let info: EntryInfo;
+          try {
+            info = host.vol.stat(r.path);
+          } catch (e) {
+            throw wrapFs(display, e);
+          }
+          if (info.size > DD_MAX_BYTES) {
+            throw new ShellError(`${display}: file is ${info.size} bytes; cat prints at most ${DD_MAX_BYTES} bytes`, {
+              help: `read part of it with: dd --if=${display} --bs=512 --count=1 | xxd`,
+            });
+          }
           let bytes: Uint8Array;
           try {
             bytes = host.vol.readFile(r.path);
@@ -190,11 +201,6 @@ export function readCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
             throw wrapFs(display, e);
           }
           if (asBlob) return fromBytes(bytes);
-          if (bytes.length > DD_MAX_BYTES) {
-            throw new ShellError(`${display}: file is ${bytes.length} bytes; cat prints at most ${DD_MAX_BYTES} bytes`, {
-              help: `read part of it with: dd --if=${display} --bs=512 --count=1 | xxd`,
-            });
-          }
           if (looksBinary(bytes)) ctx.err(`binary file; try cat --bytes ${display} | xxd`);
           return decodeText(bytes);
         }
@@ -226,7 +232,7 @@ export function readCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
             sectorSize,
             sectors,
             fsType: vol.fsType(),
-            state: vol.corruption() ? "corrupt" : "ok",
+            state: corruptionOf(vol) ? "corrupt" : "ok",
           };
         }
         case "volume": {
@@ -311,7 +317,7 @@ export function readCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
           sectorSize,
           sectors,
           bytes: sectors * sectorSize,
-          state: vol.corruption() ? "corrupt" : "ok",
+          state: corruptionOf(vol) ? "corrupt" : "ok",
         },
       ];
     },
@@ -380,7 +386,6 @@ function statIfExists(vol: Volume, path: string, display: string): EntryInfo | n
 
 /** `write`, `mkdir`, `rmdir`, `rm`, `touch`, `cp`, `mkfs`: every disk change goes through `host.run`. */
 function mutationCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
-  const pathArg = (args: CommandArgs, i: number): string => String(args.positionals[i]);
   const joinPath = (dir: string, name: string): string => (dir === "/" ? `/${name}` : `${dir}/${name}`);
   const baseName = (p: string): string => p.slice(p.lastIndexOf("/") + 1);
   /** The volume path behind `target`, or the ShellError for `/`, `/dev` and the devices. */
@@ -402,7 +407,7 @@ function mutationCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
       ],
     },
     fn: (args, input, ctx) => {
-      const { r: target, display } = resolved(vfs, pathArg(args, 0));
+      const { r: target, display } = resolved(vfs, reqStr(args, 0, "path"));
       if (!hasInput(input)) throw new ShellError("nothing to write", { help: "pipe text or bytes in, e.g. echo hi | write /mnt/a.txt" });
       const data = toBytes(input);
       const append = args.flags.append === true;
@@ -450,7 +455,7 @@ function mutationCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
       required: [{ name: "path", shape: "str", desc: "/mnt/..." }],
     },
     fn: (args) => {
-      const { r: target, display } = resolved(vfs, pathArg(args, 0));
+      const { r: target, display } = resolved(vfs, reqStr(args, 0, "path"));
       const path = volumePathOf(target, display, "cannot create a directory on a device", "File exists");
       if (path === "/") throw new ShellError("/mnt: File exists");
       fsCall(display, () => host.run((v) => v.createDir(path)));
@@ -465,7 +470,7 @@ function mutationCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
       required: [{ name: "path", shape: "str", desc: "/mnt/..." }],
     },
     fn: (args) => {
-      const { r: target, display } = resolved(vfs, pathArg(args, 0));
+      const { r: target, display } = resolved(vfs, reqStr(args, 0, "path"));
       const path = volumePathOf(target, display, "Not a directory", "cannot remove a virtual directory");
       if (path === "/") throw new ShellError("/mnt: cannot remove the mount point");
       const info = statIfExists(host.vol, path, display);
@@ -483,7 +488,7 @@ function mutationCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
       required: [{ name: "path", shape: "str", desc: "/mnt/..." }],
     },
     fn: (args) => {
-      const { r: target, display } = resolved(vfs, pathArg(args, 0));
+      const { r: target, display } = resolved(vfs, reqStr(args, 0, "path"));
       const path = volumePathOf(target, display, "cannot remove a device");
       if (path === "/") throw new ShellError("/mnt: Is a directory", { help: "use rmdir" });
       const info = statIfExists(host.vol, path, display);
@@ -501,7 +506,7 @@ function mutationCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
       required: [{ name: "path", shape: "str", desc: "/mnt/..." }],
     },
     fn: (args, _input, ctx) => {
-      const { r: target, display } = resolved(vfs, pathArg(args, 0));
+      const { r: target, display } = resolved(vfs, reqStr(args, 0, "path"));
       const path = volumePathOf(target, display, "cannot touch a device");
       if (path === "/") throw new ShellError("/mnt: Is a directory");
       const info = statIfExists(host.vol, path, display);
@@ -526,8 +531,8 @@ function mutationCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
       ],
     },
     fn: (args, _input, ctx) => {
-      const { r: src, display: srcDisplay } = resolved(vfs, pathArg(args, 0));
-      const { r: dst, display: dstDisplay0 } = resolved(vfs, pathArg(args, 1));
+      const { r: src, display: srcDisplay } = resolved(vfs, reqStr(args, 0, "src"));
+      const { r: dst, display: dstDisplay0 } = resolved(vfs, reqStr(args, 1, "dst"));
       const srcPath = volumePathOf(src, srcDisplay, "use dd for devices");
       const data = fsCall(srcDisplay, () => host.vol.readFile(srcPath));
       let dstPath = volumePathOf(dst, dstDisplay0, "use dd for devices");

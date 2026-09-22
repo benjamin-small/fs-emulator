@@ -117,11 +117,15 @@ describe("cat", () => {
     expect(r.err).toEqual(["binary file; try cat --bytes /mnt/DOCS/N.TXT | xxd"]);
     expect((r.value as string).length).toBe(3000);
     host.run((v) => v.createFile("/BIG.BIN", new Uint8Array(DD_MAX_BYTES + 1)));
+    const steps = host.history.length;
     const e = await callErr(defs, "cat", ["/mnt/BIG.BIN"]);
     expect(e.message).toBe(`/mnt/BIG.BIN: file is ${DD_MAX_BYTES + 1} bytes; cat prints at most ${DD_MAX_BYTES} bytes`);
     expect(e.help).toContain("dd --if=/mnt/BIG.BIN");
-    const asBlob = await call(defs, "cat", { positionals: ["/mnt/BIG.BIN"], flags: { bytes: true } });
-    expect((asBlob.value as { length: number }).length).toBe(DD_MAX_BYTES + 1);
+    // --bytes is capped the same way: the size comes from stat, so nothing is read.
+    const asBlob = await callErr(defs, "cat", { positionals: ["/mnt/BIG.BIN"], flags: { bytes: true } });
+    expect(asBlob.message).toBe(e.message);
+    expect(asBlob.help).toBe(e.help);
+    expect(host.history.length).toBe(steps);
   });
 
   it("points devices at dd and directories at their nature", async () => {

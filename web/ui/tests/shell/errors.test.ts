@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Volume } from "../../src/lib/wasm";
-import { ShellError, fsCall, fsPhrase, wrapFs } from "../../src/shell/errors";
-import { atLatest, statusToError, type ShellHost } from "../../src/shell/host";
+import { CORRUPT_HELP, ShellError, fsCall, fsPhrase, wrapFs } from "../../src/shell/errors";
+import { atLatest, corruptionOf, statusToError, type ShellHost } from "../../src/shell/host";
 
 describe("ShellError", () => {
   it("is an Error carrying help and code", () => {
@@ -30,6 +30,7 @@ describe("wrapFs", () => {
     expect(fsPhrase("OutOfBounds", "x")).toBe("Range runs past the end of the disk");
     expect(fsPhrase("CorruptImage", "boot sector no longer parses")).toBe("boot sector no longer parses");
     expect(fsPhrase(undefined, "raw text")).toBe("raw text");
+    expect(fsPhrase("constructor", "raw text")).toBe("raw text"); // an inherited key is not a phrase
   });
   it("wraps a real wasm error as `display: phrase` with no command prefix and keeps the code", () => {
     const vol = Volume.formatFat16(undefined);
@@ -39,6 +40,13 @@ describe("wrapFs", () => {
     expect(w).toBeInstanceOf(ShellError);
     expect(w.message).toBe("/mnt/NOPE.TXT: No such file or directory");
     expect(w.code).toBe("NotFound");
+  });
+  it("attaches the recovery hint to every CorruptImage error", () => {
+    const w = wrapFs("/mnt/A.TXT", { message: "corrupt image: x", code: "CorruptImage" });
+    expect(w.message).toBe("/mnt/A.TXT: corrupt image: x");
+    expect(w.code).toBe("CorruptImage");
+    expect(CORRUPT_HELP).toContain("dd --of=/dev/hda"); // the constant itself, not just "both undefined"
+    expect(w.help).toBe(CORRUPT_HELP);
   });
   it("passes a ShellError through untouched and stringifies non-errors", () => {
     const own = new ShellError("give --at <addr>", { help: "h" });
@@ -58,6 +66,11 @@ describe("host helpers", () => {
     expect(atLatest(stub(-1, 0))).toBe(true);
     expect(atLatest(stub(2, 3))).toBe(true);
     expect(atLatest(stub(1, 3))).toBe(false);
+  });
+  it("corruptionOf returns null when corruption() itself throws (a future NotFat volume)", () => {
+    const vol = { corruption: () => { throw new Error("NotFat"); } };
+    expect(corruptionOf(vol as unknown as Volume)).toBeNull();
+    expect(corruptionOf(Volume.formatFat16(undefined))).toBeNull();
   });
   it("statusToError turns the store's status into a throwable with the code", () => {
     const e = statusToError({ text: "disk full", code: "DiskFull" });

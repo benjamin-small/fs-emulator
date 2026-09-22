@@ -17,6 +17,14 @@ export class ShellError extends Error {
   }
 }
 
+/**
+ * The way back from an unparsable boot sector. `wrapFs` attaches it to every `CorruptImage`
+ * error, whichever call produced it, and `assertMounted` uses the same text for the gate it
+ * raises itself.
+ */
+export const CORRUPT_HELP =
+  "the boot sector no longer parses; rewind on the timeline, or write the saved sector back with: <blob> | dd --of=/dev/hda";
+
 /** Coreutils phrasing for the wasm error codes a shell user meets most; other codes keep the wasm text. */
 const PHRASES: Record<string, string> = {
   NotFound: "No such file or directory",
@@ -29,7 +37,9 @@ const PHRASES: Record<string, string> = {
 };
 
 export function fsPhrase(code: string | undefined, raw: string): string {
-  return (code !== undefined && PHRASES[code]) || raw;
+  // `Object.hasOwn`, not `PHRASES[code]`: an inherited key like `constructor` or `toString`
+  // would otherwise hit and phrase a wasm error as a function.
+  return code !== undefined && Object.hasOwn(PHRASES, code) ? PHRASES[code] : raw;
 }
 
 /** `${display}: ${phrase}` for anything a Volume call threw. A ShellError is already phrased and passes through. */
@@ -38,7 +48,8 @@ export function wrapFs(display: string, e: unknown): ShellError {
   const err = typeof e === "object" && e !== null ? (e as { message?: unknown; code?: unknown }) : null;
   const raw = typeof err?.message === "string" ? err.message : String(e);
   const code = typeof err?.code === "string" ? err.code : undefined;
-  return new ShellError(`${display}: ${fsPhrase(code, raw)}`, { code });
+  // Every CorruptImage error carries the recovery hint, wherever in the core it came from.
+  return new ShellError(`${display}: ${fsPhrase(code, raw)}`, { code, help: code === "CorruptImage" ? CORRUPT_HELP : undefined });
 }
 
 /** Run `fn`; a thrown `ShellError` passes through unchanged, anything else becomes `wrapFs(display, e)`. */
