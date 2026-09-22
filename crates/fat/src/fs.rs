@@ -226,6 +226,9 @@ impl FatFs {
             if range.start < BOOT_SECTOR_LEN {
                 fs.reparse_boot_sector();
             }
+            // Nothing fallible may follow this call: `run_op` rolls the bytes back on an
+            // error, but not `boot`/`geo`/`corrupt`, which would then describe a disk that
+            // no longer exists.
             Ok(())
         })
     }

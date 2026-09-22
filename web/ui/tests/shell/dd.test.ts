@@ -130,6 +130,16 @@ describe("dd copies", () => {
     expect(host.selected.at(-1)).toBe("/B.TXT"); // "b.txt" fits an 8.3 short name; the core stores it uppercased
   });
 
+  it("takes a size suffix on --count: 1k blocks of one byte from /dev/zero", async () => {
+    const { host, defs } = setup();
+    const r = await call(defs, "dd", { flags: { if: "/dev/zero", of: "/mnt/z.bin", bs: "1", count: "1k" } });
+    expect(r.value).toBeUndefined();
+    const z = host.vol.readFile("/z.bin");
+    expect(z.length).toBe(1024);
+    expect(z.every((b) => b === 0)).toBe(true);
+    expect(r.log.slice(-3)).toEqual(["1024+0 records in", "1024+0 records out", "1024 bytes copied"]);
+  });
+
   it("overlays piped bytes onto an existing file at --seek and rewrites it", async () => {
     const { host, defs } = setup();
     await call(defs, "write", { positionals: ["/mnt/a.txt"] }, "hello world");

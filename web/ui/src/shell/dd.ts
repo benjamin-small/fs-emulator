@@ -139,7 +139,7 @@ function readSource(host: ShellHost, vfs: Vfs, opts: DdOpts, input: Value): Uint
 /** Overlay `data` at `off` on the file at `path` (zero-padded; FAT has no partial writes). */
 function writeVolumeFile(host: ShellHost, path: string, display: string, off: number, data: Uint8Array, ctx: CommandCtx): void {
   const disk = host.vol.sectorCount() * host.vol.sectorSize();
-  // Bounded before the allocation below: `off` is skip*bs, an unbounded non-negative integer,
+  // Bounded before the allocation below: `off` is seek*bs, an unbounded non-negative integer,
   // so an unchecked --seek would either allocate a huge buffer or overflow Uint8Array's length.
   if (off + data.length > disk) {
     throw new ShellError(`${display}: Range runs past the end of the disk`, { code: "OutOfBounds", help: "lower --seek or --bs" });
