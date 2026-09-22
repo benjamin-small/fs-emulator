@@ -73,12 +73,22 @@ timeline along the bottom.
   where you left it. The dump scrolls only when you navigate — pick a step
   (a step button, Prev/Next/Play, the slider, or `[`/`]`), click the ribbon
   or a tree node, or run `seek`.
-- **Scenarios** (top bar) — guided walkthroughs: format an empty disk, add
-  a small file, add a long-named file (LFN entries), overwrite with a
-  larger file (chain grows), delete and see what remains, fill the disk,
-  make a directory, and work from the shell (the same operations typed as
-  commands, plus a raw-sector read and a raw patch of the volume label).
-  Starting one formats a fresh disk. Each step runs
+- **Learning scenarios** (top bar) — guided walkthroughs: format an empty
+  disk, add a small file, add a long-named file (LFN entries), overwrite
+  with a larger file (chain grows), delete and see what remains, fill the
+  disk, make a directory, and work from the shell (the same operations typed
+  as commands, plus a raw-sector read and a raw patch of the volume label).
+  Pick one in the top bar and press **Start**; it formats a fresh disk and a
+  **Lesson** card appears at the top of the right column, above Step. The
+  card holds the scenario title, the step number, the step's title and text,
+  a "Look at:" line naming what the step pointed the UI at (a file, a
+  cluster, a sector, an offset and its region, the remnant hatching, the
+  strings overlay), and **Prev** / **Next** (**Finish** on the last step) /
+  **Close**; `n` and `p` do Next and Prev from anywhere outside a text
+  field. It is an ordinary panel: nothing is covered or dimmed, every other
+  pane stays live while a lesson runs, and the card's title takes focus on
+  each step so a keyboard or screen-reader user lands on the new text. Each
+  step runs
   at most once: **Next** runs a step the first time you reach it, but once
   it has run, Prev and Next replay it through the timeline — the disk is
   rewound or fast-forwarded to the state that step left behind, so stepping
@@ -188,7 +198,7 @@ it. `docs/ROADMAP.md` has the checklist.
 | Key | Effect |
 |---|---|
 | `[` / `]` | Step the timeline back / forward |
-| `n` / `p` | Next / previous scenario step (while a scenario is running) |
+| `n` / `p` | Next / previous step on the Lesson card (while a lesson is running) |
 | `/` | Focus the path field in Actions |
 | Arrow keys | Move the dump's byte cursor, or seek one ribbon column (ribbon focused) |
 | `Page Up` / `Page Down` | Scroll the dump by a page |

@@ -4,6 +4,7 @@
   import FatMap from "./components/FatMap.svelte";
   import HexView from "./components/HexView.svelte";
   import Inspector from "./components/Inspector.svelte";
+  import LessonPanel from "./components/LessonPanel.svelte";
   import Ribbon from "./components/Ribbon.svelte";
   import ScenarioPanel from "./components/ScenarioPanel.svelte";
   import StatusLine from "./components/StatusLine.svelte";
@@ -13,6 +14,7 @@
   import Timeline from "./components/Timeline.svelte";
   import { inTextEntry } from "./core/keys";
   import { focusHistoryStep } from "./state/navigate.svelte";
+  import { scenarios } from "./state/scenarios.svelte";
   import { terminal } from "./state/terminal.svelte";
   import { volume } from "./state/volume.svelte";
 
@@ -26,8 +28,8 @@
 
   // `[` / `]` scrub the timeline and `/` jumps to the path field, all from anywhere
   // except text entry, so typing a path or file content in the Actions panel isn't
-  // hijacked. `n` / `p` (scenario step) are handled by ScenarioPanel itself, since
-  // they only apply while a scenario is running. The terminal drawer counts as text
+  // hijacked. `n` / `p` (scenario step) are handled by LessonPanel itself, which only
+  // exists while a lesson is running. The terminal drawer counts as text
   // entry too (see core/keys.ts for the Ctrl-B chord case).
   function onKeydown(e: KeyboardEvent) {
     // A modifier means the chord belongs to the browser or the OS (Cmd-` cycles windows on
@@ -70,6 +72,7 @@
     </aside>
     <main class="col center"><HexView /></main>
     <aside class="col right">
+      {#if scenarios.current}<LessonPanel />{/if}
       <StepPanel />
       <StringsPanel />
       <Inspector />

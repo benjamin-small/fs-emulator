@@ -134,14 +134,19 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, [tabindex]:fo
 .strings .hit-list { list-style: none; padding: 0; margin: 8px 0 0; display: flex; flex-direction: column; gap: 2px; max-height: 40vh; overflow: auto; font-size: 12px; }
 .strings .hit-list .link { display: block; width: 100%; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-/* Scenario panel */
+/* Scenario picker (top bar) */
 .scenario-controls { display: flex; align-items: center; gap: 6px; }
-.scenario-overlay { position: fixed; z-index: 20; border-color: var(--focus); border-width: 2px; box-shadow: 0 4px 16px color-mix(in srgb, var(--ink) 20%, transparent); max-height: calc(100vh - 32px); overflow: auto; }
-.scenario-overlay .scenario-step-title { margin: 8px 0 4px; font: 500 16px var(--font-display); }
-.scenario-overlay .btn-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
-.scenario-overlay h2:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
-/* The panels the overlay covers are `inert` while it is open; dim them to match. */
-.col.right.scenario-open > * { opacity: 0.5; }
+.scenario-label { font: 500 12px var(--font-display); color: var(--ink-muted); }
+
+/* Lesson card: an ordinary panel at the top of the right column, marked out by its border
+   alone — nothing is covered, dimmed, or made inert while a lesson runs. */
+.lesson { border: 2px solid var(--focus); }
+.lesson .eyebrow { margin: 0 0 2px; font: 500 11px var(--font-display); text-transform: uppercase; letter-spacing: 0.04em; color: var(--ink-muted); }
+.lesson h2 { margin: 0 0 6px; font: 500 16px/1.2 var(--font-display); }
+.lesson h2:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.lesson .lesson-step-title { margin: 8px 0 4px; font: 500 13px var(--font-display); }
+.lesson .look-at { font-size: 12px; }
+.lesson .btn-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 
 /* Actions panel */
 .actions fieldset { border: 0; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; }
