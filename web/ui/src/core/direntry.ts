@@ -4,6 +4,29 @@ import { buildChain } from "./fatchain";
 
 const ENTRY = 32;
 
+/**
+ * Walks raw directory entries, accumulating the preceding LFN text (if any) for
+ * each non-`lfn` entry so callers don't have to reimplement VFAT's
+ * last-entry-first-on-disk assembly. `cb` is called once per non-`lfn` entry with
+ * its index, the entry itself, the accumulated long name ("" if the entry has no
+ * LFN), and the index of the first slot of the group (the first LFN entry, or the
+ * entry's own index when there is no LFN) — the same "first" used for
+ * `slotOffset` ranges. Stops at a `free` entry (end of the directory), or early
+ * when `cb` returns `true`.
+ */
+export function walkEntries(entries: RawEntry[], cb: (i: number, e: RawEntry, longName: string, firstIndex: number) => boolean | void): void {
+  let lfnText = "", lfnStart = -1;
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i];
+    if (e.kind === "lfn") { if (e.isLast) { lfnText = ""; lfnStart = i; } lfnText = e.text + lfnText; continue; }
+    const firstIndex = lfnStart >= 0 && lfnText ? lfnStart : i;
+    const stop = cb(i, e, lfnText, firstIndex);
+    if (e.kind === "free") break;
+    lfnText = ""; lfnStart = -1;
+    if (stop) break;
+  }
+}
+
 export function findEntrySlots(vol: Volume, g: Geometry, fat: FatEntry[], owners: ClusterOwner[], path: string): { start: number; end: number } | null {
   if (path === "/") return null;
   const cut = path.lastIndexOf("/");
@@ -11,21 +34,15 @@ export function findEntrySlots(vol: Volume, g: Geometry, fat: FatEntry[], owners
   const name = path.slice(cut + 1).toUpperCase();
   let entries: RawEntry[];
   try { entries = vol.rawDirEntries(parent); } catch { return null; }
-  let lfnText = "", lfnStart = -1;
-  for (let i = 0; i < entries.length; i++) {
-    const e = entries[i];
-    if (e.kind === "lfn") { if (e.isLast) { lfnText = ""; lfnStart = i; } lfnText = e.text + lfnText; continue; }
-    if (e.kind === "short") {
-      const matches = e.name.toUpperCase() === name || lfnText.toUpperCase() === name;
-      if (matches) {
-        const first = lfnStart >= 0 && lfnText ? lfnStart : i;
-        return { start: slotOffset(g, fat, owners, parent, first), end: slotOffset(g, fat, owners, parent, i) + ENTRY };
-      }
-    }
-    if (e.kind === "free") break;
-    lfnText = ""; lfnStart = -1;
-  }
-  return null;
+  let result: { start: number; end: number } | null = null;
+  walkEntries(entries, (i, e, longName, firstIndex) => {
+    if (e.kind !== "short") return false;
+    const matches = e.name.toUpperCase() === name || longName.toUpperCase() === name;
+    if (!matches) return false;
+    result = { start: slotOffset(g, fat, owners, parent, firstIndex), end: slotOffset(g, fat, owners, parent, i) + ENTRY };
+    return true;
+  });
+  return result;
 }
 
 export function slotOffset(g: Geometry, fat: FatEntry[], owners: ClusterOwner[], dir: string, slot: number): number {
