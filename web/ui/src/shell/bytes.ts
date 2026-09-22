@@ -27,6 +27,10 @@ export function hex(b: Uint8Array): string {
 }
 
 export function unhex(s: string): Uint8Array {
+  // Validated rather than trusted: `parseInt` on a half pair or on non-hex yields NaN, which
+  // Uint8Array stores as 0, so an invalid blob would silently become plausible bytes.
+  if (s.length % 2 !== 0) throw new ShellError(`invalid blob: ${s.length} hex characters is not a whole number of bytes`, { help: BYTES_HELP });
+  if (!HEX_RE.test(s)) throw new ShellError("invalid blob: bytes must be pairs of lowercase hex digits", { help: BYTES_HELP });
   const out = new Uint8Array(s.length / 2);
   for (let i = 0; i < out.length; i++) out[i] = parseInt(s.slice(2 * i, 2 * i + 2), 16);
   return out;

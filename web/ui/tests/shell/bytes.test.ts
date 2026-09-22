@@ -3,6 +3,11 @@ import { BYTES_HELP, decodeText, fromBytes, hasInput, hex, isBlob, toBytes, unhe
 import { ShellError } from "../../src/shell/errors";
 
 const u8 = (...b: number[]) => new Uint8Array(b);
+/** The ShellError `fn` threw; fails the test when it returns instead. */
+function caught(fn: () => unknown): ShellError {
+  try { fn(); } catch (e) { return e as ShellError; }
+  throw new Error("expected a throw");
+}
 
 describe("hex and blobs", () => {
   it("hex/unhex round trip including 0x00 and 0xff", () => {
@@ -26,6 +31,17 @@ describe("hex and blobs", () => {
     expect(isBlob("ab")).toBe(false);
     expect(isBlob(["ab", 1])).toBe(false);
     expect(isBlob({ bytes: 12, length: 1 })).toBe(false);
+  });
+  it("unhex refuses an odd number of characters instead of dropping the last nibble", () => {
+    const e = caught(() => unhex("00f"));
+    expect(e).toBeInstanceOf(ShellError);
+    expect(e.message).toContain("3");
+    expect(e.help).toBe(BYTES_HELP);
+  });
+  it("unhex refuses non-hex characters instead of writing NaN bytes", () => {
+    const e = caught(() => unhex("00zz"));
+    expect(e).toBeInstanceOf(ShellError);
+    expect(e.help).toBe(BYTES_HELP);
   });
 });
 
