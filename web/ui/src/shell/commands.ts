@@ -1,16 +1,16 @@
-import type { CommandArgs, CommandCtx, CommandSpec, FlagSpec, PosArg, Value } from "./types";
-import type { DateTime, EntryInfo } from "../lib/wasm";
+import type { CommandArgs, CommandCtx, CommandDef, CommandSpec, FlagSpec, PosArg } from "./types";
+import type { DateTime, EntryInfo, FormatOptions, Volume } from "../lib/wasm";
 import { clusterByteRange } from "../core/attribution";
 import { findEntrySlots } from "../core/direntry";
 import { buildChain } from "../core/fatchain";
-import { parseAddr } from "./addr";
-import { decodeText, fromBytes } from "./bytes";
-import { DD_MAX_BYTES } from "./dd";
+import { ADDR_HELP, SIZE_HELP, parseAddr, parseSize } from "./addr";
+import { decodeText, fromBytes, toBytes } from "./bytes";
+import { DD_MAX_BYTES, parseDd, runDd } from "./dd";
 import { ShellError, wrapFs } from "./errors";
 import { atLatest, type ShellHost } from "./host";
 import { canonicalize, Vfs, type Resolved } from "./vfs";
+import { formatXxd } from "./xxd";
 
-import type { CommandDef } from "./types";
 export type { CommandDef } from "./types";
 
 export const RAW_DEVICE_HELP = "read a range with: dd --if=/dev/hda --bs=512 --skip=0 --count=1 | xxd";
@@ -35,6 +35,27 @@ export function warnIfRewound(host: ShellHost, ctx: CommandCtx): void {
 export function assertMounted(host: ShellHost, display: string): void {
   const c = host.vol.corruption();
   if (c) throw new ShellError(`${display}: ${c}`, { code: "CorruptImage", help: CORRUPT_HELP });
+}
+
+/** Resolve `s` and its display string together — the pair almost every command needs first. */
+export function resolved(vfs: Vfs, s: string): { r: Resolved; display: string } {
+  const r = vfs.resolve(s);
+  return { r, display: vfs.display(r) };
+}
+
+/** Run `fn`; a thrown `ShellError` passes through unchanged, anything else becomes `wrapFs(display, e)`. */
+export function fsCall<T>(display: string, fn: () => T): T {
+  try {
+    return fn();
+  } catch (e) {
+    throw wrapFs(display, e);
+  }
+}
+
+/** Select the canonical volume path (a root path, "/", becomes `null`), the rule `select` uses inline. */
+export function selectPath(host: ShellHost, path: string): void {
+  const canon = canonicalize(host.vol, path);
+  host.select(canon === "/" ? null : canon);
 }
 
 export function posStr(args: CommandArgs, i: number): string | undefined {
@@ -327,24 +348,19 @@ export function readCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
 
   const select: CommandDef = {
     spec: { name: "select", summary: "Highlight a file in the explorer", optional: [P("path", "a path under /mnt; omit to clear")] },
-    fn: (args) => {
+    fn: (args, _input, ctx) => {
       const target = posStr(args, 0);
       if (target === undefined) {
         host.select(null);
         return;
       }
-      const r = vfs.resolve(target);
-      const display = vfs.display(r);
+      warnIfRewound(host, ctx);
+      const { r, display } = resolved(vfs, target);
       if (r.kind !== "volume") {
         throw new ShellError(`${display}: only volume paths can be selected`, { help: "select /mnt/<file>, or run select with no argument to clear" });
       }
-      try {
-        host.vol.stat(r.path);
-      } catch (e) {
-        throw wrapFs(display, e);
-      }
-      const canon = canonicalize(host.vol, r.path);
-      host.select(canon === "/" ? null : canon);
+      fsCall(display, () => host.vol.stat(r.path));
+      selectPath(host, r.path);
     },
   };
 
@@ -370,11 +386,109 @@ export function readCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
   ];
 }
 
+/** `dd`, `xxd` and its alias `hexdump`. */
+function ddXxdCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
+  const dd: CommandDef = {
+    spec: {
+      name: "dd",
+      summary: "Copy blocks between files, /dev/hda and /dev/zero (at most 1 MiB per run)",
+      rest: { name: "operand", shape: "str", desc: "quoted classic operands: 'if=/dev/hda' 'bs=512' 'count=1'" },
+      flags: [
+        { long: "if", shape: "str", desc: "source path (default: the piped input)" },
+        { long: "of", shape: "str", desc: "destination path (default: return the bytes as a blob)" },
+        { long: "bs", shape: "str", desc: "block size, default 512 (k and M suffixes)" },
+        { long: "count", shape: "str", desc: "blocks to copy (default: to the end of the source)" },
+        { long: "skip", shape: "str", desc: "blocks to skip at the start of the source" },
+        { long: "seek", shape: "str", desc: "blocks to skip at the start of the destination" },
+      ],
+    },
+    fn: (args, input, ctx) => {
+      const opts = parseDd(args.flags, args.positionals);
+      if (opts.if !== undefined) {
+        const { r } = resolved(vfs, opts.if);
+        if (r.kind === "raw" || r.kind === "volume") warnIfRewound(host, ctx);
+      }
+      return runDd(host, vfs, opts, input, ctx);
+    },
+  };
+
+  const xxdSpec = (name: string, summary: string): CommandSpec => ({
+    name,
+    summary,
+    optional: [{ name: "path", shape: "str", desc: "/mnt/file, /dev/hda (one sector by default) or /dev/zero --len; omit to dump piped bytes" }],
+    flags: [
+      { long: "offset", shape: "str", desc: `start address (${ADDR_HELP})` },
+      { long: "len", shape: "str", desc: `bytes to show (${SIZE_HELP})` },
+      { long: "cols", shape: "int", desc: "bytes per row, default 16" },
+    ],
+  });
+
+  const xxd: CommandDef["fn"] = (args, input, ctx) => {
+    const colsFlag = args.flags.cols;
+    const cols = colsFlag === undefined || colsFlag === null ? 16 : Number(colsFlag);
+    if (!Number.isInteger(cols) || cols < 1 || cols > 64) throw new ShellError("--cols must be 1..64");
+    const offsetFlag = args.flags.offset;
+    const offset = offsetFlag === undefined || offsetFlag === null ? undefined : parseAddr(String(offsetFlag), host.vol.geometry());
+    const lenFlag = args.flags.len;
+    const len = lenFlag === undefined || lenFlag === null ? undefined : parseSize(String(lenFlag));
+    const base = offset ?? 0;
+    const slice = (all: Uint8Array): Uint8Array => {
+      const from = Math.min(base, all.length);
+      const to = len === undefined ? all.length : Math.min(all.length, from + len);
+      return all.subarray(from, to);
+    };
+    const tooBig = (n: number) => new ShellError(`refusing to dump ${n} bytes; the limit is ${DD_MAX_BYTES}`, { help: "use a smaller --len" });
+
+    let bytes: Uint8Array;
+    if (args.positionals.length === 0) {
+      if (input === null) throw new ShellError("nothing to dump", { help: "xxd <path>, or pipe bytes in: dd --if=/dev/hda --count=1 | xxd" });
+      bytes = slice(toBytes(input));
+    } else {
+      const { r: target, display } = resolved(vfs, String(args.positionals[0]));
+      switch (target.kind) {
+        case "raw": {
+          warnIfRewound(host, ctx);
+          const disk = host.vol.sectorCount() * host.vol.sectorSize();
+          if (base >= disk) throw new ShellError(`0x${base.toString(16)} is past the end of the disk (${disk} bytes)`);
+          const n = Math.min(len ?? host.vol.sectorSize(), disk - base);
+          if (n > DD_MAX_BYTES) throw tooBig(n);
+          bytes = host.vol.readRaw(base, n);
+          break;
+        }
+        case "zero": {
+          if (len === undefined) throw new ShellError("/dev/zero: give --len", { help: SIZE_HELP });
+          if (len > DD_MAX_BYTES) throw tooBig(len);
+          bytes = new Uint8Array(len);
+          break;
+        }
+        case "null":
+          bytes = new Uint8Array(0);
+          break;
+        case "volume": {
+          warnIfRewound(host, ctx);
+          const file = fsCall(display, () => host.vol.readFile(target.path));
+          bytes = slice(file);
+          break;
+        }
+        default:
+          throw new ShellError(`${display}: Is a directory`);
+      }
+    }
+    if (bytes.length > DD_MAX_BYTES) throw tooBig(bytes.length);
+    return formatXxd(bytes, base, cols);
+  };
+
+  return [
+    dd,
+    { spec: xxdSpec("xxd", "Hex dump a file, /dev/hda, or piped bytes"), fn: xxd },
+    { spec: xxdSpec("hexdump", "alias of xxd"), fn: xxd },
+  ];
+}
+
 /**
  * Every command the terminal registers. `echo` is a browser-terminal builtin
  * and is not registered here. `vfs` holds the one working directory per page.
- * Task 6 spreads its `writeCommands(host, vfs)` into this array.
  */
 export function createCommands(host: ShellHost, vfs: Vfs = new Vfs()): CommandDef[] {
-  return [...readCommands(host, vfs)];
+  return [...readCommands(host, vfs), ...ddXxdCommands(host, vfs)];
 }

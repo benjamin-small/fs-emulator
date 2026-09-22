@@ -1,6 +1,9 @@
-import type { Value } from "./types";
-import { ShellError } from "./errors";
+import type { CommandCtx, Value } from "./types";
 import { SIZE_HELP, parseSize } from "./addr";
+import { fromBytes, toBytes, type BytesBlob } from "./bytes";
+import { ShellError, wrapFs } from "./errors";
+import type { ShellHost } from "./host";
+import { canonicalize, type Vfs } from "./vfs";
 
 /**
  * Per-invocation cap on the bytes `dd` reads (and therefore writes). Every journaled byte is
@@ -96,4 +99,113 @@ export function planWindow(opts: Pick<DdOpts, "bs" | "count" | "skip">, availabl
 /** dd's `N+P records` count: N full blocks and P (0 or 1) partial block. */
 export function formatRecords(len: number, bs: number): string {
   return `${Math.floor(len / bs)}+${len % bs === 0 ? 0 : 1} records`;
+}
+
+/** The bytes `dd` will copy: the source window `skip*bs` for `count*bs` (or to the end). */
+function readSource(host: ShellHost, vfs: Vfs, opts: DdOpts, input: Value): Uint8Array {
+  const slice = (all: Uint8Array): Uint8Array => {
+    const { start, len } = planWindow(opts, all.length);
+    return all.subarray(Math.min(start, all.length), Math.min(start, all.length) + len);
+  };
+  if (opts.if === undefined) {
+    if (input === null) {
+      throw new ShellError("no input", { help: "give --if=<path> or pipe bytes in, e.g. cat --bytes /mnt/a | dd --of=/mnt/b" });
+    }
+    return slice(toBytes(input));
+  }
+  if (input !== null) {
+    throw new ShellError("both --if and piped input given", { help: "drop --if to copy the piped bytes, or drop the pipe" });
+  }
+  const src = vfs.resolve(opts.if);
+  const display = vfs.display(src);
+  switch (src.kind) {
+    case "raw": {
+      const { start, len } = planWindow(opts, host.vol.sectorCount() * host.vol.sectorSize());
+      return len === 0 ? new Uint8Array(0) : host.vol.readRaw(start, len);
+    }
+    case "zero": {
+      if (opts.count === undefined) throw new ShellError("/dev/zero is endless; give --count");
+      return new Uint8Array(planWindow(opts, Infinity).len);
+    }
+    case "null":
+      return new Uint8Array(0);
+    case "volume": {
+      let file: Uint8Array;
+      try {
+        file = host.vol.readFile(src.path);
+      } catch (e) {
+        throw wrapFs(display, e);
+      }
+      return slice(file);
+    }
+    default:
+      throw new ShellError(`${display}: Is a directory`);
+  }
+}
+
+/** Overlay `data` at `off` on the file at `path` (zero-padded; FAT has no partial writes). */
+function writeVolumeFile(host: ShellHost, path: string, display: string, off: number, data: Uint8Array, ctx: CommandCtx): void {
+  let existing: Uint8Array | null = null;
+  try {
+    existing = host.vol.readFile(path);
+  } catch (e) {
+    if ((e as { code?: string }).code !== "NotFound") throw wrapFs(display, e);
+  }
+  const out = new Uint8Array(Math.max(existing?.length ?? 0, off + data.length));
+  if (existing) out.set(existing, 0);
+  out.set(data, off);
+  const had = existing !== null;
+  try {
+    host.run((v) => (had ? v.writeFile(path, out) : v.createFile(path, out)));
+  } catch (e) {
+    throw wrapFs(display, e);
+  }
+  if (had || off > 0) ctx.log("FAT has no partial writes; the whole file was rewritten");
+  host.select(canonicalize(host.vol, path));
+}
+
+/**
+ * Run one parsed `dd`. Reads the source window (capped at `DD_MAX_BYTES` before anything is
+ * written), copies it to `--of` (`/dev/hda` via `writeRaw`, a volume file via overlay and
+ * rewrite, `/dev/null` discards) or returns it as a blob when `--of` is absent, then logs
+ * `records in`, `records out` and `bytes copied` like the real tool.
+ */
+export function runDd(host: ShellHost, vfs: Vfs, opts: DdOpts, input: Value, ctx: CommandCtx): BytesBlob | undefined {
+  const data = readSource(host, vfs, opts, input);
+  const off = opts.seek * opts.bs;
+  let result: BytesBlob | undefined;
+  if (opts.of === undefined) {
+    result = fromBytes(data);
+  } else {
+    const dst = vfs.resolve(opts.of);
+    const display = vfs.display(dst);
+    switch (dst.kind) {
+      case "null":
+        break;
+      case "zero":
+        throw new ShellError("/dev/zero: cannot write to /dev/zero");
+      case "raw": {
+        const disk = host.vol.sectorCount() * host.vol.sectorSize();
+        // Checked here as well as in Rust so an offset above 2^32 never reaches the u32 binding.
+        if (off + data.length > disk) throw new ShellError("/dev/hda: Range runs past the end of the disk", { code: "OutOfBounds" });
+        if (data.length > 0) {
+          try {
+            host.run((v) => v.writeRaw(off, data));
+          } catch (e) {
+            throw wrapFs(display, e);
+          }
+        }
+        break;
+      }
+      case "volume":
+        writeVolumeFile(host, dst.path, display, off, data, ctx);
+        break;
+      default:
+        throw new ShellError(`${display}: Is a directory`);
+    }
+  }
+  ctx.log(`${formatRecords(data.length, opts.bs)} in`);
+  ctx.log(`${formatRecords(data.length, opts.bs)} out`);
+  ctx.log(`${data.length} bytes copied`);
+  return result;
 }

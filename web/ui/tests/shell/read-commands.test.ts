@@ -248,7 +248,7 @@ describe("rewound timeline", () => {
     const ls = await call(defs, "ls", ["/mnt"]);
     expect(ls.err).toEqual([warning]);
     expect((ls.value as { name: string }[]).map((r) => r.name)).toEqual(["DOCS", "Hello world.txt"]);
-    for (const [name, args] of [["dir", ["/mnt"]], ["cat", ["/mnt/Hello world.txt"]], ["stat", ["/mnt"]], ["df", []], ["mount", []]] as const) {
+    for (const [name, args] of [["dir", ["/mnt"]], ["cat", ["/mnt/Hello world.txt"]], ["stat", ["/mnt"]], ["df", []], ["mount", []], ["select", ["/mnt/DOCS"]]] as const) {
       expect((await call(defs, name, [...args])).err, name).toEqual([warning]);
     }
     expect((await call(defs, "pwd")).err).toEqual([]);
