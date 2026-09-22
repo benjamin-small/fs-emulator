@@ -10,14 +10,40 @@
   ];
   const CLUSTER_SIZES = [1, 2, 4, 8];
 
+  // FAT16 geometry constants, matching the core's formatter.
+  const BYTES_PER_SECTOR = 512, ROOT_ENTRIES = 512, DIR_ENTRY = 32, RESERVED = 1, FAT_COPIES = 2;
+  const FAT16_MIN_CLUSTERS = 4085, FAT16_MAX_CLUSTERS = 65524;
+
   let path = $state("/Hello world.txt");
   let content = $state("Hello from the browser");
   let bytes = $state<Uint8Array | null>(null);
   let fileName = $state<string | null>(null);
+  let bytesInput = $state<HTMLInputElement>();
 
-  let totalSectors = $state(SIZES[0].totalSectors);
+  // Mirror the mounted default disk (16 MB, 4 sectors per cluster) so opening the
+  // form shows the geometry that is already on screen.
+  let totalSectors = $state(32768);
   let sectorsPerCluster = $state(4);
   let volumeLabel = $state("");
+
+  /** The cluster count these options would produce, by the core's rule: the smallest
+   *  sectors-per-FAT that can index every cluster the leftover space yields. */
+  function clusterCountFor(total: number, spc: number): number {
+    const rootDirSectors = Math.ceil((ROOT_ENTRIES * DIR_ENTRY) / BYTES_PER_SECTOR);
+    const entriesPerFatSector = BYTES_PER_SECTOR / 2; // FAT16 entries are 2 bytes
+    for (let spf = 1; spf <= total; spf++) {
+      const usable = total - RESERVED - FAT_COPIES * spf - rootDirSectors;
+      if (usable <= 0) return 0;
+      const clusters = Math.floor(usable / spc);
+      if (spf * entriesPerFatSector >= clusters + 2) return clusters;
+    }
+    return 0;
+  }
+
+  const clusters = $derived(clusterCountFor(totalSectors, sectorsPerCluster));
+  const clusterProblem = $derived(
+    clusters < FAT16_MIN_CLUSTERS ? "too few for FAT16" : clusters > FAT16_MAX_CLUSTERS ? "too many for FAT16" : "",
+  );
 
   function data(): Uint8Array {
     return bytes ?? new TextEncoder().encode(content);
@@ -28,6 +54,13 @@
     if (!file) { bytes = null; fileName = null; return; }
     bytes = new Uint8Array(await file.arrayBuffer());
     fileName = file.name;
+  }
+
+  /** Go back to the textarea's text as the file's content. */
+  function clearBytes() {
+    bytes = null;
+    fileName = null;
+    if (bytesInput) bytesInput.value = "";
   }
 
   function addFile() {
@@ -87,9 +120,11 @@
     </label>
     <label class="field">
       Use a file's bytes
-      <input type="file" onchange={onPickBytes} />
+      <input type="file" bind:this={bytesInput} onchange={onPickBytes} />
     </label>
-    {#if fileName}<p class="muted">Using bytes from {fileName}.</p>{/if}
+    {#if fileName}
+      <p class="muted using-bytes">Using bytes from {fileName}<button onclick={clearBytes}>Clear</button></p>
+    {/if}
     <div class="btn-row">
       <button onclick={addFile}>Add file</button>
       <button onclick={overwrite}>Overwrite</button>
@@ -112,11 +147,14 @@
           {#each CLUSTER_SIZES as n}<option value={n}>{n}</option>{/each}
         </select>
       </label>
+      <p class="cluster-count muted">
+        {clusters.toLocaleString()} clusters{#if clusterProblem}{" "}· <span class="warn">{clusterProblem}</span>{/if}
+      </p>
       <label class="field">
         Volume label
         <input class="mono" type="text" maxlength="11" bind:value={volumeLabel} />
       </label>
-      <button onclick={formatDisk}>Format disk</button>
+      <button onclick={formatDisk} disabled={!!clusterProblem}>Format disk</button>
     </details>
 
     <label class="field">

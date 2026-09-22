@@ -1,7 +1,8 @@
 <script lang="ts">
   import { volume } from "../state/volume.svelte";
   import { selection } from "../state/selection.svelte";
-  import { attrAtOffset } from "../core/attribution";
+  import { layers } from "../state/layers.svelte";
+  import { attrAtOffset, clusterByteRange } from "../core/attribution";
   import type { Annotation, FatEntry } from "../lib/wasm";
 
   const offset = $derived(selection.hoverOffset ?? selection.cursorOffset);
@@ -16,6 +17,15 @@
   });
   const inSector = $derived(offset === null ? -1 : offset % volume.sectorSize);
   const hex = (n: number) => "0x" + n.toString(16);
+
+  // The three places a selected file lives on disk, each one a jump target: its
+  // directory entry, its FAT chain, and the first cluster of its data.
+  const firstCluster = $derived(layers.chain[0] ?? null);
+  const fatEntryOffset = $derived(
+    firstCluster === null ? null : volume.geometry.reservedSectors * volume.geometry.bytesPerSector + firstCluster * 2,
+  );
+  const dataOffset = $derived(firstCluster === null ? null : clusterByteRange(volume.geometry, firstCluster).start);
+
   function describe(e: FatEntry): string {
     switch (e.kind) {
       case "free": return "free";
@@ -43,5 +53,23 @@
         <li class:hit={inSector >= a.range.start && inSector < a.range.end}><span class="mono muted">{a.range.start}..{a.range.end}</span> {a.label}: <span class="mono">{a.value}</span></li>
       {/each}
     </ul>
+  {/if}
+  {#if selection.path}
+    <div class="selected-file">
+      <h3>Selected file</h3>
+      <p class="mono path">{selection.path}</p>
+      <ul class="trace">
+        {#if layers.entry}
+          <li><button class="link" onclick={() => selection.jumpTo(layers.entry!.start)}>Directory entry · offset {hex(layers.entry.start)}</button></li>
+        {/if}
+        {#if firstCluster !== null && fatEntryOffset !== null && dataOffset !== null}
+          <li><button class="link" onclick={() => selection.jumpTo(fatEntryOffset!)}>FAT chain · {layers.chain.length} clusters starting at {firstCluster} · FAT entry at {hex(fatEntryOffset)}</button></li>
+          <li><button class="link" onclick={() => selection.jumpTo(dataOffset!)}>Data · cluster {firstCluster} at {hex(dataOffset)}</button></li>
+        {:else}
+          <li class="muted">Data · no data clusters</li>
+        {/if}
+      </ul>
+      <button onclick={() => selection.select(null)}>Clear selection</button>
+    </div>
   {/if}
 </section>

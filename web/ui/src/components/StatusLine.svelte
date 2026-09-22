@@ -30,5 +30,5 @@
     <span>Viewing step {volume.cursor + 1} of {volume.history.length}</span>
     <button onclick={() => volume.backToNow()}>Back to now</button>
   {/if}
-  {#if volume.status}<span class="err">{message}{#if volume.status.code} <span class="muted">{volume.status.code}</span>{/if}</span>{/if}
+  {#if volume.status}<span class="err">{message}{#if volume.status.code}{" "}<span class="muted">{volume.status.code}</span>{/if}</span>{/if}
 </div>

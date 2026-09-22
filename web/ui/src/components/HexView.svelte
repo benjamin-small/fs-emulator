@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import { volume } from "../state/volume.svelte";
   import { selection } from "../state/selection.svelte";
   import { layers } from "../state/layers.svelte";
@@ -7,7 +8,7 @@
   import { contains } from "../core/intervals";
   import HexRow from "./HexRow.svelte";
 
-  const ROW_H = 17, OVERSCAN = 10, MIN_RUN = 8, GAP_REVEAL = 64, MAX_SPACER = 10_000_000;
+  const ROW_H = 17, OVERSCAN = 10, MIN_RUN = 8, MAX_SPACER = 10_000_000;
   let container = $state<HTMLDivElement>();
   let scrollTop = $state(0);
   let height = $state(600);
@@ -38,11 +39,19 @@
 
   $effect(() => { layers.visible = { start: rowToOffset(segments, volume.sectorSize, firstRow), end: rowToOffset(segments, volume.sectorSize, Math.min(rows - 1, firstRow + count)) + BYTES_PER_ROW }; });
 
+  // Scroll only when a *new* jump is requested. `segments` changes on every cursor
+  // click, selection, gap expansion, diff and epoch bump, so tracking it here would
+  // re-scroll the dump to a stale target; the nonce gates that, and `untrack` keeps
+  // everything the scroll math reads out of this effect's dependencies.
+  let lastNonce = -1;
   $effect(() => {
     const t = selection.scrollTarget;
-    if (!t || !container) return;
-    const row = offsetToRow(segments, volume.sectorSize, t.offset);
-    container.scrollTop = Math.max(0, (row - 3) * ROW_H * scale);
+    if (!t || !container || t.nonce === lastNonce) return;
+    lastNonce = t.nonce;
+    untrack(() => {
+      const row = offsetToRow(segments, volume.sectorSize, t.offset);
+      container!.scrollTop = Math.max(0, (row - 3) * ROW_H * scale);
+    });
   });
 
   function describeRow(r: number) {

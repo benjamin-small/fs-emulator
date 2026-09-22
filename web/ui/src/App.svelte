@@ -19,7 +19,7 @@
   function onKeydown(e: KeyboardEvent) {
     const tag = (e.target as HTMLElement | null)?.tagName;
     if (tag === "INPUT" || tag === "TEXTAREA") return;
-    if (e.key === "[") volume.seek(volume.cursor - 1);
+    if (e.key === "[") volume.seek(Math.max(0, volume.cursor - 1));
     else if (e.key === "]") volume.seek(volume.cursor + 1);
     else if (e.key === "/") {
       e.preventDefault();

@@ -161,6 +161,7 @@
 
 <section class="panel fatmap">
   <h2>FAT map &middot; {clusterCount.toLocaleString()} clusters</h2>
+  {#if !volume.atLatest}<p class="muted stale-note">Shows the latest state, not the step you are viewing.</p>{/if}
   <div class="fatmap-wrap" bind:this={wrap} style:max-height="{MAX_HEIGHT}px">
     <canvas bind:this={canvas} onmousemove={onMove} onmouseleave={onLeave} onclick={onClick} aria-label="FAT cluster map"></canvas>
   </div>

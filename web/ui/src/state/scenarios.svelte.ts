@@ -1,5 +1,6 @@
 import type { FormatOptions, OpRecord, Volume } from "../lib/wasm";
 import { clusterByteRange } from "../core/attribution";
+import { ScenarioCursor } from "../core/scenarioCursor";
 import { selection } from "./selection.svelte";
 import { volume } from "./volume.svelte";
 
@@ -33,33 +34,55 @@ export class ScenarioRunner {
   index = $state(-1);
   readonly step: Step | null = $derived(this.current ? (this.current.steps[this.index] ?? null) : null);
 
+  /** Step bookkeeping (which steps have run, and the volume cursor each one left). */
+  private cursor: ScenarioCursor | null = null;
+
   /** Begin `s` from a clean default disk, then apply its first step. */
   start(s: Scenario) {
-    volume.format();
+    volume.format(); // also resets the selection
+    selection.reset();
     this.current = s;
     this.index = -1;
+    this.cursor = new ScenarioCursor(s.steps.length);
     this.next();
   }
 
-  /** Advance to the next step, applying its format/action/focus. No-op past the last step. */
+  /** Advance to the next step. A step that has already run is replayed by seeking the
+   *  timeline back to where its run left the disk, never by running it again. No-op
+   *  past the last step. */
   next() {
-    if (!this.current) return;
-    const i = this.index + 1;
-    if (i >= this.current.steps.length) return;
-    this.index = i;
-    this.applyStep(this.current.steps[i]);
+    if (!this.current || !this.cursor) return;
+    const plan = this.cursor.next();
+    if (!plan) return;
+    this.index = this.cursor.index;
+    const step = this.current.steps[this.index];
+    if ("seekTo" in plan) {
+      volume.seek(plan.seekTo);
+      this.applyFocus(step);
+      return;
+    }
+    this.applyStep(step);
+    this.cursor.advance(volume.cursor);
   }
 
-  /** Step back and re-apply that step's focus. The disk itself is not replayed. */
+  /** Step back: show the disk as it was after the previous step and re-apply its focus.
+   *  A step that formatted the disk cannot be rewound through (the format threw the old
+   *  history away), so Prev clamps there. */
   prev() {
-    if (!this.current || this.index <= 0) return;
-    this.index--;
+    if (!this.current || !this.cursor || this.index <= 0) return;
+    if (this.current.steps[this.index].format) return;
+    const target = this.cursor.back();
+    this.index = this.cursor.index;
+    if (target !== null) volume.seek(target);
     this.applyFocus(this.current.steps[this.index]);
   }
 
   stop() {
     this.current = null;
     this.index = -1;
+    this.cursor = null;
+    selection.showRemnants = false;
+    selection.stringsOn = false;
   }
 
   private applyStep(step: Step) {

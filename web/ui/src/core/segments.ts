@@ -1,5 +1,9 @@
 export const BYTES_PER_ROW = 16;
 
+/** How many sectors expanding one collapsed gap row reveals (it pins that many
+ *  sectors from the gap's start, so they render as rows instead of collapsing). */
+export const GAP_REVEAL = 64;
+
 export interface Segment {
   kind: "rows" | "gap";
   startSector: number;

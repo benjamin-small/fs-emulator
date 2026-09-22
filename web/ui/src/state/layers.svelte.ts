@@ -3,6 +3,7 @@ import { findEntrySlots } from "../core/direntry";
 import { buildChain } from "../core/fatchain";
 import { intervalsToSectors, normalize, type Interval } from "../core/intervals";
 import { findRemnants } from "../core/remnants";
+import { GAP_REVEAL } from "../core/segments";
 import { selection } from "./selection.svelte";
 import { volume } from "./volume.svelte";
 
@@ -27,15 +28,17 @@ export class LayersStore {
   /** Byte range of the selected path's LFN + short directory entries, if any (Task 6). */
   entry: Interval | null = $derived(selection.path ? (volume.epoch, findEntrySlots(volume.vol, volume.geometry, volume.fat, volume.owners, selection.path)) : null);
 
-  /** Deleted directory slots and dirty free clusters, when the "Show remnants" toggle is on (Task 8). */
-  remnant: Interval[] = $derived(selection.showRemnants ? (volume.epoch, findRemnants(volume.vol, volume.geometry, volume.fat, volume.owners, volume.zeros)) : []);
+  /** Deleted directory slots and dirty free clusters, when the "Show remnants" toggle is on (Task 8).
+   *  Empty while the timeline is rewound: the directory walk asks the live volume, so its
+   *  slots would be from the latest state while the bytes on screen are from an older one. */
+  remnant: Interval[] = $derived(selection.showRemnants && volume.atLatest ? (volume.epoch, findRemnants(volume.vol, volume.geometry, volume.fat, volume.owners, volume.zeros)) : []);
 
   sel: Interval[] = $derived(normalize([...this.chain.map((c) => clusterByteRange(volume.geometry, c)), ...(this.entry ? [this.entry] : []), ...this.extraSel]));
 
   pinnedSectors: Set<number> = $derived.by(() => {
     const s = new Set<number>([...intervalsToSectors(this.diff, volume.sectorSize), ...intervalsToSectors(this.sel, volume.sectorSize), ...intervalsToSectors(this.remnant, volume.sectorSize)]);
     if (selection.cursorOffset !== null) s.add(Math.floor(selection.cursorOffset / volume.sectorSize));
-    for (const g of selection.expandedGaps) for (let i = 0; i < 64; i++) s.add(g + i);
+    for (const g of selection.expandedGaps) for (let i = 0; i < GAP_REVEAL; i++) s.add(g + i);
     return s;
   });
 }

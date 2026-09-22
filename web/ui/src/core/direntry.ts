@@ -39,17 +39,25 @@ export function findEntrySlots(vol: Volume, g: Geometry, fat: FatEntry[], owners
     if (e.kind !== "short") return false;
     const matches = e.name.toUpperCase() === name || longName.toUpperCase() === name;
     if (!matches) return false;
-    result = { start: slotOffset(g, fat, owners, parent, firstIndex), end: slotOffset(g, fat, owners, parent, i) + ENTRY };
+    const start = slotOffset(g, fat, owners, parent, firstIndex);
+    const last = slotOffset(g, fat, owners, parent, i);
+    // A slot past the end of the parent's cluster chain has no byte range (a
+    // truncated or corrupt directory); report "no range" rather than a bogus one.
+    if (start < 0 || last < 0) return true;
+    result = { start, end: last + ENTRY };
     return true;
   });
   return result;
 }
 
+/** Byte offset of directory slot `slot` in `dir`, or -1 when the slot falls past
+ *  the end of that directory's cluster chain. */
 export function slotOffset(g: Geometry, fat: FatEntry[], owners: ClusterOwner[], dir: string, slot: number): number {
   if (dir === "/") return g.firstRootDirSector * g.bytesPerSector + slot * ENTRY;
   const owner = owners.find((o) => o.path === dir);
   const chain = owner ? buildChain(fat, owner.firstCluster) : [];
   const perCluster = (g.bytesPerSector * g.sectorsPerCluster) / ENTRY;
   const cluster = chain[Math.floor(slot / perCluster)];
+  if (cluster === undefined) return -1;
   return clusterByteRange(g, cluster).start + (slot % perCluster) * ENTRY;
 }

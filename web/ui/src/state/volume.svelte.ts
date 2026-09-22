@@ -2,6 +2,7 @@ import { Volume, type ClusterOwner, type FatEntry, type FormatOptions, type FsEr
 import { buildAttribution, type AttributionTable } from "../core/attribution";
 import { applyChanges, changedSectors } from "../core/patch";
 import { rescanSectors, scanZeroSectors } from "../core/zeros";
+import { selection } from "./selection.svelte";
 
 export class VolumeStore {
   vol = $state.raw<Volume>(Volume.formatFat16(undefined));
@@ -41,11 +42,11 @@ export class VolumeStore {
   }
 
   format(options?: FormatOptions) {
-    try { this.adopt(Volume.formatFat16(options)); this.status = null; } catch (e) { this.fail(e); }
+    try { this.adopt(Volume.formatFat16(options)); this.status = null; selection.reset(); } catch (e) { this.fail(e); }
   }
 
   load(bytes: Uint8Array) {
-    try { this.adopt(Volume.fromImage(bytes)); this.status = null; } catch (e) { this.fail(e); }
+    try { this.adopt(Volume.fromImage(bytes)); this.status = null; selection.reset(); } catch (e) { this.fail(e); }
   }
 
   export(): Uint8Array { return this.vol.image(); }
@@ -78,6 +79,8 @@ export class VolumeStore {
     }
     rescanSectors(this.zeros, this.image, this.sectorSize, touched);
     this.cursor = step;
+    // The error belonged to the state being left behind; keep it off the new one.
+    this.status = null;
     this.epoch++;
   }
 
@@ -89,9 +92,11 @@ export class VolumeStore {
   }
 
   private checkInvariant() {
-    const truth = this.vol.image();
+    // Hoist both arrays into locals: `this.image` is a `$state.raw` field, so
+    // reading it per byte costs a proxy/signal read on a multi-megabyte loop.
+    const truth = this.vol.image(), mine = this.image;
     for (let i = 0; i < truth.length; i++) {
-      if (truth[i] !== this.image[i]) { console.error(`cached image drifted from the volume at offset ${i}`); return; }
+      if (truth[i] !== mine[i]) { console.error(`cached image drifted from the volume at offset ${i}`); return; }
     }
   }
 }

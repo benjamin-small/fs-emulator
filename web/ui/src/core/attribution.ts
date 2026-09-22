@@ -1,5 +1,5 @@
 import type { ClusterOwner, Geometry, Region, RegionKind } from "../lib/wasm";
-import { COLOR_BOOT, COLOR_DIR, COLOR_FAT, COLOR_FREE, colorIndexForPath, type ColorIndex } from "./palette";
+import { COLOR_BOOT, COLOR_DIR, COLOR_FAT, COLOR_FAT_ALT, COLOR_FREE, colorIndexForPath, type ColorIndex } from "./palette";
 
 export type { ColorIndex };
 export interface Attr {
@@ -43,9 +43,11 @@ function regionOf(regions: Region[], sector: number): Region {
   return { name: "unknown", sectors: { start: sector, end: sector + 1 }, kind: "other" };
 }
 
-function colorForRegion(kind: RegionKind): ColorIndex {
-  switch (kind) {
-    case "allocationTable": return COLOR_FAT;
+function colorForRegion(region: Region): ColorIndex {
+  switch (region.kind) {
+    // The mirror copy gets its own lighter violet so "the FAT is written twice"
+    // is visible in the ribbon and the dump's owner stripe.
+    case "allocationTable": return region.name === "FAT 1" ? COLOR_FAT_ALT : COLOR_FAT;
     case "directory": return COLOR_DIR;
     case "data": return COLOR_FREE;
     default: return COLOR_BOOT;
@@ -54,7 +56,7 @@ function colorForRegion(kind: RegionKind): ColorIndex {
 
 export function attrAtSector(t: AttributionTable, sector: number): Attr {
   const region = regionOf(t.regions, sector);
-  const base: Attr = { regionKind: region.kind, regionName: region.name, sector, free: false, colorIndex: colorForRegion(region.kind) };
+  const base: Attr = { regionKind: region.kind, regionName: region.name, sector, free: false, colorIndex: colorForRegion(region) };
   if (region.kind !== "data") return base;
   const cluster = clusterOfSector(t.geometry, sector);
   if (cluster === undefined) return { ...base, free: true };

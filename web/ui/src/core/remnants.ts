@@ -24,7 +24,7 @@ export function findRemnants(vol: Volume, g: Geometry, fat: FatEntry[], owners: 
     walkEntries(entries, (i, e, longName) => {
       if (e.kind === "deleted") {
         const start = slotOffset(g, fat, owners, dir, i);
-        out.push({ start, end: start + ENTRY });
+        if (start >= 0) out.push({ start, end: start + ENTRY }); // -1: slot past the chain's end
         return false;
       }
       if (e.kind === "short" && e.isDir && e.name !== "." && e.name !== "..") {

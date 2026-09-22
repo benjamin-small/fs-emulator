@@ -35,8 +35,9 @@ timeline along the bottom.
 - **Ribbon** — the entire disk as one strip, one column per pixel of its
   width, colored by owning file or region (or a hairline for free space),
   with region-boundary ticks and a bracket showing the dump's current
-  viewport. Click or drag to seek; hovering shows the sector and its
-  owner. During replay, the columns whose bytes changed flash briefly. The
+  viewport. Click or drag to seek; with the ribbon focused, the arrow keys
+  move one column at a time and `Home`/`End` jump to the ends of the disk.
+  Hovering shows the sector and its owner. During replay, the columns whose bytes changed flash briefly. The
   legend below lists the boot/FAT/root regions and every file, each in its
   hue (click a swatch to select it), plus free space.
 - **Files** — the directory tree. Selecting an entry highlights its
@@ -67,7 +68,13 @@ timeline along the bottom.
 - **Scenarios** (top bar) — guided walkthroughs: format an empty disk, add
   a small file, add a long-named file (LFN entries), overwrite with a
   larger file (chain grows), delete and see what remains, fill the disk,
-  and make a directory.
+  and make a directory. Starting one formats a fresh disk. Each step runs
+  at most once: **Next** runs a step the first time you reach it, but once
+  it has run, Prev and Next replay it through the timeline — the disk is
+  rewound or fast-forwarded to the state that step left behind, so stepping
+  back and forth never repeats an operation or adds duplicate timeline
+  entries. A step that formats the disk throws the old history away, so
+  **Prev** stops there rather than rewinding past it.
 
 ## Keyboard shortcuts
 
@@ -76,7 +83,7 @@ timeline along the bottom.
 | `[` / `]` | Step the timeline back / forward |
 | `n` / `p` | Next / previous scenario step (while a scenario is running) |
 | `/` | Focus the path field in Actions |
-| Arrow keys | Move the dump's byte cursor |
+| Arrow keys | Move the dump's byte cursor, or seek one ribbon column (ribbon focused) |
 | `Page Up` / `Page Down` | Scroll the dump by a page |
 | `Home` / `End` | Jump to the start / end of the disk |
 | `g` | Jump to an offset, sector, or cluster (dump focused) |

@@ -50,6 +50,9 @@
   $effect(() => {
     volume.cursor;
     untrack(() => startFlash());
+    // Stop the fade loop when this effect re-runs or the component is destroyed,
+    // so no rAF callback survives into a painted-over or unmounted canvas.
+    return () => { if (rafId) { cancelAnimationFrame(rafId); rafId = 0; } };
   });
 
   function reducedMotion(): boolean {
@@ -202,6 +205,23 @@
   function onUp() { dragging = false; }
   function onLeave() { dragging = false; hoverCol = null; }
 
+  /** Keyboard equivalent of click-and-drag seeking: one column per arrow press,
+   *  Home/End for the ends of the disk. */
+  function onKey(e: KeyboardEvent) {
+    const sector = Math.floor((selection.cursorOffset ?? 0) / volume.sectorSize);
+    const cur = Math.max(0, Math.min(cols - 1, Math.floor(sector / sectorsPerCol)));
+    let col: number;
+    switch (e.key) {
+      case "ArrowLeft": col = cur - 1; break;
+      case "ArrowRight": col = cur + 1; break;
+      case "Home": col = 0; break;
+      case "End": col = cols - 1; break;
+      default: return;
+    }
+    e.preventDefault();
+    jumpToColumn(Math.max(0, Math.min(cols - 1, col)));
+  }
+
   const caption = $derived.by(() => {
     if (hoverCol === null) return "";
     const total = volume.geometry.totalSectors;
@@ -257,7 +277,8 @@
       onmousedown={onDown}
       onmousemove={onMove}
       onmouseleave={onLeave}
-      aria-label="Disk ribbon: whole-disk overview, click or drag to seek"
+      onkeydown={onKey}
+      aria-label="Disk ribbon: whole-disk overview, click or drag to seek, arrow keys to move one column"
       tabindex="0"
     ></canvas>
   </div>

@@ -54,6 +54,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, [tabindex]:fo
 .row.own-7 { border-left-color: var(--own-7); } .row.own-7 .b { background: color-mix(in srgb, var(--own-7) 14%, transparent); }
 .row.own-8 { border-left-color: var(--own-8); } .row.own-8 .b { background: color-mix(in srgb, var(--own-8) 14%, transparent); }
 .row.own-9 { border-left-color: var(--own-9); } .row.own-9 .b { background: color-mix(in srgb, var(--own-9) 14%, transparent); }
+.row.own-10 { border-left-color: var(--own-10); } .row.own-10 .b { background: color-mix(in srgb, var(--own-10) 14%, transparent); }
 .hex .b { display: inline-block; width: 3ch; text-align: center; }
 .asc .b { display: inline-block; width: 1ch; }
 .is-str { text-decoration: underline dotted; }
@@ -65,8 +66,16 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, [tabindex]:fo
 .lbl { font: 11px var(--font-display); }
 @keyframes diffin { from { background: transparent; } }
 
+/* Replay staleness notes (panels that always describe the latest state) */
+.stale-note { margin: 0 0 6px; font-size: 12px; }
+
 /* Inspector */
 .facts { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; }
+.selected-file { border-top: 1px solid var(--hairline); margin-top: 8px; padding-top: 8px; }
+.selected-file h3 { margin: 0 0 4px; font: 500 13px var(--font-display); }
+.selected-file .path { margin: 0 0 4px; overflow-wrap: anywhere; }
+.selected-file .trace { list-style: none; padding: 0; margin: 0 0 8px; display: flex; flex-direction: column; gap: 2px; font-size: 12px; }
+.selected-file .trace .link { text-align: left; }
 .annotations { list-style: none; padding: 0; margin: 8px 0 0; max-height: 40vh; overflow: auto; font-size: 12px; }
 .annotations li.hit { background: color-mix(in srgb, var(--focus) 15%, transparent); }
 .link { border: 0; padding: 0; background: none; color: var(--focus); cursor: pointer; }
@@ -118,6 +127,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, [tabindex]:fo
 .scenario-overlay { position: fixed; z-index: 20; border-color: var(--focus); border-width: 2px; box-shadow: 0 4px 16px color-mix(in srgb, var(--ink) 20%, transparent); max-height: calc(100vh - 32px); overflow: auto; }
 .scenario-overlay .scenario-step-title { margin: 8px 0 4px; font: 500 16px var(--font-display); }
 .scenario-overlay .btn-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.scenario-overlay h2:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+/* The panels the overlay covers are `inert` while it is open; dim them to match. */
+.col.right.scenario-open > * { opacity: 0.5; }
 
 /* Actions panel */
 .actions fieldset { border: 0; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; }
@@ -128,3 +140,6 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, [tabindex]:fo
 .actions .format { border-top: 1px solid var(--hairline); padding-top: 6px; }
 .actions .format summary { cursor: pointer; font: 500 12px var(--font-display); margin-bottom: 6px; }
 .actions .format .field { margin-bottom: 6px; }
+.actions .cluster-count { margin: 0 0 6px; font-size: 12px; }
+.actions .warn { color: var(--diff-ink); }
+.actions .using-bytes { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 12px; }
