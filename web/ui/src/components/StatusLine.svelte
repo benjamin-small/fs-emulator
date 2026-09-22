@@ -17,6 +17,7 @@
     FileTooLarge: "That file is too large for this disk.",
     InvalidGeometry: "Those format options don't add up to a valid disk.",
     CorruptImage: "That image doesn't look like a valid FAT16 volume.",
+    OutOfBounds: "That range runs past the end of the disk.",
     Unsupported: "That isn't supported yet.",
   };
   const message = $derived.by(() => {
