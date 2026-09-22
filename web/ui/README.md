@@ -79,6 +79,19 @@ timeline along the bottom.
   entries. A step that formats the disk throws the old history away, so
   **Prev** stops there rather than rewinding past it.
 
+## What is FAT-specific
+
+The app is the FAT explorer today, but most of it does not know what FAT is.
+The hex dump, ribbon, byte attribution, zero-run collapsing, strings overlay,
+timeline, and diff replay read `layout()` regions and the operation journal
+from `fs-emulator-wasm`, so a FAT32 or ext2 volume gets all of them
+unchanged. The FAT-specific pieces are the FAT map, the entry → chain → data
+trace in the inspector, the cluster labels in the dump, the Format panel's
+geometry fields, and the scenarios. Adding a filesystem means new region
+kinds and colors in `src/core/attribution.ts`, a map panel and inspector
+section for its structures, and scenarios that teach what is different about
+it. `docs/ROADMAP.md` has the checklist.
+
 ## Keyboard shortcuts
 
 | Key | Effect |

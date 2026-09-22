@@ -16,6 +16,21 @@ console.log(vol.listDir("/"));
 Errors are `Error` objects with a `code` property (`NotFound`, `DiskFull`,
 `CorruptImage`, ..., plus `NotFat` and `BadArgument`).
 
+## Generic and filesystem-specific methods
+
+`Volume` wraps the `FileSystem` trait from `fs-core`, so `createFile`,
+`writeFile`, `readFile`, `deleteFile`, `createDir`, `removeDir`, `listDir`,
+`stat`, `setNow`, `layout`, `annotateSector`, `historyLength`, `historyAt`,
+`sectorSize`, `sectorCount`, `sector`, and `image` work on every filesystem
+the crate will ever hold. `fsType()` names the one inside (`"FAT16"` today).
+
+`bootSector`, `geometry`, `fatEntries`, `clusterChain`, `rawDirEntries`,
+`clusterOwners`, and `annotateSectorWith` are FAT-only and throw an error
+with code `NotFat` on any other volume. When FAT32 lands it reuses them; when
+ext2 lands it adds its own constructor (`formatExt2`) and its own inspection
+methods that throw `NotExt`. A UI should branch on `fsType()` before calling
+the specific ones. The plan is in `docs/ROADMAP.md`.
+
 ## Build and test
 
 ```
