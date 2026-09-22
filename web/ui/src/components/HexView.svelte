@@ -61,6 +61,7 @@
       if (layers.str.length && contains(layers.str, off)) cls += " is-str";
       if (contains(layers.sel, off)) cls += " is-sel";
       if (contains(layers.diff, off)) cls += " is-diff";
+      if (layers.remnant.length && contains(layers.remnant, off)) cls += " is-remnant";
       if (selection.cursorOffset === off) cls += " is-cur";
       let title = "";
       if (cls.includes("is-diff") && rec) { const before = beforeByte(rec, off); if (before !== null) title = `before 0x${before.toString(16).padStart(2, "0")} → after 0x${b.toString(16).padStart(2, "0")}`; }

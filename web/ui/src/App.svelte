@@ -1,6 +1,7 @@
 <script lang="ts">
   import ActionsPanel from "./components/ActionsPanel.svelte";
   import DirTree from "./components/DirTree.svelte";
+  import FatMap from "./components/FatMap.svelte";
   import HexView from "./components/HexView.svelte";
   import Inspector from "./components/Inspector.svelte";
   import StatusLine from "./components/StatusLine.svelte";
@@ -28,7 +29,7 @@
   <div class="grid">
     <aside class="col left">
       <DirTree />
-      <section class="panel"><h2>FAT map</h2><p class="muted">Task 8</p></section>
+      <FatMap />
       <ActionsPanel />
     </aside>
     <main class="col center"><HexView /></main>

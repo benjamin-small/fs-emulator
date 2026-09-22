@@ -28,7 +28,7 @@ export function findEntrySlots(vol: Volume, g: Geometry, fat: FatEntry[], owners
   return null;
 }
 
-function slotOffset(g: Geometry, fat: FatEntry[], owners: ClusterOwner[], dir: string, slot: number): number {
+export function slotOffset(g: Geometry, fat: FatEntry[], owners: ClusterOwner[], dir: string, slot: number): number {
   if (dir === "/") return g.firstRootDirSector * g.bytesPerSector + slot * ENTRY;
   const owner = owners.find((o) => o.path === dir);
   const chain = owner ? buildChain(fat, owner.firstCluster) : [];

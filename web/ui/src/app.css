@@ -48,6 +48,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, [tabindex]:fo
 .is-str { text-decoration: underline dotted; }
 .is-sel { outline: 1px solid var(--focus); outline-offset: -1px; }
 .is-diff { background: var(--diff) !important; color: var(--diff-ink); animation: diffin 150ms ease-out; }
+.is-remnant { background-image: repeating-linear-gradient(45deg, transparent 0 3px, color-mix(in srgb, var(--ink-muted) 35%, transparent) 3px 4px); }
 .is-cur { outline: 2px solid var(--focus); }
 .gap { display: block; width: 100%; height: var(--row-h); border: 0; background: transparent; color: var(--ink-muted); text-align: left; padding-left: 10px; }
 .lbl { font: 11px var(--font-display); }
@@ -75,6 +76,11 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, [tabindex]:fo
 .row-btn .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row-btn .meta { flex-shrink: 0; font-size: 11px; }
 .row-btn.selected, .row-btn[aria-selected="true"] { border-left-color: var(--focus); background: color-mix(in srgb, var(--focus) 10%, transparent); }
+
+/* FAT map */
+.fatmap-wrap { overflow-y: auto; overflow-x: hidden; }
+.fatmap-wrap canvas { display: block; cursor: pointer; }
+.fatmap-caption { margin: 6px 0 0; font-size: 11px; min-height: 14px; }
 
 /* Step panel */
 .step .events { list-style: none; padding: 0; margin: 8px 0 0; display: flex; flex-direction: column; gap: 2px; font-size: 12px; }
