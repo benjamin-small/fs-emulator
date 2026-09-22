@@ -7,7 +7,7 @@
     "noUncheckedIndexedAccess": false,
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "skipLibCheck": true,
-    "types": ["vite/client", "svelte"],
+    "types": ["vite/client", "svelte", "node"],
     "verbatimModuleSyntax": true,
     "isolatedModules": true
   },
