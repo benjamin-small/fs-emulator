@@ -13,5 +13,5 @@ pub use disk::Disk;
 pub use error::{Error, Result};
 pub use fs::FileSystem;
 pub use layout::{Annotation, Region, RegionKind};
-pub use trace::{ByteChange, Event, OpRecord};
+pub use trace::{ByteChange, Event, OpRecord, RawWrite};
 pub use types::{DateTime, EntryInfo};

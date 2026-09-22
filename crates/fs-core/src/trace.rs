@@ -21,6 +21,32 @@ impl Clone for Box<dyn Event> {
     }
 }
 
+/// The one event a filesystem-agnostic raw write reports: `len` bytes
+/// written at absolute `offset`. Kind `raw_write`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RawWrite {
+    pub offset: usize,
+    pub len: usize,
+}
+
+impl fmt::Display for RawWrite {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "wrote {} raw bytes at 0x{:x}", self.len, self.offset)
+    }
+}
+
+impl Event for RawWrite {
+    fn kind(&self) -> &'static str {
+        "raw_write"
+    }
+    fn region(&self) -> Option<Range<usize>> {
+        Some(self.offset..self.offset + self.len)
+    }
+    fn clone_box(&self) -> Box<dyn Event> {
+        Box::new(self.clone())
+    }
+}
+
 /// One contiguous write: the bytes at `offset` before and after.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ByteChange {
@@ -66,5 +92,35 @@ impl OpRecord {
         sectors.sort_unstable();
         sectors.dedup();
         sectors
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn raw_write_event_has_kind_region_text_and_clones() {
+        let event = RawWrite {
+            offset: 512,
+            len: 3,
+        };
+        assert_eq!(event.kind(), "raw_write");
+        assert_eq!(event.region(), Some(512..515));
+        assert_eq!(event.to_string(), "wrote 3 raw bytes at 0x200");
+        let boxed: Box<dyn Event> = Box::new(event.clone());
+        let copy = boxed.clone();
+        assert_eq!(copy.kind(), "raw_write");
+        assert_eq!(copy.region(), Some(512..515));
+        let mut record = OpRecord::new("write_raw 0x200 +3");
+        record.events.push(boxed);
+        assert_eq!(record.event_kinds(), vec!["raw_write"]);
+    }
+
+    #[test]
+    fn empty_raw_write_has_an_empty_region() {
+        let event = RawWrite { offset: 4, len: 0 };
+        assert_eq!(event.region(), Some(4..4));
+        assert_eq!(event.to_string(), "wrote 0 raw bytes at 0x4");
     }
 }
