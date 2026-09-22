@@ -231,7 +231,8 @@ partial writes; `/dev/null` discards; no `--of` returns a blob.
 `ctx.err` when `!atLatest(host)`:
 `showing the latest state, not step N of M; click "Back to now" or run a write command`.
 `ls`, `df`, `mount`, `stat` call `vol.corruption()` once and report it.
-`cat` without `--bytes` refuses files over `DD_MAX_BYTES` and warns when
+`cat` refuses files over `DD_MAX_BYTES` in both forms, text and `--bytes`,
+pointing at `dd` for a range of a bigger file, and warns when
 more than 10% of bytes are non-text. `ls` keeps on-disk order.
 
 | Command | Signature | Behaviour |

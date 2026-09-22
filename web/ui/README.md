@@ -99,7 +99,7 @@ describe every command.
 |---|---|
 | `ls [path] [-l]` / `dir` | List a directory as a table of name, type, size (`-l` adds the modified time); entries keep their on-disk order. `ls /` shows `dev` and `mnt`; `ls /dev` shows `hda`, `zero`, `null` |
 | `cd [path]`, `pwd` | Change or print the working directory; `.` and `..` resolve client-side, `cd` alone returns to `/mnt`, and the stored path takes the on-disk case |
-| `cat <path> [--bytes]` | Print a file as UTF-8 text, or as a blob for pipes; refuses text over 1 MiB and warns on binary content |
+| `cat <path> [--bytes]` | Print a file as UTF-8 text, or as a blob for pipes; refuses files over 1 MiB either way (use `dd`) and warns on binary content |
 | `write <path> [--append] [--at <addr>]` | Write the piped input, creating or overwriting the file (`echo hi \| write /mnt/A.TXT`). `--append` reads, concatenates, and rewrites; `write /dev/hda --at <addr>` patches the disk |
 | `dd --if=<src> --of=<dst> --bs=N --count=N --skip=N --seek=N` | Copy bytes between files and the raw disk; quoted `'if=/dev/hda'` operands also work; at most 1 MiB per invocation; `/dev/zero` needs `--count` |
 | `xxd [path] [--offset --len --cols]` / `hexdump` | Hex dump of a path, a piped blob, or piped text; on `/dev/hda` one sector at absolute addresses that match the dump |

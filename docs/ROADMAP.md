@@ -105,7 +105,22 @@ true append, or truncate until the core has them; the terminal's colors and
 font are applied through `!important` overrides on xterm's DOM because
 `CreateOptions` has no theme option; the library and its wasm load lazily on
 first open; `Escape` closes the drawer only from its bar, since xterm cancels
-the key inside the terminal; no tab completion of `/mnt` paths.
+the key inside the terminal; no tab completion of `/mnt` paths. Deferred:
+under 760px the drawer track is capped at 40vh while the store's height can
+be 60%, so the first drag on a phone-width window jumps; `dd`'s volume-file
+sink bounds `--seek` by the disk size, not a sane file size, so a huge seek
+allocates up to the disk size before `DiskFull`; `rm` and `rmdir` clear the
+selection even when a different file was selected; on keyboard layouts where
+backtick is a dead key only the Terminal button toggles the drawer; `readRaw`
+recomputes its display sum; `planWindow`'s message for an absent count on
+`/dev/zero` is unreachable through the runner; `fatEntryOffset` is duplicated
+between the shell's `stat` and `Inspector.svelte` until FAT32 work extracts
+it; `select` warns before validating its target; `flagGiven` and the range
+message are repeated between `commands.ts` and `dd.ts`; `commands.ts` should
+get a second module before the next command group; the loading and error
+notes in the drawer are not live regions; `TerminalStore` is only exercised
+manually; the terminal's font override is a broad `!important` selector; and
+the test harness's `callErr` swallows harness errors.
 
 ### browser-terminal follow-ups
 
