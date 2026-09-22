@@ -16,3 +16,18 @@ export function clampHeight(px: number, innerHeight: number): number {
   const max = Math.floor(innerHeight * TERM_MAX_FRACTION);
   return Math.max(TERM_MIN_PX, Math.min(Math.round(wanted), max));
 }
+
+/**
+ * Parse a persisted drawer height. Absent, empty, whitespace, or non-numeric values (a
+ * cleared or hand-edited localStorage entry; note `Number("")` is 0) fall back to the
+ * default. Deliberately does not clamp: the stored value is the user's choice, and
+ * `clampHeight` narrows it to the current viewport only for rendering, so a height
+ * chosen on a taller screen comes back when there is room for it again.
+ */
+export function parseStoredHeight(raw: string | null): number {
+  if (raw === null) return TERM_DEFAULT_PX;
+  const trimmed = raw.trim();
+  if (trimmed === "") return TERM_DEFAULT_PX;
+  const n = Number(trimmed);
+  return Number.isFinite(n) ? n : TERM_DEFAULT_PX;
+}

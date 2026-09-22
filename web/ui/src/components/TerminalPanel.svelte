@@ -42,10 +42,19 @@
     terminal.error = null;
     creating = (async () => {
       const { BrowserTerminal } = await import("@benjamin-small/browser-terminal");
-      bt = await BrowserTerminal.create({ mount });
-      // Commands read live store fields through the host on every call, so registering
-      // once is enough (same pattern as browser-terminal's Svelte demo).
-      for (const { spec, fn } of createCommands(createStoreHost(close))) bt.registerCommand(spec, fn);
+      const term = await BrowserTerminal.create({ mount });
+      try {
+        // Commands read live store fields through the host on every call, so registering
+        // once is enough (same pattern as browser-terminal's Svelte demo).
+        for (const { spec, fn } of createCommands(createStoreHost(close))) term.registerCommand(spec, fn);
+      } catch (e) {
+        // A half-registered instance would still hold the library's one-per-page slot, so
+        // every later open would fail to create and sit behind a permanent error banner.
+        // Dispose it and leave `bt` null: the next open starts over.
+        term.dispose();
+        throw e;
+      }
+      bt = term;
       terminal.ready = "ready";
     })()
       .catch((e: unknown) => {
@@ -77,8 +86,8 @@
   if (import.meta.hot) import.meta.hot.dispose(disposeTerminal);
   onMount(() => disposeTerminal);
 
-  // Drag the bar to resize. The store clamps and persists; the library's
-  // ResizeObserver on the mount refits the terminal as the track height changes.
+  // Drag the bar to resize. The store clamps each move and persists once on pointer up;
+  // the library's ResizeObserver on the mount refits the terminal as the track height changes.
   let drag: { pointerId: number; startY: number; startH: number } | null = null;
   function onBarDown(e: PointerEvent) {
     if ((e.target as HTMLElement).closest("button")) return;
@@ -94,6 +103,9 @@
     if (!drag || e.pointerId !== drag.pointerId) return;
     drag = null;
     (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+    // Also on pointercancel: the drawer keeps the size it was dragged to, so that is the
+    // height to remember.
+    terminal.commitHeight();
   }
 
   // Escape closes from the bar or the Close button. Inside the terminal xterm cancels
@@ -105,8 +117,10 @@
   }
 </script>
 
-<!-- Re-clamp on viewport changes so a persisted height never exceeds 60% of a smaller window. -->
-<svelte:window onresize={() => terminal.setHeight(terminal.height)} />
+<!-- Re-clamp on viewport changes so the drawer never exceeds 60% of a smaller window. The
+     store re-derives the rendered height from the user's choice and leaves storage alone, so
+     widening the window again restores the height they picked. -->
+<svelte:window onresize={() => terminal.syncViewport()} />
 
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <section

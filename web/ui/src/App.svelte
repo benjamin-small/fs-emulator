@@ -21,7 +21,9 @@
   // they only apply while a scenario is running. The terminal drawer counts as text
   // entry too (see core/keys.ts for the Ctrl-B chord case).
   function onKeydown(e: KeyboardEvent) {
-    if (inTextEntry(e)) return;
+    // A modifier means the chord belongs to the browser or the OS (Cmd-` cycles windows on
+    // macOS, Ctrl-[ is Escape in some setups), so none of these are ours to swallow.
+    if (e.metaKey || e.ctrlKey || e.altKey || inTextEntry(e)) return;
     if (e.key === "`") {
       // Toggle the terminal from anywhere outside text entry. Inside the terminal the
       // key is typed (xterm cancels it), so closing is exit / Close / Escape on the bar.
