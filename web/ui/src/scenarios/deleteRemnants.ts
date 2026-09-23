@@ -7,6 +7,7 @@ export const scenario: Scenario = {
   id: "delete-remnants",
   title: "Delete and see what remains",
   summary: "Delete a file and find out how little actually disappears from the disk.",
+  family: "fat16",
   steps: [
     {
       title: "A file with a memorable sentence",
@@ -18,7 +19,7 @@ export const scenario: Scenario = {
       title: "Deleting only marks the entry",
       text: "Deleting the file only rewrites the first byte of its directory entry to 0xE5. The rest of the name is still sitting right there, readable.",
       action: (v) => v.deleteFile(PATH),
-      focus: (v) => ({ offset: v.geometry().firstRootDirSector * v.geometry().bytesPerSector, showRemnants: true }),
+      focus: (fs) => ({ offset: fs.dataStart("/") ?? undefined, showRemnants: true }),
     },
     {
       title: "The data never moved",

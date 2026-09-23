@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Volume } from "../src/lib/wasm";
+import { adapterFor, FAMILIES } from "../src/fs";
 import { ScenarioCursor } from "../src/core/scenarioCursor";
 import { all } from "../src/scenarios";
 import { scenario as shell } from "../src/scenarios/shell";
@@ -30,6 +30,15 @@ describe("scenario scripts", () => {
           expect(step.text, `${s.id} — "${step.title}"`).not.toContain(phrase);
         }
       }
+    }
+  });
+
+  // `start()` formats the scenario's family before its first step, so an id the registry
+  // does not know would only surface as a throw inside the runner. Pin it here instead.
+  it("every scenario names a registered family", () => {
+    for (const s of all) {
+      expect(FAMILIES[s.family], `${s.id} names family "${s.family}"`).toBeDefined();
+      expect(FAMILIES[s.family].id).toBe(s.family);
     }
   });
 
@@ -66,12 +75,22 @@ describe("scenario scripts", () => {
 
   for (const s of all) {
     it(`runs "${s.title}" end to end against a fresh Volume`, () => {
-      let vol = Volume.formatFat16(undefined);
+      // The runner's shape: format the scenario's family, bind an adapter to the result, and
+      // hand every action and function focus that adapter. A format is a new Volume (bind
+      // again); an action is the same Volume with new contents (refresh).
+      let vol = FAMILIES[s.family].format();
+      let fs = adapterFor(vol);
       for (const step of s.steps) {
         const run = () => {
-          if (step.format) vol = Volume.formatFat16(step.format);
-          if (step.action) step.action(vol);
-          if (typeof step.focus === "function") step.focus(vol);
+          if (step.format) {
+            vol = FAMILIES[s.family].format(step.format);
+            fs = adapterFor(vol);
+          }
+          if (step.action) {
+            step.action(vol, fs);
+            fs.refresh();
+          }
+          if (typeof step.focus === "function") step.focus(fs);
         };
         const expectedCode = EXPECTED_ERROR_CODE[step.title];
         if (step.title.startsWith("Expect:")) {
@@ -97,11 +116,14 @@ describe("scenario scripts", () => {
     });
 
     it("leaves the volume the way the equivalent commands would", () => {
-      const vol = Volume.formatFat16(undefined);
+      const vol = FAMILIES[shell.family].format();
+      const fs = adapterFor(vol);
       const run = (i: number) => {
         const step = shell.steps[i];
         expect(step.action, `step ${i} "${step.title}" has no action`).toBeDefined();
-        return step.action!(vol);
+        const rec = step.action!(vol, fs);
+        fs.refresh();
+        return rec;
       };
       const text = (b: Uint8Array) => new TextDecoder().decode(b);
 

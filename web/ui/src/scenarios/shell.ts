@@ -15,6 +15,7 @@ export const scenario: Scenario = {
   id: "shell",
   title: "Work from the shell",
   summary: "Do the same operations from the terminal drawer: /mnt is the volume, /dev/hda the raw disk.",
+  family: "fat16",
   steps: [
     {
       title: "Open the terminal",
@@ -30,7 +31,7 @@ export const scenario: Scenario = {
     {
       title: "Read it back",
       text: "`cat /mnt/HELLO.TXT` prints the text. `stat /mnt/HELLO.TXT` shows the entry offset, first cluster, chain, and data offset, and `seek c:2` moves the dump to that cluster.",
-      focus: (v) => ({ unit: v.clusterOwners().find((o) => o.path === FILE)?.firstCluster }),
+      focus: (fs) => ({ unit: fs.ownerOf(FILE)?.firstUnit }),
     },
     {
       title: "Make a directory",
@@ -59,7 +60,9 @@ export const scenario: Scenario = {
       title: "Delete and look at what remains",
       text: "`rm /mnt/HELLO.TXT` marks the entry deleted and frees its chain; the bytes stay on disk. `ls -l /mnt` no longer lists it, and the copy in DOCS is untouched.",
       action: (v) => v.deleteFile(FILE),
-      focus: (v) => ({ offset: v.geometry().firstRootDirSector * v.geometry().bytesPerSector, path: null, showRemnants: true }),
+      // `dataStart("/")` is the root directory's first byte; it answers null only for a path
+      // with no bytes, and `?? undefined` keeps the focus's optional `offset` shape.
+      focus: (fs) => ({ offset: fs.dataStart("/") ?? undefined, path: null, showRemnants: true }),
     },
   ],
 };

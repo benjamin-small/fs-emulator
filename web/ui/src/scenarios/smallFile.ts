@@ -1,10 +1,10 @@
-import { findEntrySlots } from "../fs/fat16/direntry";
 import type { Scenario } from "../state/scenarios.svelte";
 
 export const scenario: Scenario = {
   id: "small-file",
   title: "Add a small file",
   summary: "Create one small file and see exactly which bytes on disk moved.",
+  family: "fat16",
   steps: [
     {
       title: "Three things changed",
@@ -15,10 +15,7 @@ export const scenario: Scenario = {
     {
       title: "The directory entry",
       text: "This 32-byte slot in the root directory stores the file's name, its size, and the cluster its data starts at.",
-      focus: (v) => {
-        const slots = findEntrySlots(v, v.geometry(), v.fatEntries(0), v.clusterOwners(), "/HELLO.TXT");
-        return { offset: slots?.start };
-      },
+      focus: (fs) => ({ offset: fs.entrySlots("/HELLO.TXT")?.start }),
     },
     {
       title: "The FAT entry",

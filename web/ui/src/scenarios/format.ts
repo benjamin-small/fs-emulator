@@ -4,6 +4,7 @@ export const scenario: Scenario = {
   id: "format",
   title: "Format an empty disk",
   summary: "Walk the regions of a freshly formatted volume before any file exists.",
+  family: "fat16",
   steps: [
     {
       title: "The boot sector",
@@ -18,12 +19,12 @@ export const scenario: Scenario = {
     {
       title: "The root directory",
       text: "After both FAT copies comes the root directory: 512 fixed 32-byte slots, laid out before any data cluster exists.",
-      focus: (v) => ({ sector: v.geometry().firstRootDirSector }),
+      focus: (fs) => ({ sector: fs.regionStart("directory") }),
     },
     {
       title: "Free space collapses",
       text: "The data region starts here and it is all free. The dump folds thousands of identical empty sectors into a single collapsed row so you can skip past them.",
-      focus: (v) => ({ sector: v.geometry().firstDataSector }),
+      focus: (fs) => ({ sector: fs.regionStart("data") }),
     },
   ],
 };

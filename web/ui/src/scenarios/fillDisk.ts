@@ -1,9 +1,14 @@
+import type { Fat16FormatOptions } from "../fs/fat16";
 import type { Scenario } from "../state/scenarios.svelte";
 
-export const scenario: Scenario = {
+// Typed with the family's options so the `format` step is checked against FormatOptions;
+// `Scenario<Fat16FormatOptions>` still fits `all: Scenario[]` because `O` only appears in
+// `Step.format`.
+export const scenario: Scenario<Fat16FormatOptions> = {
   id: "fill-disk",
   title: "Fill the disk",
   summary: "Run a tiny volume all the way to full and watch the next write fail cleanly.",
+  family: "fat16",
   steps: [
     {
       title: "A deliberately tiny disk",
@@ -14,13 +19,13 @@ export const scenario: Scenario = {
     {
       title: "Nearly every cluster claimed",
       text: "BIG.BIN is sized to use every free cluster but one, leaving exactly one cluster of room on the whole disk.",
-      action: (v) => v.createFile("/BIG.BIN", new Uint8Array((v.geometry().clusterCount - 1) * v.geometry().bytesPerSector)),
+      action: (v, fs) => v.createFile("/BIG.BIN", new Uint8Array((fs.unitCount - 1) * fs.unitSize)),
       focus: { path: "/BIG.BIN" },
     },
     {
       title: "Expect: disk full",
       text: "Creating a file that needs two clusters fails with the DiskFull error, since only one cluster is left. The operation is rolled back, so the timeline gains no new step and the disk is unchanged.",
-      action: (v) => v.createFile("/TOOBIG.BIN", new Uint8Array(v.geometry().bytesPerSector + 1)),
+      action: (v, fs) => v.createFile("/TOOBIG.BIN", new Uint8Array(fs.unitSize + 1)),
     },
   ],
 };

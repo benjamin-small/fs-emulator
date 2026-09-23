@@ -1,4 +1,3 @@
-import { findEntrySlots } from "../fs/fat16/direntry";
 import type { Scenario } from "../state/scenarios.svelte";
 
 const DIR = "/DOCS";
@@ -8,6 +7,7 @@ export const scenario: Scenario = {
   id: "directory",
   title: "Directories are files too",
   summary: "Create a directory, put a file inside it, then try to remove it before and after emptying it.",
+  family: "fat16",
   steps: [
     {
       title: "A directory is a cluster",
@@ -18,19 +18,13 @@ export const scenario: Scenario = {
     {
       title: "The dot entries",
       text: "Jump into the directory's own cluster and the two dot entries are the first thing you find, before any file it holds.",
-      focus: (v) => {
-        const owner = v.clusterOwners().find((o) => o.path === DIR);
-        return { unit: owner?.firstCluster };
-      },
+      focus: (fs) => ({ unit: fs.ownerOf(DIR)?.firstUnit }),
     },
     {
       title: "A file inside the directory",
       text: "NOTE.TXT's directory entry is written inside DOCS's own cluster, right after the dot entries, not in the root directory.",
       action: (v) => v.createFile(FILE, new TextEncoder().encode("Draft notes.")),
-      focus: (v) => {
-        const slots = findEntrySlots(v, v.geometry(), v.fatEntries(0), v.clusterOwners(), FILE);
-        return { offset: slots?.start };
-      },
+      focus: (fs) => ({ offset: fs.entrySlots(FILE)?.start }),
     },
     {
       title: "Expect: not empty",
