@@ -109,4 +109,9 @@ describe("the fundamentals scenario", () => {
     expect(focusOf("The root directory names the file", vol)).toEqual({ path: HELLO, offset: g.firstRootDirSector * g.bytesPerSector });
     expect(focusOf("Sector 0 describes the rest", vol)).toEqual({ offset: 11 });
   });
+
+  it("points the region-start step at the root directory's sector on the default disk", () => {
+    const vol = runThrough("One disk, five regions");
+    expect(focusOf("Where each region starts", vol)).toEqual({ sector: 65 });
+  });
 });

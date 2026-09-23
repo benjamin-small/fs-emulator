@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { adapterFor, FAMILIES } from "../src/fs";
 import { ScenarioCursor } from "../src/core/scenarioCursor";
 import { all } from "../src/scenarios";
+import { scenario as formatScenario } from "../src/scenarios/format";
 import { scenario as shell } from "../src/scenarios/shell";
 
 // Steps titled "Expect: ..." are the scenario's deliberate failure demonstrations; each
@@ -155,6 +156,21 @@ describe("scenario scripts", () => {
       expect(run(7).op).toBe("delete_file /HELLO.TXT");
       expect(vol.listDir("/").map((e) => e.name)).toEqual(["DOCS"]);
       expect(text(vol.readFile("/DOCS/COPY.TXT"))).toBe("Hello from the shell");
+    });
+  });
+
+  // "Format an empty disk" quotes no numbers in its own copy, but its function-form
+  // focuses resolve region starts from the adapter; pin them to the default disk's sectors.
+  describe("format an empty disk", () => {
+    it("points the root directory and free space steps at sectors 65 and 97 on the default disk", () => {
+      const vol = FAMILIES.fat16.format();
+      const fs = adapterFor(vol);
+      const focusOf = (title: string) => {
+        const step = formatScenario.steps.find((s) => s.title === title)!;
+        return typeof step.focus === "function" ? step.focus(fs) : step.focus;
+      };
+      expect(focusOf("The root directory")).toEqual({ sector: 65 });
+      expect(focusOf("Free space collapses")).toEqual({ sector: 97 });
     });
   });
 });
