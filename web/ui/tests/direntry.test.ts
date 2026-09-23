@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Volume } from "../src/lib/wasm";
-import { clusterByteRange } from "../src/core/attribution";
-import { findEntrySlots, slotOffset } from "../src/core/direntry";
+import { clusterByteRange } from "../src/fs/fat16/geometry";
+import { findEntrySlots, slotOffset } from "../src/fs/fat16/direntry";
 
 const ENTRY = 32;
 
