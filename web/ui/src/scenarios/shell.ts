@@ -23,7 +23,7 @@ export const scenario: Scenario = {
     },
     {
       title: "Write a file from a pipe",
-      text: "Type `echo 'Hello from the shell' | write /mnt/HELLO.TXT`. There is no `>` yet, so the pipe carries the text into write. The same three places change as with Add file: a directory entry, a FAT entry, and a data cluster.",
+      text: "Type `echo 'Hello from the shell' | write /mnt/HELLO.TXT`. Redirection does the same thing: `echo 'Hello from the shell' > /mnt/HELLO.TXT` is the same journaled write. The same three places change as with Add file: a directory entry, a FAT entry, and a data cluster.",
       action: (v) => v.createFile(FILE, enc(GREETING)),
       focus: { path: FILE },
     },
@@ -46,7 +46,7 @@ export const scenario: Scenario = {
     },
     {
       title: "Read the raw boot sector",
-      text: "`dd --if=/dev/hda --bs=512 --count=1 | xxd` dumps sector 0 straight from the disk, the way a real tool would. (`dd 'if=/dev/hda' 'count=1'` works too; the = must be quoted.)",
+      text: "`dd if=/dev/hda bs=512 count=1 | xxd` dumps sector 0 straight from the disk, the way a real tool would. The flag spelling, `dd --if=/dev/hda --bs=512 --count=1`, does the same.",
       focus: { sector: 0 },
     },
     {

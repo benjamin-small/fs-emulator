@@ -23,7 +23,7 @@ export class ShellError extends Error {
  * raises itself.
  */
 export const CORRUPT_HELP =
-  "the boot sector no longer parses; rewind on the timeline, or write the saved sector back with: <blob> | dd --of=/dev/hda";
+  "the boot sector no longer parses; rewind on the timeline, or write the saved sector back with: <the saved bytes> | dd --of=/dev/hda";
 
 /** Coreutils phrasing for the wasm error codes a shell user meets most; other codes keep the wasm text. */
 const PHRASES: Record<string, string> = {

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick } from "svelte";
+  import { onMount, tick, untrack } from "svelte";
   // browser-terminal renders into our element with no shadow DOM and no stylesheet of
   // its own, so the app loads xterm's CSS. (@xterm/xterm has no `exports` map; the
   // deep path resolves.)
@@ -7,24 +7,50 @@
   // Type-only: the runtime import is the lazy `import()` in ensureCreated, so the
   // library's wasm loads only when someone opens the drawer.
   import type { BrowserTerminal } from "@benjamin-small/browser-terminal";
+  import type { Volume } from "../lib/wasm";
+  import { themeFromTokens } from "../core/terminalTheme";
   import { createCommands } from "../shell/commands";
+  import type { ShellHost } from "../shell/host";
+  import { createRedirectHandler } from "../shell/redirect";
   import { createStoreHost } from "../shell/storeHost.svelte";
+  import { MOUNT, Vfs, promptFor } from "../shell/vfs";
   import { terminal } from "../state/terminal.svelte";
+  import { volume } from "../state/volume.svelte";
 
   let mountEl = $state<HTMLDivElement>();
   let bt: BrowserTerminal | null = null;
   let creating: Promise<void> | null = null;
 
+  // One working directory per page (the commands' own rule), owned here so the prompt
+  // can be seeded from it as soon as the commands are registered.
+  const vfs = new Vfs();
+  // The registered commands' host, kept so the volume watcher below can reach `setPrompt`.
+  let host: ShellHost | null = null;
+
   /** Close the drawer and hand focus to the topbar button, since the element that had
-   *  focus (xterm's helper textarea) is about to be hidden. `exit`, the Close button,
-   *  and Escape on the bar all come through here. */
+   *  focus (the active pane's terminal input) is about to be hidden. `exit`, the Close
+   *  button, and Escape on the bar all come through here. */
   function close() {
     terminal.close();
     document.getElementById("terminal-toggle")?.focus();
   }
 
   function focusShell() {
-    mountEl?.querySelector<HTMLTextAreaElement>(".xterm-helper-textarea")?.focus();
+    bt?.focus();
+  }
+
+  /** The app's tokens as xterm settings. Read off the document each time, so the values
+   *  are whatever `prefers-color-scheme` currently resolves them to. */
+  function currentTheme() {
+    return themeFromTokens(getComputedStyle(document.documentElement));
+  }
+
+  // The tokens swap under `prefers-color-scheme: dark`, but xterm holds its theme in JS
+  // rather than reading CSS, so the swap has to be pushed in. Registered with the instance
+  // and removed in disposeTerminal.
+  const darkQuery = window.matchMedia("(prefers-color-scheme: dark)");
+  function onSchemeChange() {
+    bt?.setTheme(currentTheme().theme);
   }
 
   /**
@@ -42,11 +68,22 @@
     terminal.error = null;
     creating = (async () => {
       const { BrowserTerminal } = await import("@benjamin-small/browser-terminal");
-      const term = await BrowserTerminal.create({ mount });
+      const { theme, fontFamily } = currentTheme();
+      // 12px matches the dump's `--dump-size` neighbourhood and keeps a usable number of
+      // columns in a 220px drawer; the library's own default is 13.
+      const term = await BrowserTerminal.create({ mount, terminal: { theme, fontFamily, fontSize: 12 } });
       try {
         // Commands read live store fields through the host on every call, so registering
         // once is enough (same pattern as browser-terminal's Svelte demo).
-        for (const { spec, fn } of createCommands(createStoreHost(close))) term.registerCommand(spec, fn);
+        const created = createStoreHost(close, (prefix) => term.setPrompt(prefix));
+        for (const { spec, fn } of createCommands(created, vfs)) term.registerCommand(spec, fn);
+        // `>`, `>>` and `<` resolve through the same VFS the commands do, so
+        // `echo hi > /mnt/A.TXT` is the journaled write `echo hi | write /mnt/A.TXT` is.
+        term.setRedirectHandler(createRedirectHandler(created, vfs));
+        // Seed the prompt with the directory the shell starts in; `cd`, `mkfs`, and the
+        // volume watcher below keep it in step from there.
+        created.setPrompt(promptFor(vfs.cwd));
+        host = created;
       } catch (e) {
         // A half-registered instance would still hold the library's one-per-page slot, so
         // every later open would fail to create and sit behind a permanent error banner.
@@ -55,6 +92,7 @@
         throw e;
       }
       bt = term;
+      darkQuery.addEventListener("change", onSchemeChange);
       terminal.ready = "ready";
     })()
       .catch((e: unknown) => {
@@ -77,9 +115,28 @@
       .then(() => requestAnimationFrame(focusShell));
   });
 
+  // A format or a load replaces the volume: VolumeStore.adopt swaps `vol` for a brand new
+  // wasm Volume, and the directory the shell was sitting in no longer exists. `mkfs` resets
+  // the cwd itself; the Actions panel's Format, a scenario step's `step.format`, and Load
+  // image do not, so follow the volume here and put the shell back at /mnt with a matching
+  // prompt. `volume.vol` is the only tracked read: `seenVol` and `vfs.cwd` are plain fields,
+  // and the prompt call is untracked so this effect can never depend on what it writes.
+  let seenVol: Volume | null = null;
+  $effect(() => {
+    const vol = volume.vol;
+    if (vol === seenVol) return;
+    const first = seenVol === null;
+    seenVol = vol;
+    if (first) return; // the disk the page started on; nothing to reset
+    vfs.cwd = MOUNT;
+    untrack(() => host?.setPrompt(promptFor(vfs.cwd)));
+  });
+
   function disposeTerminal() {
+    darkQuery.removeEventListener("change", onSchemeChange);
     bt?.dispose();
     bt = null;
+    host = null;
   }
   // HMR replaces this module: dispose first or the next create() throws "one instance
   // per page". The unmount cleanup covers the non-HMR teardown. dispose() is idempotent.

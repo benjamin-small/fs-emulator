@@ -28,9 +28,17 @@ back.
    reserved syntax; adding them with a host-pluggable file hook is a later
    change in that repository. When it ships, the explorer registers its VFS
    as the hook and the same commands gain real redirection.
+
+   *2026-09-22, later the same day:* browser-terminal 0.3.0 shipped it, as
+   `bt.setRedirectHandler({ read, write })`. The explorer installs one
+   (`src/shell/redirect.ts`), so `>` and `>>` are the same journaled write
+   `write` performs and `<` reads a file as text under `cat`'s 1 MiB cap.
+   Neither hook receives a `CommandCtx`, so they cannot log byte counts or
+   warn about a rewound timeline; everything else is the commands' behaviour,
+   because both hooks call the helpers the commands were refactored onto.
 2. **Dependency is the published npm package**, pinned exactly to
    `@benjamin-small/browser-terminal@0.2.0`. CI and GitHub Pages keep working
-   unchanged.
+   unchanged. *(2026-09-22: the pin moved to 0.3.0, still exact.)*
 3. **Placement is a bottom drawer** owned by the explorer via
    `BrowserTerminal.create({ mount })`, toggled by a key and a button. No
    tmux chrome.
@@ -39,8 +47,12 @@ back.
 
 - `>`/`>>`/`<` redirection, `&` jobs, and `key=value` barewords (all need
   browser-terminal changes; listed as follow-ups in `docs/ROADMAP.md`).
+  *(2026-09-22: 0.3.0 delivered redirection and barewords; `&` jobs remain a
+  non-goal.)*
 - Per-session working directories (commands cannot learn their session id
-  from `ctx`; one instance per page anyway).
+  from `ctx`; one instance per page anyway). *(2026-09-22: `ctx.session` and
+  `ctx.pane` exist in 0.3.0, but `setPrompt` is engine-wide, so a per-session
+  directory could not be shown in the prompt; still one per page.)*
 - `mv`/rename, true append, truncate (no core operation; `write --append`
   rewrites and says so).
 - Reading the disk as it was at an earlier timeline step from the shell
@@ -48,20 +60,47 @@ back.
 - Rust-side capping of raw write size (the journal invariant is "every byte
   journaled"); the shell caps `dd` at 1 MiB per invocation instead.
 
-## Constraints from browser-terminal 0.2.0 (verified)
+## Constraints from browser-terminal 0.3.0 (verified)
 
-- `Value` is `null | bool | int | float | str | list | record`; there is no
-  bytes type. Rendered strings pass through an escape stripper (control
+The design was written against 0.2.0; the pin moved to 0.3.0 on 2026-09-22
+and these are the facts as of that release, with the 0.2.0 constraint noted
+where it changed.
+
+- `Value` is `null | bool | int | float | str | bytes | list | record`. A
+  `Uint8Array` survives pipes, variables and `run().value` unchanged, renders
+  as `<N bytes>` (including in table cells), and `length` counts its bytes.
+  *(0.2.0 had no bytes type; the shell carried a `{ bytes: "<hex>", length }`
+  record instead.)* Rendered strings pass through an escape stripper (control
   bytes dropped). A list of records renders as a table, a record as a
   key/value block, a scalar as one line with newlines preserved.
+- `bt.setRedirectHandler({ read(target, ctx), write(target, value, ctx) })`
+  makes `<`, `>` and `>>` the host's to define; there is no built-in
+  filesystem and no automatic conversion. A write receives the pipeline's
+  whole collected value (an empty stream is `[]`) and consumes it, so the run
+  returns `null` and the terminal prints nothing; a failed pipeline never
+  calls the writer. A read's value feeds the first command. Both contexts
+  carry `signal`, `session` and `pane`, the writer's also `append`. A thrown
+  `{ message, help }` keeps its help. *(0.2.0 rejected all three as reserved
+  syntax.)*
 - `echo` is a builtin: one argument returns that value, several return a
   list, none returns empty. Registering a builtin's name errors.
-- `=` is not a bareword character (`if=/dev/hda` fails to lex unquoted) but
-  `--name=value` flags lex fine. `'raw'` strings have no escapes;
-  `"interpolated"` strings support `\n \t \" \\ \$` and `$var`.
-- Commands get `(args, input, ctx)`; `ctx` has `signal`, `log`, `err`,
-  `emit` only. A thrown `{ message, help? }` renders a rich error and the
-  engine prefixes the command name itself.
+- Unquoted `key=value` barewords are positional strings: `dd if=/dev/hda
+  count=1` arrives as `['if=/dev/hda', 'count=1']`. They neither set
+  variables nor bind flags; declared flags still take `--name=value`. Quote
+  the whole operand for a space or an empty value. *(0.2.0 did not lex `=` in
+  a bareword at all.)* `'raw'` strings have no escapes; `"interpolated"`
+  strings support `\n \t \" \\ \$` and `$var`.
+- Commands get `(args, input, ctx)`; `ctx` has `signal`, `log`, `err`, `emit`
+  and the read-only ids `session` and `pane`. A thrown `{ message, help? }`
+  renders a rich error and the engine prefixes the command name itself.
+- `bt.setPrompt(prefix)` sets the text before the `❯` for every pane, so it
+  is engine-wide rather than per session. `bt.focus()` / `bt.blur()` move
+  keyboard focus to and from the active pane's input.
+  `CreateOptions.terminal` takes `{ theme, fontFamily, fontSize }` and
+  `bt.setTheme(theme)` replaces the theme for every pane; `ITheme` and
+  `TerminalOptions` are exported types. *(0.2.0 had none of these: the prompt
+  was a bare `❯`, focus meant querying `.xterm-helper-textarea`, and the
+  theme was `!important` CSS over xterm's DOM.)*
 - `create({ mount })` renders into a host element with no shadow DOM and no
   xterm stylesheet; `show`/`hide`/`setPanelMode` are no-ops. One instance
   per page; `dispose()` before re-creating (HMR). The `.wasm` loads via
@@ -253,7 +292,7 @@ more than 10% of bytes are non-text. `ls` keeps on-disk order.
 
 ### 5. UI integration
 
-- Dependencies: `@benjamin-small/browser-terminal` at exactly `0.2.0`,
+- Dependencies: `@benjamin-small/browser-terminal` at exactly `0.3.0`,
   `@xterm/xterm` `^6.0.0` (for its stylesheet; the range the library pins).
   `vite.config.ts` excludes the package from `optimizeDeps`.
   `vitest.config.ts` is unchanged.
@@ -268,17 +307,22 @@ more than 10% of bytes are non-text. `ls` keeps on-disk order.
 - `TerminalPanel.svelte`: a `panel` section with a drag bar
   (`Terminal — /mnt is the volume, /dev/hda the raw disk. Type help.` plus
   Close) and the mount div. On first open, after `tick()`, it lazy-imports
-  the library, calls `create({ mount })`, registers
-  `createCommands(createStoreHost(close))`, sets `ready`, and focuses
-  `.xterm-helper-textarea`. HMR dispose and unmount call `bt.dispose()`.
+  the library, calls `create({ mount, terminal })` with the theme and font
+  built from the design tokens, registers
+  `createCommands(createStoreHost(close))` and the redirect handler, sets
+  `ready`, and calls `bt.focus()`. HMR dispose and unmount call
+  `bt.dispose()`.
   Never calls `show`/`hide`. Escape on the bar closes; `exit` closes and
   returns focus to the topbar button.
 - Layout: `.app` adds `grid-auto-rows: var(--term-h, 220px)` and
   `App.svelte` sets `--term-h` on `.app` (custom properties inherit
   downward only). A hidden drawer adds no track. Under 760px the height
-  caps at 40vh. Token-driven `!important` overrides on `.terminal-mount
-  .xterm*` for background (`--panel`), text (`--ink`), cursor (`--focus`),
-  `--font-mono` at 12px; dark mode follows the tokens.
+  caps at 40vh. The panes' own colours and font come from
+  `CreateOptions.terminal` and `bt.setTheme`, built from the tokens by
+  `src/core/terminalTheme.ts`: background (`--panel`), text (`--ink`), cursor
+  and selection (`--focus`), `--font-mono` at 12px. `app.css` keeps only the
+  drawer layout and the focus-ring suppression; dark mode follows the tokens
+  because the panel re-pushes the theme when `prefers-color-scheme` changes.
 - Topbar: `<button id="terminal-toggle" aria-pressed aria-controls="terminal-drawer">Terminal</button>`
   after the title.
 

@@ -18,6 +18,12 @@ export interface ShellHost {
   format(options: FormatOptions): void;
   select(path: string | null): void;
   jumpTo(offset: number): void;
+  /**
+   * Set the prefix the terminal renders before its `❯`, so the prompt shows the working
+   * directory. The app hands this straight to browser-terminal's `setPrompt` (0.3.0+),
+   * which applies it to every pane. Commands call it whenever `vfs.cwd` changes.
+   */
+  setPrompt(prefix: string): void;
   closeTerminal(): void;
 }
 

@@ -19,6 +19,20 @@ describe("scenario scripts", () => {
     }
   });
 
+  // browser-terminal 0.3.0 delivered redirection and `key=value` barewords, so step text
+  // teaching the 0.2.0 workarounds is now wrong. A learner reads this copy and types what
+  // it says; nothing else in the suite would catch a stale sentence.
+  it("no step text still teaches a workaround 0.3.0 removed", () => {
+    const stale = ["no `>`", "There is no `>`", "must be quoted"];
+    for (const s of all) {
+      for (const step of s.steps) {
+        for (const phrase of stale) {
+          expect(step.text, `${s.id} — "${step.title}"`).not.toContain(phrase);
+        }
+      }
+    }
+  });
+
   // The runner itself needs runes, so the step bookkeeping it drives lives in a plain
   // class (src/core/scenarioCursor.ts) that can be exercised here.
   describe("step cursor", () => {

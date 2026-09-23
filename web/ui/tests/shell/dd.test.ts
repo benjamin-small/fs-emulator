@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import { SIZE_HELP } from "../../src/shell/addr";
 import { DD_MAX_BYTES, OPERAND_HELP, formatRecords, parseDd, planWindow } from "../../src/shell/dd";
 import { ShellError } from "../../src/shell/errors";
-import { isBlob, toBytes, type BytesBlob } from "../../src/shell/bytes";
 import { createCommands } from "../../src/shell/commands";
 import { applyChanges } from "../../src/core/patch";
 import { Vfs } from "../../src/shell/vfs";
@@ -23,11 +22,17 @@ describe("parseDd", () => {
     });
     expect(parseDd({ bs: "1k", count: "2" }, [])).toEqual({ bs: 1024, count: 2, skip: 0, seek: 0 });
   });
-  it("accepts quoted classic key=value operands and merges them with flags", () => {
+  it("accepts classic key=value operands and merges them with flags", () => {
     expect(parseDd({}, ["if=/dev/zero", "of=/dev/hda", "bs=512", "seek=0", "count=1"])).toEqual({
       if: "/dev/zero", of: "/dev/hda", bs: 512, count: 1, skip: 0, seek: 0,
     });
     expect(parseDd({ if: "/dev/hda" }, ["count=1"])).toEqual({ if: "/dev/hda", bs: 512, count: 1, skip: 0, seek: 0 });
+  });
+  it("takes `dd if=/dev/hda count=1` exactly as browser-terminal 0.3.0 lexes it", () => {
+    // Unquoted `key=value` barewords are positional strings now
+    // (https://github.com/benjamin-small/browser-terminal/issues/14), so this is the
+    // argument list the engine hands the command for that line — no flags at all.
+    expect(parseDd({}, ["if=/dev/hda", "count=1"])).toEqual({ if: "/dev/hda", bs: 512, count: 1, skip: 0, seek: 0 });
   });
   it("rejects a key given twice, across flags and operands", () => {
     const e = thrown(() => parseDd({ if: "/dev/hda" }, ["if=/dev/zero"]));
@@ -96,23 +101,25 @@ function setup() {
 }
 
 describe("dd copies", () => {
-  it("reads sector 0 into a blob and logs the record counts without touching the journal", async () => {
+  it("reads sector 0 into a byte buffer and logs the record counts without touching the journal", async () => {
     const { host, defs } = setup();
     const r = await call(defs, "dd", { flags: { if: "/dev/hda", bs: "512", count: "1" } });
-    const blob = r.value as BytesBlob;
-    expect(isBlob(blob)).toBe(true);
-    expect(blob.length).toBe(512);
-    expect(same(toBytes(blob), host.vol.sector(0))).toBe(true);
+    // A `Uint8Array`, not a hex record: browser-terminal 0.3.0 carries bytes through the
+    // pipe as they are and shows them as `<512 bytes>`.
+    expect(r.value).toBeInstanceOf(Uint8Array);
+    const bytes = r.value as Uint8Array;
+    expect(bytes.length).toBe(512);
+    expect(same(bytes, host.vol.sector(0))).toBe(true);
     expect(r.log).toEqual(["1+0 records in", "1+0 records out", "512 bytes copied"]);
     expect(host.history).toEqual([]);
   });
 
-  it("accepts the quoted classic operand form", async () => {
+  it("accepts the classic operand form, unquoted, as the engine passes it", async () => {
     const { host, defs } = setup();
     const r = await call(defs, "dd", { positionals: ["if=/dev/hda", "bs=256", "skip=2", "count=1"] });
-    const blob = r.value as BytesBlob;
-    expect(blob.length).toBe(256);
-    expect(same(toBytes(blob), host.vol.sector(1).subarray(0, 256))).toBe(true);
+    const bytes = r.value as Uint8Array;
+    expect(bytes.length).toBe(256);
+    expect(same(bytes, host.vol.sector(1).subarray(0, 256))).toBe(true);
   });
 
   it("copies a file into a new file at --seek, zero-padding the gap", async () => {
@@ -185,7 +192,7 @@ describe("dd copies", () => {
   it("skipping past the end of the source reads nothing", async () => {
     const { defs } = setup();
     const r = await call(defs, "dd", { flags: { if: "/dev/hda", skip: "40000" } });
-    expect((r.value as BytesBlob).length).toBe(0);
+    expect((r.value as Uint8Array).length).toBe(0);
     expect(r.log).toEqual(["0+0 records in", "0+0 records out", "0 bytes copied"]);
   });
 
@@ -204,7 +211,7 @@ describe("dd copies", () => {
     const whole = await callErr(defs, "dd", { flags: { if: "/dev/hda" } });
     expect(whole.message).toBe(`refusing to copy ${16 * 1024 * 1024} bytes in one dd; the limit is ${DD_MAX_BYTES} (1 MiB)`);
     const ok = await call(defs, "dd", { flags: { if: "/dev/zero", count: "2048" } });
-    expect((ok.value as BytesBlob).length).toBe(DD_MAX_BYTES);
+    expect((ok.value as Uint8Array).length).toBe(DD_MAX_BYTES);
   });
 
   it("rejects --if together with piped input, and no input at all", async () => {
@@ -223,7 +230,7 @@ describe("dd copies", () => {
     // browser-terminal's stream collector turns "nothing piped" into Value::List([]), not null
     // (crates/bterm-core/src/stream.rs) -- `--if` alone must still work, and read normally.
     const r = await call(defs, "dd", { flags: { if: "/dev/hda", count: "1" } }, []);
-    expect((r.value as BytesBlob).length).toBe(512);
+    expect((r.value as Uint8Array).length).toBe(512);
   });
 
   it("discards into /dev/null and refuses /dev/zero and directories as sinks", async () => {
@@ -245,13 +252,13 @@ describe("dd copies", () => {
     const r = await call(defs, "dd", { flags: { if: "/dev/hda", count: "1" } });
     expect(r.err).toHaveLength(1);
     expect(r.err[0]).toContain("showing the latest state");
-    expect((r.value as BytesBlob).length).toBe(512);
+    expect((r.value as Uint8Array).length).toBe(512);
   });
 
   it("corruption round trip: wipe sector 0, watch path ops fail, write it back", async () => {
     const { host, defs } = setup();
     await call(defs, "write", { positionals: ["/mnt/a.txt"] }, "alpha");
-    const saved = (await call(defs, "dd", { flags: { if: "/dev/hda", count: "1" } })).value as BytesBlob;
+    const saved = (await call(defs, "dd", { flags: { if: "/dev/hda", count: "1" } })).value as Uint8Array;
     expect(saved.length).toBe(512);
 
     await call(defs, "dd", { flags: { if: "/dev/zero", of: "/dev/hda", count: "1" } });
@@ -274,7 +281,7 @@ describe("dd copies", () => {
     applyChanges(image, host.history[2].changes, "reverse");
     expect(image.subarray(0, 512).every((x) => x === 0)).toBe(true);
     applyChanges(image, host.history[1].changes, "reverse");
-    expect(same(image.subarray(0, 512), toBytes(saved))).toBe(true);
+    expect(same(image.subarray(0, 512), saved)).toBe(true);
     expect(same(image, host.vol.image())).toBe(true);
   });
 });

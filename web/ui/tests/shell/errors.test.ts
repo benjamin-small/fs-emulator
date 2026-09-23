@@ -60,7 +60,7 @@ describe("wrapFs", () => {
 describe("host helpers", () => {
   const stub = (cursor: number, historyLength: number): ShellHost => ({
     vol: Volume.formatFat16(undefined), cursor, historyLength,
-    run: () => { throw new Error("unused"); }, format: () => {}, select: () => {}, jumpTo: () => {}, closeTerminal: () => {},
+    run: () => { throw new Error("unused"); }, format: () => {}, select: () => {}, jumpTo: () => {}, setPrompt: () => {}, closeTerminal: () => {},
   });
   it("atLatest is true before any op and at the last step only", () => {
     expect(atLatest(stub(-1, 0))).toBe(true);

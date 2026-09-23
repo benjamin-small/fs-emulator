@@ -1,51 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { BYTES_HELP, decodeText, fromBytes, hasInput, hex, isBlob, toBytes, unhex } from "../../src/shell/bytes";
+import { BYTES_HELP, decodeText, hasInput, toBytes } from "../../src/shell/bytes";
 import { ShellError } from "../../src/shell/errors";
 
 const u8 = (...b: number[]) => new Uint8Array(b);
-/** The ShellError `fn` threw; fails the test when it returns instead. */
-function caught(fn: () => unknown): ShellError {
-  try { fn(); } catch (e) { return e as ShellError; }
-  throw new Error("expected a throw");
-}
-
-describe("hex and blobs", () => {
-  it("hex/unhex round trip including 0x00 and 0xff", () => {
-    expect(hex(u8(0, 255, 16))).toBe("00ff10");
-    expect(unhex("00ff10")).toEqual(u8(0, 255, 16));
-    expect(unhex("")).toEqual(u8());
-    expect(hex(u8())).toBe("");
-  });
-  it("fromBytes makes a lowercase-hex blob and toBytes reads it back", () => {
-    const blob = fromBytes(u8(0, 255, 16));
-    expect(blob).toEqual({ bytes: "00ff10", length: 3 });
-    expect(isBlob(blob)).toBe(true);
-    expect(toBytes(blob)).toEqual(u8(0, 255, 16));
-  });
-  it("isBlob rejects odd hex, uppercase, a mismatched length, and non-records", () => {
-    expect(isBlob({ bytes: "abc", length: 1 })).toBe(false);
-    expect(isBlob({ bytes: "AB", length: 1 })).toBe(false);
-    expect(isBlob({ bytes: "ab", length: 2 })).toBe(false);
-    expect(isBlob({ bytes: "", length: 0 })).toBe(true);
-    expect(isBlob(null)).toBe(false);
-    expect(isBlob("ab")).toBe(false);
-    expect(isBlob(["ab", 1])).toBe(false);
-    expect(isBlob({ bytes: 12, length: 1 })).toBe(false);
-  });
-  it("unhex refuses an odd number of characters instead of dropping the last nibble", () => {
-    const e = caught(() => unhex("00f"));
-    expect(e).toBeInstanceOf(ShellError);
-    expect(e.message).toContain("3");
-    expect(e.help).toBe(BYTES_HELP);
-  });
-  it("unhex refuses non-hex characters instead of writing NaN bytes", () => {
-    const e = caught(() => unhex("00zz"));
-    expect(e).toBeInstanceOf(ShellError);
-    expect(e.help).toBe(BYTES_HELP);
-  });
-});
 
 describe("toBytes (the pipe convention)", () => {
+  it("a Uint8Array is the bytes themselves, 0x00 and 0xff included", () => {
+    const bytes = u8(0, 255, 16);
+    expect(toBytes(bytes)).toEqual(bytes);
+    expect(toBytes(u8())).toEqual(u8());
+  });
+  it("a subarray keeps only its own window, not the buffer behind it", () => {
+    const view = u8(1, 2, 3, 4, 5).subarray(1, 3);
+    expect(Array.from(toBytes(view))).toEqual([2, 3]);
+  });
   it("strings are UTF-8", () => {
     expect(toBytes("héllo")).toEqual(u8(104, 195, 169, 108, 108, 111));
     expect(toBytes("")).toEqual(u8());
@@ -77,6 +45,12 @@ describe("toBytes (the pipe convention)", () => {
     try { toBytes([["x"]]); } catch (e) { caught = e; }
     expect((caught as ShellError).message).toBe("expected text or bytes, found a list with nested values");
   });
+  it("a list holding a byte buffer is refused rather than flattened", () => {
+    let caught: unknown;
+    try { toBytes([u8(1, 2)] as never); } catch (e) { caught = e; }
+    expect(caught).toBeInstanceOf(ShellError);
+    expect((caught as ShellError).message).toBe("expected text or bytes, found a list with nested values");
+  });
 });
 
 describe("hasInput", () => {
@@ -89,7 +63,12 @@ describe("hasInput", () => {
     expect(hasInput("")).toBe(true);
     expect(hasInput([0])).toBe(true);
     expect(hasInput(["a"])).toBe(true);
-    expect(hasInput(fromBytes(new Uint8Array()))).toBe(true);
+  });
+  it("an empty byte buffer is input: `cat --bytes /dev/null > f` writes an empty file", () => {
+    // Deliberately not folded in with `[]`: an empty list means the pipe was never written
+    // to, while zero bytes is a value a command chose to produce.
+    expect(hasInput(new Uint8Array(0))).toBe(true);
+    expect(hasInput(u8(0))).toBe(true);
   });
 });
 

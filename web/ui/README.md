@@ -68,13 +68,28 @@ timeline along the bottom.
 - **Step / Timeline** — the current operation's plain-language events and
   changed sectors, with Prev/Next/Play scrubbing through history. Replay
   reconstructs the disk as it was after any step and highlights what that
-  step changed, in amber, in both the dump and the ribbon.
-- **Scenarios** (top bar) — guided walkthroughs: format an empty disk, add
-  a small file, add a long-named file (LFN entries), overwrite with a
-  larger file (chain grows), delete and see what remains, fill the disk,
-  make a directory, and work from the shell (the same operations typed as
-  commands, plus a raw-sector read and a raw patch of the volume label).
-  Starting one formats a fresh disk. Each step runs
+  step changed, in amber, in both the dump and the ribbon. Running a command
+  never moves the dump: it highlights the changed bytes and leaves the view
+  where you left it. Any explicit navigation does move it — a timeline step
+  (a step button, Prev/Next/Play, the slider, `[`/`]`), the ribbon, a tree
+  node or a FAT-map cluster, an inspector, strings, or step-panel link, the
+  dump's own keys, or `seek`.
+- **Learning scenarios** (top bar) — guided walkthroughs: format an empty
+  disk, add a small file, add a long-named file (LFN entries), overwrite
+  with a larger file (chain grows), delete and see what remains, fill the
+  disk, make a directory, and work from the shell (the same operations typed
+  as commands, plus a raw-sector read and a raw patch of the volume label).
+  Pick one in the top bar and press **Start**; it formats a fresh disk and a
+  **Lesson** card appears at the top of the right column, above Step. The
+  card holds the scenario title, the step number, the step's title and text,
+  a "Look at:" line naming what the step pointed the UI at (a file, a
+  cluster, a sector, an offset and its region, the remnant hatching, the
+  strings overlay), and **Prev** / **Next** (**Finish** on the last step) /
+  **Close**; `n` and `p` do Next and Prev from anywhere outside a text
+  field. It is an ordinary panel: nothing is covered or dimmed, every other
+  pane stays live while a lesson runs, and the card's title takes focus on
+  each step so a keyboard or screen-reader user lands on the new text. Each
+  step runs
   at most once: **Next** runs a step the first time you reach it, but once
   it has run, Prev and Next replay it through the timeline — the disk is
   rewound or fast-forwarded to the state that step left behind, so stepping
@@ -86,7 +101,7 @@ timeline along the bottom.
 
 The **Terminal** button in the top bar (or the backtick key, from anywhere
 that is not a text field) opens a drawer along the bottom running a shell
-from `@benjamin-small/browser-terminal`, pinned at 0.2.0. The volume is
+from `@benjamin-small/browser-terminal`, pinned at 0.3.0. The volume is
 mounted at `/mnt` and the raw disk is `/dev/hda`; `/dev/zero` and `/dev/null`
 exist too. Every write is an ordinary journaled operation, so it lands in
 the timeline, the dump, the ribbon, and the tree exactly like a form action,
@@ -95,14 +110,17 @@ and it rewinds the same way. The drawer bar can be dragged to resize
 the Close button, or `exit` close it, and `help` or `<command> --help`
 describe every command.
 
+The prompt shows the working directory: the shell hands it to the terminal on
+startup and after every `cd` or `mkfs`, so it reads `/mnt/DOCS ❯`.
+
 | Command | Does |
 |---|---|
 | `ls [path] [-l]` / `dir` | List a directory as a table of name, type, size (`-l` adds the modified time); entries keep their on-disk order. `ls /` shows `dev` and `mnt`; `ls /dev` shows `hda`, `zero`, `null` |
 | `cd [path]`, `pwd` | Change or print the working directory; `.` and `..` resolve client-side, `cd` alone returns to `/mnt`, and the stored path takes the on-disk case |
-| `cat <path> [--bytes]` | Print a file as UTF-8 text, or as a blob for pipes; refuses files over 1 MiB either way (use `dd`) and warns on binary content |
+| `cat <path> [--bytes]` | Print a file as UTF-8 text, or as raw bytes for pipes; refuses files over 1 MiB either way (use `dd`) and warns on binary content |
 | `write <path> [--append] [--at <addr>]` | Write the piped input, creating or overwriting the file (`echo hi \| write /mnt/A.TXT`). `--append` reads, concatenates, and rewrites; `write /dev/hda --at <addr>` patches the disk |
-| `dd --if=<src> --of=<dst> --bs=N --count=N --skip=N --seek=N` | Copy bytes between files and the raw disk; quoted `'if=/dev/hda'` operands also work; at most 1 MiB per invocation; `/dev/zero` needs `--count` |
-| `xxd [path] [--offset --len --cols]` / `hexdump` | Hex dump of a path, a piped blob, or piped text; on `/dev/hda` one sector at absolute addresses that match the dump |
+| `dd if=<src> of=<dst> bs=N count=N skip=N seek=N` | Copy bytes between files and the raw disk, in the classic operand form; `--if=<src>` and the rest work as flags too. At most 1 MiB per invocation; `/dev/zero` needs `count=` |
+| `xxd [path] [--offset --len --cols]` / `hexdump` | Hex dump of a path, piped bytes, or piped text; on `/dev/hda` one sector at absolute addresses that match the dump |
 | `mkdir`, `rmdir`, `rm`, `touch`, `cp` | The usual; `cp` into an existing directory keeps the source name |
 | `stat <path>` | Name, type, size, timestamps, first cluster, chain, entry offset, FAT entry offset, data offset; `stat /dev/hda` reports the sector size and count |
 | `df`, `mount` | Cluster usage; device, mount point, type, and `ok` or `corrupt` |
@@ -110,6 +128,21 @@ describe every command.
 | `select [path]` | Select a file in every pane, or clear the selection |
 | `mkfs [--sectors --spc --label --root-entries --fats --reserved]` | Format a fresh disk; the timeline is cleared |
 | `exit` | Close the drawer |
+
+`>`, `>>`, and `<` resolve through the same tree:
+
+```
+echo hi > /mnt/A.TXT            # create, or overwrite
+cat /mnt/A.TXT >> /mnt/LOG.TXT  # read, concatenate, rewrite the whole file
+str upcase < /mnt/A.TXT         # feed a file to the first command
+```
+
+A `>` or `>>` is the same journaled write `write` performs — one timeline
+step, the file selected afterwards — and `<` reads the file as UTF-8 text
+under the same 1 MiB cap as `cat`. `/dev/null` discards, and `/dev/hda` and
+`/dev/zero` are refused in both directions: a redirect cannot say *where* on
+the disk to put the bytes, so use `dd of=/dev/hda seek=<blocks>` to write and
+`dd if=/dev/hda | xxd` to read.
 
 The "Work from the shell" scenario walks through these commands:
 
@@ -122,7 +155,7 @@ seek c:2
 mkdir /mnt/DOCS
 cd /mnt/DOCS
 cp /mnt/HELLO.TXT /mnt/DOCS/COPY.TXT
-dd --if=/dev/hda --bs=512 --count=1 | xxd
+dd if=/dev/hda bs=512 count=1 | xxd
 echo 'SHELLDISK  ' | dd --of=/dev/hda --bs=1 --seek=43
 rm /mnt/HELLO.TXT
 ```
@@ -147,21 +180,29 @@ a parsable boot sector back to `/dev/hda` (or `mkfs`) clears the corruption.
 
 Things to know:
 
-- There is no `>`, `>>`, or `<` yet: the shell reserves them. Pipe into
-  `write` or `dd --of=` instead.
-- `=` is not a bareword character, so write `dd --if=/dev/hda` (the
-  documented form) or quote the classic spelling: `dd 'if=/dev/hda'`.
-- Strings cross pipes as UTF-8 text. Binary data crosses as a blob record
-  `{ bytes: "<hex>", length }`; `cat --bytes`, `dd`, `xxd`, and `write` all
-  speak it. `echo a b` produces a list, which `write` joins with one space.
+- Quotes are only needed for a value with a space in it
+  (`dd 'of=/mnt/MY FILE.BIN'`); `dd if=/dev/hda count=1` needs none.
+- Strings cross pipes as UTF-8 text; binary data crosses as raw bytes, which
+  the terminal shows as `<N bytes>`, `length` counts, and `to json` encodes as
+  hex. `cat --bytes`, `dd`, `xxd`, and `write` all speak them — so
+  `cat --bytes /mnt/A.TXT | xxd` prints what `<13 bytes>` was hiding. `echo a b`
+  produces a list, which `write` joins with one space.
 - A command with nothing piped into it receives an empty list from
   browser-terminal, not `null`; the shell treats both as "no input" (`write`,
-  `dd`, and `xxd` all check this the same way).
+  `dd`, and `xxd` all check this the same way). A redirect does not: `>` and
+  `>>` always write, so an empty pipeline leaves an empty file where `write`
+  would have refused with "nothing to write".
 - While the timeline is rewound, reads show the latest state and print one
-  warning each; any write snaps the timeline back to now first.
+  warning each; any write snaps the timeline back to now first. A `<` redirect
+  reads the latest state too, but silently: a redirect hook has no channel to
+  warn on.
 - `dd` and `cat` refuse more than 1 MiB per invocation: every byte is
   journaled twice in Rust and again in the UI's history.
-- The working directory is one value per page, not per shell session.
+- The working directory is one value per page, not per shell session: the
+  prompt prefix is engine-wide, so two sessions could not show different
+  directories anyway. Anything that replaces the volume — `mkfs`, the Actions
+  panel's Format, starting a learning scenario, or loading a raw image —
+  returns the shell to `/mnt`, since the directory it was in no longer exists.
 - `echo` is the shell's own builtin and behaves as in browser-terminal.
 - The terminal and its wasm load on first open, so the initial page load is
   unchanged.
@@ -184,7 +225,7 @@ it. `docs/ROADMAP.md` has the checklist.
 | Key | Effect |
 |---|---|
 | `[` / `]` | Step the timeline back / forward |
-| `n` / `p` | Next / previous scenario step (while a scenario is running) |
+| `n` / `p` | Next / previous step on the Lesson card (while a lesson is running) |
 | `/` | Focus the path field in Actions |
 | Arrow keys | Move the dump's byte cursor, or seek one ribbon column (ribbon focused) |
 | `Page Up` / `Page Down` | Scroll the dump by a page |

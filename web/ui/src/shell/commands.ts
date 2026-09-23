@@ -4,11 +4,11 @@ import { clusterByteRange } from "../core/attribution";
 import { findEntrySlots } from "../core/direntry";
 import { buildChain } from "../core/fatchain";
 import { ADDR_HELP, SIZE_HELP, parseAddr, parseSize } from "./addr";
-import { decodeText, fromBytes, hasInput, toBytes } from "./bytes";
+import { decodeText, hasInput, toBytes } from "./bytes";
 import { DD_MAX_BYTES, parseDd, runDd } from "./dd";
 import { CORRUPT_HELP, ShellError, fsCall, wrapFs } from "./errors";
 import { atLatest, corruptionOf, selectPath, type ShellHost } from "./host";
-import { canonicalize, Vfs, resolved, type Resolved } from "./vfs";
+import { canonicalize, Vfs, promptFor, resolved, type Resolved } from "./vfs";
 import { formatXxd } from "./xxd";
 
 export type { CommandDef } from "./types";
@@ -73,6 +73,34 @@ export function looksBinary(bytes: Uint8Array): boolean {
   return odd * 10 > bytes.length;
 }
 
+/**
+ * The whole of one volume file, refused above `DD_MAX_BYTES` before a byte is read — the
+ * size comes from `stat`, so the cap costs nothing when it trips. `cat` (both with and
+ * without `--bytes`) and the `<` redirect hook share this, so they agree on the cap, on
+ * what a directory says, and on how a wasm failure is phrased.
+ */
+export function readVolumeFile(host: ShellHost, vfs: Vfs, path: string): Uint8Array {
+  const display = vfs.toVirtual(path);
+  let info: EntryInfo;
+  try {
+    info = host.vol.stat(path);
+  } catch (e) {
+    throw wrapFs(display, e);
+  }
+  // Checked here rather than left to `readFile`, so the message names the tool to reach for.
+  if (info.isDir) throw new ShellError(`${display}: Is a directory`, { code: "IsADirectory", help: `list it with: ls ${display}, then cat a file inside it` });
+  if (info.size > DD_MAX_BYTES) {
+    throw new ShellError(`${display}: file is ${info.size} bytes; cat prints at most ${DD_MAX_BYTES} bytes`, {
+      help: `read part of it with: dd --if=${display} --bs=512 --count=1 | xxd`,
+    });
+  }
+  try {
+    return host.vol.readFile(path);
+  } catch (e) {
+    throw wrapFs(display, e);
+  }
+}
+
 type LsRow = { name: string; type: string; size: number; modified?: string };
 
 function lsRows(host: ShellHost, vfs: Vfs, r: Resolved, long: boolean): LsRow[] {
@@ -123,9 +151,13 @@ export function readCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
   const cd: CommandDef = {
     spec: { name: "cd", summary: "Change the working directory", optional: [P("path", "directory; defaults to /mnt")] },
     fn: (args) => {
+      // Every arm that moves `cwd` ends in `landed()`, so the prompt and the working
+      // directory can never disagree; a `cd` that throws leaves both alone.
+      const landed = () => host.setPrompt(promptFor(vfs.cwd));
       const target = posStr(args, 0);
       if (target === undefined) {
         vfs.cwd = "/mnt";
+        landed();
         return;
       }
       const r = vfs.resolve(target);
@@ -133,9 +165,11 @@ export function readCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
       switch (r.kind) {
         case "root":
           vfs.cwd = "/";
+          landed();
           return;
         case "dev":
           vfs.cwd = "/dev";
+          landed();
           return;
         case "volume": {
           let info: EntryInfo;
@@ -146,6 +180,7 @@ export function readCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
           }
           if (!info.isDir) throw new ShellError(`${display}: Not a directory`, { code: "NotADirectory" });
           vfs.cwd = vfs.toVirtual(canonicalize(host.vol, r.path));
+          landed();
           return;
         }
         default:
@@ -162,15 +197,15 @@ export function readCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
   const cat: CommandDef = {
     spec: {
       name: "cat",
-      summary: "Print a file (--bytes for a blob)",
+      summary: "Print a file (--bytes for raw bytes)",
       required: [P("path", "a file under /mnt, or /dev/null")],
-      flags: [F("bytes", "return a { bytes, length } blob instead of text")],
+      flags: [F("bytes", "return the raw bytes instead of decoding them as text")],
     },
     fn: (args, _input, ctx) => {
       warnIfRewound(host, ctx);
       const r = vfs.resolve(reqStr(args, 0, "path"));
       const display = vfs.display(r);
-      const asBlob = flagOn(args, "bytes");
+      const asBytes = flagOn(args, "bytes");
       switch (r.kind) {
         case "root":
         case "dev":
@@ -179,28 +214,10 @@ export function readCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
         case "zero":
           throw new ShellError(`${display}: is a raw device`, { help: RAW_DEVICE_HELP });
         case "null":
-          return asBlob ? fromBytes(new Uint8Array(0)) : "";
+          return asBytes ? new Uint8Array(0) : "";
         case "volume": {
-          // The size comes from `stat`, so the cap is checked before the file is read and it
-          // covers `--bytes` too: a blob is twice the bytes again as hex.
-          let info: EntryInfo;
-          try {
-            info = host.vol.stat(r.path);
-          } catch (e) {
-            throw wrapFs(display, e);
-          }
-          if (info.size > DD_MAX_BYTES) {
-            throw new ShellError(`${display}: file is ${info.size} bytes; cat prints at most ${DD_MAX_BYTES} bytes`, {
-              help: `read part of it with: dd --if=${display} --bs=512 --count=1 | xxd`,
-            });
-          }
-          let bytes: Uint8Array;
-          try {
-            bytes = host.vol.readFile(r.path);
-          } catch (e) {
-            throw wrapFs(display, e);
-          }
-          if (asBlob) return fromBytes(bytes);
+          const bytes = readVolumeFile(host, vfs, r.path);
+          if (asBytes) return bytes;
           if (looksBinary(bytes)) ctx.err(`binary file; try cat --bytes ${display} | xxd`);
           return decodeText(bytes);
         }
@@ -384,6 +401,38 @@ function statIfExists(vol: Volume, path: string, display: string): EntryInfo | n
   }
 }
 
+/** What `writeVolumeFile` did, so a caller with a `ctx` can log it. */
+export interface VolumeWrite {
+  /** Bytes the file holds afterwards — more than were handed in, on a real append. */
+  written: number;
+  /** True only when `append` was asked for *and* the file already existed. */
+  appended: boolean;
+}
+
+/**
+ * Put `bytes` in the volume file at `path`, creating it or overwriting it, and select it.
+ * `append` reads the file and concatenates first — FAT has no append, so the whole file is
+ * rewritten either way. The one place a file's contents change: the `write` command, which
+ * adds the logging, and the `>`/`>>` redirect hook, which has no `ctx` to log to.
+ */
+export function writeVolumeFile(host: ShellHost, vfs: Vfs, path: string, bytes: Uint8Array, opts: { append: boolean }): VolumeWrite {
+  const display = vfs.toVirtual(path);
+  const existing = statIfExists(host.vol, path, display);
+  if (existing?.isDir) throw new ShellError(`${display}: Is a directory`, { code: "IsADirectory" });
+  const appended = opts.append && existing !== null;
+  let out = bytes;
+  if (appended) {
+    const old = fsCall(display, () => host.vol.readFile(path));
+    out = new Uint8Array(old.length + bytes.length);
+    out.set(old, 0);
+    out.set(bytes, old.length);
+  }
+  const had = existing !== null;
+  fsCall(display, () => host.run((v) => (had ? v.writeFile(path, out) : v.createFile(path, out))));
+  selectPath(host, path);
+  return { written: out.length, appended };
+}
+
 /** `write`, `mkdir`, `rmdir`, `rm`, `touch`, `cp`, `mkfs`: every disk change goes through `host.run`. */
 function mutationCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
   const joinPath = (dir: string, name: string): string => (dir === "/" ? `/${name}` : `${dir}/${name}`);
@@ -430,21 +479,9 @@ function mutationCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
       }
       if (target.kind !== "volume") throw new ShellError(`${display}: Is a directory`);
       if (flagGiven(at)) throw new ShellError("--at only applies to /dev/hda");
-      const path = target.path;
-      const existing = statIfExists(host.vol, path, display);
-      if (existing?.isDir) throw new ShellError(`${display}: Is a directory`);
-      let out = data;
-      if (append && existing) {
-        const old = fsCall(display, () => host.vol.readFile(path));
-        out = new Uint8Array(old.length + data.length);
-        out.set(old, 0);
-        out.set(data, old.length);
-      }
-      const had = existing !== null;
-      fsCall(display, () => host.run((v) => (had ? v.writeFile(path, out) : v.createFile(path, out))));
-      if (append && had) ctx.log(`appended ${data.length} bytes by rewriting the whole file (FAT has no append; the old chain is freed and reallocated)`);
-      ctx.log(`${out.length} bytes -> ${display}`);
-      selectPath(host, path);
+      const { written, appended } = writeVolumeFile(host, vfs, target.path, data, { append });
+      if (appended) ctx.log(`appended ${data.length} bytes by rewriting the whole file (FAT has no append; the old chain is freed and reallocated)`);
+      ctx.log(`${written} bytes -> ${display}`);
     },
   };
 
@@ -587,6 +624,7 @@ function mutationCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
       if (flagGiven(label)) options.volumeLabel = String(label);
       fsCall("/dev/hda", () => host.format(options));
       vfs.cwd = "/mnt";
+      host.setPrompt(promptFor(vfs.cwd));
       ctx.log("formatted /dev/hda as FAT16; the timeline was cleared");
     },
   };
@@ -600,10 +638,10 @@ function ddXxdCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
     spec: {
       name: "dd",
       summary: "Copy blocks between files, /dev/hda and /dev/zero (at most 1 MiB per run)",
-      rest: { name: "operand", shape: "str", desc: "quoted classic operands: 'if=/dev/hda' 'bs=512' 'count=1'" },
+      rest: { name: "operand", shape: "str", desc: "classic operands: if=/dev/hda bs=512 count=1" },
       flags: [
         { long: "if", shape: "str", desc: "source path (default: the piped input)" },
-        { long: "of", shape: "str", desc: "destination path (default: return the bytes as a blob)" },
+        { long: "of", shape: "str", desc: "destination path (default: return the bytes down the pipe)" },
         { long: "bs", shape: "str", desc: "block size, default 512 (k and M suffixes)" },
         { long: "count", shape: "str", desc: "blocks to copy (default: to the end of the source)" },
         { long: "skip", shape: "str", desc: "blocks to skip at the start of the source" },

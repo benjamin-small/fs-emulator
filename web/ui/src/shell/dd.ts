@@ -1,14 +1,14 @@
 import type { CommandCtx, Value } from "./types";
 import { SIZE_HELP, parseSize } from "./addr";
-import { fromBytes, hasInput, toBytes, type BytesBlob } from "./bytes";
+import { hasInput, toBytes } from "./bytes";
 import { ShellError, fsCall, wrapFs } from "./errors";
 import { selectPath, type ShellHost } from "./host";
 import type { Vfs } from "./vfs";
 
 /**
  * Per-invocation cap on the bytes `dd` reads (and therefore writes). Every journaled byte is
- * stored twice in Rust (before/after) and again in two histories, and a blob is 2x as hex,
- * so the shell caps here rather than in the core. `cat` without `--bytes` uses the same limit.
+ * stored twice in Rust (before/after) and again in two histories, so the shell caps here
+ * rather than in the core. `cat` without `--bytes` uses the same limit.
  */
 export const DD_MAX_BYTES = 1 << 20;
 
@@ -25,13 +25,14 @@ export interface DdOpts {
 }
 
 export const OPERAND_HELP =
-  "operands: if= of= bs= count= skip= seek= (quote them, e.g. 'if=/dev/hda', because = is reserved by the shell; or write --if=/dev/hda)";
+  "operands: if= of= bs= count= skip= seek= (classic form, e.g. dd if=/dev/hda count=1; or the flag form, --if=/dev/hda)";
 
 const isDdKey = (k: string): k is DdKey => (DD_KEYS as readonly string[]).includes(k);
 
 /**
- * Merge `--if/--of/--bs/--count/--skip/--seek` flags (the documented form is `--if=/dev/hda`)
- * with quoted classic `'if=/dev/hda'` operands. The same key from both sources, or twice
+ * Merge `--if/--of/--bs/--count/--skip/--seek` flags with classic `if=/dev/hda` operands,
+ * which browser-terminal 0.3.0 lexes unquoted and passes as positional strings (quotes are
+ * needed only for a value with a space). The same key from both sources, or twice
  * among the operands, is an error; so is any operand that is not `key=value` with a known key.
  * `bs` defaults to 512 and must be positive; `count`, `skip`, `seek` take sizes too (so
  * `--count=1k` works) and must be non-negative.
@@ -39,7 +40,7 @@ const isDdKey = (k: string): k is DdKey => (DD_KEYS as readonly string[]).includ
 export function parseDd(flags: Record<string, Value>, operands: Value[]): DdOpts {
   const given = new Map<DdKey, Value>();
   const put = (key: DdKey, value: Value) => {
-    if (given.has(key)) throw new ShellError(`'${key}' given twice`, { help: "give each of if/of/bs/count/skip/seek once, as a flag or a quoted operand" });
+    if (given.has(key)) throw new ShellError(`'${key}' given twice`, { help: "give each of if/of/bs/count/skip/seek once, as a flag or an operand" });
     given.set(key, value);
   };
   for (const key of DD_KEYS) if (key in flags) put(key, flags[key]);
@@ -136,8 +137,12 @@ function readSource(host: ShellHost, vfs: Vfs, opts: DdOpts, input: Value): Uint
   }
 }
 
-/** Overlay `data` at `off` on the file at `path` (zero-padded; FAT has no partial writes). */
-function writeVolumeFile(host: ShellHost, path: string, display: string, off: number, data: Uint8Array, ctx: CommandCtx): void {
+/**
+ * Overlay `data` at `off` on the file at `path` (zero-padded; FAT has no partial writes).
+ * Distinct from commands.ts's `writeVolumeFile`, which replaces or appends to a whole file:
+ * this one is `dd`'s `--seek`, which places bytes inside an existing one.
+ */
+function overlayVolumeFile(host: ShellHost, path: string, display: string, off: number, data: Uint8Array, ctx: CommandCtx): void {
   const disk = host.vol.sectorCount() * host.vol.sectorSize();
   // Bounded before the allocation below: `off` is seek*bs, an unbounded non-negative integer,
   // so an unchecked --seek would either allocate a huge buffer or overflow Uint8Array's length.
@@ -162,15 +167,15 @@ function writeVolumeFile(host: ShellHost, path: string, display: string, off: nu
 /**
  * Run one parsed `dd`. Reads the source window (capped at `DD_MAX_BYTES` before anything is
  * written), copies it to `--of` (`/dev/hda` via `writeRaw`, a volume file via overlay and
- * rewrite, `/dev/null` discards) or returns it as a blob when `--of` is absent, then logs
- * `records in`, `records out` and `bytes copied` like the real tool.
+ * rewrite, `/dev/null` discards) or returns the bytes themselves when `--of` is absent,
+ * then logs `records in`, `records out` and `bytes copied` like the real tool.
  */
-export function runDd(host: ShellHost, vfs: Vfs, opts: DdOpts, input: Value, ctx: CommandCtx): BytesBlob | undefined {
+export function runDd(host: ShellHost, vfs: Vfs, opts: DdOpts, input: Value, ctx: CommandCtx): Uint8Array | undefined {
   const data = readSource(host, vfs, opts, input);
   const off = opts.seek * opts.bs;
-  let result: BytesBlob | undefined;
+  let result: Uint8Array | undefined;
   if (opts.of === undefined) {
-    result = fromBytes(data);
+    result = data;
   } else {
     const dst = vfs.resolve(opts.of);
     const display = vfs.display(dst);
@@ -187,7 +192,7 @@ export function runDd(host: ShellHost, vfs: Vfs, opts: DdOpts, input: Value, ctx
         break;
       }
       case "volume":
-        writeVolumeFile(host, dst.path, display, off, data, ctx);
+        overlayVolumeFile(host, dst.path, display, off, data, ctx);
         break;
       default:
         throw new ShellError(`${display}: Is a directory`);

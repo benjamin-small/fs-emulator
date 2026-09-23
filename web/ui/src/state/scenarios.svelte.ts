@@ -33,6 +33,10 @@ export class ScenarioRunner {
   current = $state<Scenario | null>(null);
   index = $state(-1);
   readonly step: Step | null = $derived(this.current ? (this.current.steps[this.index] ?? null) : null);
+  /** The current step's focus with any `(v: Volume) => StepFocus` already resolved, so the
+   *  Lesson card can describe where it pointed the UI without resolving it a second time
+   *  (the function form reads the live volume, and would answer differently later). */
+  focus = $state<StepFocus | null>(null);
 
   /** Step bookkeeping (which steps have run, and the volume cursor each one left). */
   private cursor: ScenarioCursor | null = null;
@@ -81,6 +85,7 @@ export class ScenarioRunner {
     this.current = null;
     this.index = -1;
     this.cursor = null;
+    this.focus = null;
     selection.showRemnants = false;
     selection.stringsOn = false;
   }
@@ -91,8 +96,11 @@ export class ScenarioRunner {
     this.applyFocus(step);
   }
 
+  /** Every path that lands on a step ends here — a fresh run, a Next that seeks to a step
+   *  that already ran, and Prev — so this is where the resolved focus is published. */
   private applyFocus(step: Step) {
     const focus = typeof step.focus === "function" ? step.focus(volume.vol) : step.focus;
+    this.focus = focus ?? null;
     if (!focus) return;
     if (focus.path !== undefined) selection.select(focus.path);
     if (focus.offset !== undefined) selection.jumpTo(focus.offset);
