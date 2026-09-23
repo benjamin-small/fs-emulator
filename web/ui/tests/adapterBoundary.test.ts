@@ -17,7 +17,7 @@ const FAT16_IMPORTERS = (rel: string) => rel === "fs/index.ts" || rel === "fs/pa
 
 const FAT_ONLY_CALL = /\.(geometry|fatEntries|clusterOwners|annotateSectorWith|rawDirEntries|bootSector|clusterChain|formatFat16)\s*\(/g;
 const FAT_ONLY_TYPE = /\b(ClusterOwner|FatEntry|Geometry|RawEntry|BootSector|FormatOptions)\b/;
-const WASM_IMPORT = /import\s+(?:type\s+)?\{([^}]*)\}\s+from\s+["'][^"']*lib\/wasm["']/g;
+const WASM_IMPORT = /(?:import\s+(?:type\s+)?|export\s+type\s+)\{([^}]*)\}\s+from\s+["'](?:[^"']*lib\/wasm|fs-emulator-wasm)["']/g;
 const FAT16_IMPORT = /from\s+["'](?:\.{1,2}\/)+(?:fs\/)?fat16(?:\/[^"']*)?["']/g;
 
 /** Every .ts and .svelte file under `dir`, as posix paths relative to src/, sorted. */
@@ -64,6 +64,12 @@ describe("the adapter boundary", () => {
     ]);
     expect(violations("shell/host.ts", 'import { Volume, type FormatOptions } from "../lib/wasm";')).toEqual([
       "shell/host.ts: imports FormatOptions from lib/wasm (FAT-only wasm type; use the fs/adapter types)",
+    ]);
+    expect(violations("shell/host.ts", 'export type { Geometry } from "../lib/wasm";')).toEqual([
+      "shell/host.ts: imports Geometry from lib/wasm (FAT-only wasm type; use the fs/adapter types)",
+    ]);
+    expect(violations("shell/host.ts", 'import type { FatEntry } from "fs-emulator-wasm";')).toEqual([
+      "shell/host.ts: imports FatEntry from lib/wasm (FAT-only wasm type; use the fs/adapter types)",
     ]);
     expect(violations("core/tree.ts", 'import type {\n  ClusterOwner,\n  Volume,\n} from "../lib/wasm";')).toHaveLength(1);
     expect(violations("components/Inspector.svelte", 'import { asFat16 } from "../fs/fat16";')).toEqual([

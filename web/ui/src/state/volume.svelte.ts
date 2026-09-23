@@ -62,9 +62,8 @@ export class VolumeStore {
   /** A fresh volume of `family` (the current one by default) with that family's options. */
   format(family: FsFamilyId = this.adapter.id, options?: unknown) {
     try {
-      const def = FAMILIES[family];
-      if (!def) throw new Error(`no filesystem family "${family}"`);
-      this.adopt(def.format(options));
+      if (!Object.hasOwn(FAMILIES, family)) throw new Error(`no filesystem family "${family}"`);
+      this.adopt(FAMILIES[family].format(options));
       this.status = null;
       selection.reset();
     } catch (e) {
