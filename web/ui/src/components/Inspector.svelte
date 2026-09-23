@@ -43,7 +43,7 @@
     <dl class="facts">
       <dt>Offset</dt><dd class="mono">{hex(offset)} · {offset.toLocaleString()}</dd>
       <dt>Sector</dt><dd class="mono">{attr.sector} · {attr.regionName}</dd>
-      {#if attr.unit !== undefined}<dt>{cap(volume.adapter.unit.singular)}</dt><dd class="mono">{attr.unit}{#if unitNote} · {unitNote}{/if}</dd>{/if}
+      {#if attr.unit !== undefined}<dt>{cap(volume.adapter.unit.singular)}</dt><dd class="mono">{attr.unit}{#if unitNote}{" "}· {unitNote}{/if}</dd>{/if}
       {#if attr.ownerPath}<dt>Owner</dt><dd><button class="link" onclick={() => selection.select(attr.ownerPath!)}>{attr.ownerPath}</button></dd>{:else if attr.regionKind === "data"}<dt>Owner</dt><dd class="muted">free</dd>{/if}
     </dl>
     {#if !volume.atLatest}<p class="muted">Annotations describe the latest state, not the step you are viewing.</p>{/if}
