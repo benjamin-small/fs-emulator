@@ -264,10 +264,11 @@ family lives behind the adapter in `src/fs/`:
 `src/**/*.{ts,svelte}` and fails on a FAT-only wasm call or type outside
 `src/fs/fat16/` and `src/lib/wasm.ts`, and on an import from `fs/fat16`
 anywhere but `src/fs/index.ts`, `src/fs/panels.ts`, and `src/scenarios/`.
-Adding a family means an adapter under `src/fs/<family>/`, an entry in
-`fs/index.ts` and `fs/panels.ts`, a map panel in its own words ("FAT map"
-stays; ext will get "Block groups"), and scenarios that teach what is
-different about it. `docs/ROADMAP.md` has the checklist.
+Adding a family means extending `FsFamilyId` in `fs/adapter.ts`, an adapter
+under `src/fs/<family>/`, an entry in `fs/index.ts` and `fs/panels.ts`, a map
+panel in its own words ("FAT map" stays; ext will get "Block groups"), and
+scenarios that teach what is different about it. `docs/ROADMAP.md` has the
+checklist.
 
 ## Keyboard shortcuts
 

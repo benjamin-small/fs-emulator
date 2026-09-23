@@ -73,8 +73,9 @@ ext3 as ext2 plus a journal. Expected shape:
   ownership, the journal's transactions for ext3.
 - Wasm: `Inner::Ext`, `formatExt2` / `formatExt3`, ext-only methods throwing
   `NotExt`.
-- UI: a block-group map beside the FAT map, an inode inspector, and scenarios
-  that show indirect blocks and, for ext3, a journaled write replaying.
+- UI: a block-group map that replaces the FAT map through `PANELS` when an
+  ext volume is mounted, an inode inspector, and scenarios that show indirect
+  blocks and, for ext3, a journaled write replaying.
 
 ## Core API additions
 
@@ -101,6 +102,25 @@ minimum region width, so tiny regions can vanish at narrow widths;
 `src/fs/fat16/direntry.ts` and `src/fs/fat16/remnants.ts` keep their
 pre-existing blanket `catch` around `rawDirEntries` on purpose, so a corrupt
 volume falls back to "no range" or "skip this entry" instead of throwing.
+
+**`web/ui`, seams the ext slice inherits**: (a) the free-space model in
+generic code assumes allocation units exist only in `data` regions and that
+an unowned unit is free, at `web/ui/src/core/attribution.ts` (the
+`region.kind !== "data"` early return and the `free` marking),
+`web/ui/src/components/Inspector.svelte` (the "free" owner fact) and
+`web/ui/src/components/Ribbon.svelte` (`freeLabel` counting unowned units);
+ext blocks span metadata regions and allocated-but-unowned blocks exist (the
+journal, indirect blocks), so the ext slice needs an adapter `isFree(unit)`
+and a `df()`-based free label; (b) the terminal's command help and the
+`mkfs` flags are captured once in `createCommands`, so a family change must
+re-register commands (the spec's non-goal); (c) `entrySlots(path)` returns
+one `Interval`, while an ext path has a directory entry and an inode, so
+slice 4 widens it to `Interval[]`; (d) `addrHelp` and the dump's `g` prompt
+cannot advertise a family's extra address forms such as `i:N`; (e)
+`Ribbon.metaLabel` maps a `directory` region to "root", true only for FAT;
+(f) `hexAddr`/`hex` formatting is duplicated in `fs/fat16/adapter.ts`,
+`shell/commands.ts`, `components/Inspector.svelte`, and `core/lesson.ts` (a
+`core/hex.ts` would serve all four).
 
 **`web/ui` terminal** (decided 2026-09-22): the working directory is one
 value per page, not per shell session, because `setPrompt` is engine-wide and
@@ -178,8 +198,9 @@ any of this underneath it.
 4. Wasm: an `Inner` variant, a `formatXxx` constructor, `fromImage`
    detection, family-specific inspection methods with a `NotXxx` error code,
    TypeScript types for any new DTOs.
-5. UI: implement `FsAdapter` under `web/ui/src/fs/<family>/`, register it in
-   `fs/index.ts` and `fs/panels.ts`, add its signature to `detect`, and write
-   scenarios that teach what is different about this filesystem.
+5. UI: extend `FsFamilyId` in `web/ui/src/fs/adapter.ts`, implement
+   `FsAdapter` under `web/ui/src/fs/<family>/`, register it in `fs/index.ts`
+   and `fs/panels.ts`, add its signature to `detect`, and write scenarios
+   that teach what is different about this filesystem.
 6. CI already builds every crate for `wasm32-unknown-unknown` and runs the
    web builds; nothing to add unless the crate needs a new tool.

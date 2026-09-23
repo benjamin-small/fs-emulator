@@ -29,7 +29,7 @@ export function warnIfRewound(host: ShellHost, ctx: CommandCtx): void {
   if (!atLatest(host)) ctx.err(rewoundWarning(host));
 }
 
-/** Path-based commands refuse to run while the boot sector does not parse (the Rust gate says the same). */
+/** Path-based commands refuse to run while the on-disk metadata does not parse (the Rust gate says the same). */
 export function assertMounted(host: ShellHost, display: string): void {
   const c = corruptionOf(host.vol);
   if (c) throw new ShellError(`${display}: ${c}`, { code: "CorruptImage", help: CORRUPT_HELP });

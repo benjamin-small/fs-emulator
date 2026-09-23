@@ -47,7 +47,7 @@ export interface UnitSpace {
   readonly unitCount: number;                           // FAT: clusterCount
   readonly unitSize: number;                            // bytes per unit
   readonly sectorSize: number;                          // vol.sectorSize()
-  readonly totalSectors: number;                        // vol.sectorCount()
+  readonly totalSectors: number;                        // sectors the filesystem describes (FAT: the BPB total); the store's `totalSectors` is the disk's
   unitOfSector(sector: number): number | undefined;     // undefined outside the data area
   unitByteRange(unit: number): Interval;                // [start, end) bytes; no bounds check, as today
   unitOfOffset(offset: number): number | undefined;
