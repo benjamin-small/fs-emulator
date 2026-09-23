@@ -1,41 +1,33 @@
-import type { ClusterOwner, Geometry, Region, RegionKind } from "../lib/wasm";
-import { COLOR_BOOT, COLOR_DIR, COLOR_FAT, COLOR_FAT_ALT, COLOR_FREE, colorIndexForPath, type ColorIndex } from "./palette";
+import type { Region, RegionKind } from "../lib/wasm";
+import type { UnitOwner, UnitSpace } from "../fs/adapter";
+import { COLOR_BOOT, COLOR_DIR, COLOR_FREE, COLOR_TABLE, colorIndexForPath, type ColorIndex } from "./palette";
 
 export type { ColorIndex };
 export interface Attr {
   regionKind: RegionKind; regionName: string; sector: number;
-  cluster?: number; ownerPath?: string; isDir?: boolean; free: boolean; colorIndex: ColorIndex;
+  unit?: number; ownerPath?: string; isDir?: boolean; free: boolean; colorIndex: ColorIndex;
 }
+/** Byte ownership for one epoch. `ownerByUnit` and `colorByUnit` are indexed by unit number and
+ *  have `space.unit.first + space.unitCount` rows (FAT: `clusterCount + 2`), so the rows below
+ *  `unit.first` are never owned. */
 export interface AttributionTable {
-  geometry: Geometry; regions: Region[]; owners: ClusterOwner[];
-  /** cluster -> index into owners, or -1 */
-  ownerByCluster: Int32Array;
-  colorByCluster: Uint8Array;
+  space: UnitSpace; regions: Region[]; owners: readonly UnitOwner[];
+  /** unit -> index into owners, or -1 */
+  ownerByUnit: Int32Array;
+  colorByUnit: Uint8Array;
 }
 
-export function clusterOfSector(g: Geometry, sector: number): number | undefined {
-  if (sector < g.firstDataSector) return undefined;
-  const c = 2 + Math.floor((sector - g.firstDataSector) / g.sectorsPerCluster);
-  return c <= g.clusterCount + 1 ? c : undefined;
-}
-
-export function clusterByteRange(g: Geometry, cluster: number): { start: number; end: number } {
-  const size = g.bytesPerSector * g.sectorsPerCluster;
-  const start = g.firstDataSector * g.bytesPerSector + (cluster - 2) * size;
-  return { start, end: start + size };
-}
-
-export function buildAttribution(geometry: Geometry, layout: Region[], owners: ClusterOwner[]): AttributionTable {
-  const n = geometry.clusterCount + 2;
-  const ownerByCluster = new Int32Array(n).fill(-1);
-  const colorByCluster = new Uint8Array(n);
+export function buildAttribution(space: UnitSpace, layout: Region[], owners: readonly UnitOwner[]): AttributionTable {
+  const n = space.unit.first + space.unitCount;
+  const ownerByUnit = new Int32Array(n).fill(-1);
+  const colorByUnit = new Uint8Array(n);
   owners.forEach((o, i) => {
-    if (o.cluster < n) {
-      ownerByCluster[o.cluster] = i;
-      colorByCluster[o.cluster] = o.isDir ? COLOR_DIR : colorIndexForPath(o.path);
+    if (o.unit < n) {
+      ownerByUnit[o.unit] = i;
+      colorByUnit[o.unit] = o.isDir ? COLOR_DIR : colorIndexForPath(o.path);
     }
   });
-  return { geometry, regions: layout, owners, ownerByCluster, colorByCluster };
+  return { space, regions: layout, owners, ownerByUnit, colorByUnit };
 }
 
 function regionOf(regions: Region[], sector: number): Region {
@@ -43,11 +35,11 @@ function regionOf(regions: Region[], sector: number): Region {
   return { name: "unknown", sectors: { start: sector, end: sector + 1 }, kind: "other" };
 }
 
-function colorForRegion(region: Region): ColorIndex {
+/** A region's colour from its kind alone. A family's `UnitSpace.colorForRegion` starts here and
+ *  adds what only it knows (FAT: the mirror copy "FAT 1" gets `COLOR_TABLE_ALT`). */
+export function defaultColorForRegion(region: Region): ColorIndex {
   switch (region.kind) {
-    // The mirror copy gets its own lighter violet so "the FAT is written twice"
-    // is visible in the ribbon and the dump's owner stripe.
-    case "allocationTable": return region.name === "FAT 1" ? COLOR_FAT_ALT : COLOR_FAT;
+    case "allocationTable": return COLOR_TABLE;
     case "directory": return COLOR_DIR;
     case "data": return COLOR_FREE;
     default: return COLOR_BOOT;
@@ -56,16 +48,16 @@ function colorForRegion(region: Region): ColorIndex {
 
 export function attrAtSector(t: AttributionTable, sector: number): Attr {
   const region = regionOf(t.regions, sector);
-  const base: Attr = { regionKind: region.kind, regionName: region.name, sector, free: false, colorIndex: colorForRegion(region) };
+  const base: Attr = { regionKind: region.kind, regionName: region.name, sector, free: false, colorIndex: t.space.colorForRegion(region) };
   if (region.kind !== "data") return base;
-  const cluster = clusterOfSector(t.geometry, sector);
-  if (cluster === undefined) return { ...base, free: true };
-  const idx = t.ownerByCluster[cluster];
-  if (idx < 0) return { ...base, cluster, free: true, colorIndex: COLOR_FREE };
+  const unit = t.space.unitOfSector(sector);
+  if (unit === undefined) return { ...base, free: true };
+  const idx = t.ownerByUnit[unit];
+  if (idx < 0) return { ...base, unit, free: true, colorIndex: COLOR_FREE };
   const o = t.owners[idx];
-  return { ...base, cluster, ownerPath: o.path, isDir: o.isDir, free: false, colorIndex: t.colorByCluster[cluster] };
+  return { ...base, unit, ownerPath: o.path, isDir: o.isDir, free: false, colorIndex: t.colorByUnit[unit] };
 }
 
 export function attrAtOffset(t: AttributionTable, offset: number): Attr {
-  return attrAtSector(t, Math.floor(offset / t.geometry.bytesPerSector));
+  return attrAtSector(t, Math.floor(offset / t.space.sectorSize));
 }

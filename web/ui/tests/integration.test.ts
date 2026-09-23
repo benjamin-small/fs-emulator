@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { Volume } from "../src/lib/wasm";
-import { applyChanges, changedSectors, touchesBootSector } from "../src/core/patch";
-import { attrAtOffset, buildAttribution, clusterByteRange } from "../src/core/attribution";
+import { applyChanges, changedSectors } from "../src/core/patch";
+import { attrAtOffset, buildAttribution } from "../src/core/attribution";
 import { buildTree } from "../src/core/tree";
-import { findEntrySlots } from "../src/core/direntry";
+import { adapterFor } from "../src/fs";
+import { findEntrySlots } from "../src/fs/fat16/direntry";
+import { clusterByteRange } from "../src/fs/fat16/geometry";
+import { touchesBootSector } from "../src/fs/fat16/metadata";
 import type { OpRecord, Region, Volume as VolumeType } from "../src/lib/wasm";
 
 describe("package integration", () => {
@@ -63,13 +66,20 @@ describe("package integration", () => {
     const vol = Volume.formatFat16(undefined);
     vol.createDir("/DOCS");
     vol.createFile("/DOCS/N.TXT", new Uint8Array(3000));
-    const owners = vol.clusterOwners();
-    const t = buildAttribution(vol.geometry(), vol.layout(), owners);
-    const { start } = clusterByteRange(vol.geometry(), 3);
-    expect(attrAtOffset(t, start)).toMatchObject({ cluster: 3, ownerPath: "/DOCS/N.TXT", isDir: false });
-    const tree = buildTree(vol, owners);
-    expect(tree.children[0]).toMatchObject({ name: "DOCS", path: "/DOCS", isDir: true, firstCluster: 2 });
-    expect(tree.children[0].children[0]).toMatchObject({ name: "N.TXT", path: "/DOCS/N.TXT", size: 3000, firstCluster: 3 });
+    const fs = adapterFor(vol); // bound after the ops, so its cached owners are current
+    const t = buildAttribution(fs, vol.layout(), fs.owners);
+    const { start } = fs.unitByteRange(3);
+    expect(attrAtOffset(t, start)).toMatchObject({ unit: 3, ownerPath: "/DOCS/N.TXT", isDir: false });
+    const tree = buildTree(vol, fs.owners);
+    expect(tree.children[0]).toMatchObject({ name: "DOCS", path: "/DOCS", isDir: true, firstUnit: 2 });
+    expect(tree.children[0].children[0]).toMatchObject({ name: "N.TXT", path: "/DOCS/N.TXT", size: 3000, firstUnit: 3 });
+  });
+  it("the tree reports null, not 0, for the root and for an empty file: neither owns a unit", () => {
+    const vol = Volume.formatFat16(undefined);
+    vol.createFile("/EMPTY.TXT", new Uint8Array(0));
+    const tree = buildTree(vol, adapterFor(vol).owners);
+    expect(tree.firstUnit).toBeNull();
+    expect(tree.children[0]).toMatchObject({ name: "EMPTY.TXT", size: 0, firstUnit: null });
   });
   it("finds a file's directory entry slots, including LFN entries, in root and subdirectories", () => {
     const vol = Volume.formatFat16(undefined);
@@ -87,8 +97,9 @@ describe("package integration", () => {
   });
   it("a raw write that changes the root-entry count is adopted: geometry and layout follow", () => {
     // 16 root entries fill exactly one 512-byte sector; 32 fill two. VolumeStore.run re-reads
-    // geometry and layout whenever touchesBootSector(rec.changes) is true; this replays the
-    // same wasm calls and checks that the volume reports the grown root region.
+    // the layout whenever the adapter's touchesMetadata(rec.changes) (FAT: touchesBootSector)
+    // is true; this replays the same wasm calls and checks that the volume reports the grown
+    // root region.
     const vol = Volume.formatFat16({ rootEntries: 16 });
     const before = vol.geometry();
     const layoutBefore = vol.layout();

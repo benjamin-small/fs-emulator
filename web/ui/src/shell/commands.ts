@@ -1,6 +1,6 @@
 import type { CommandArgs, CommandCtx, CommandDef, CommandSpec, FlagSpec, PosArg } from "./types";
 import type { DateTime, EntryInfo, FormatOptions, Volume } from "../lib/wasm";
-import { clusterByteRange } from "../core/attribution";
+import { clusterByteRange } from "../fs/fat16/geometry";
 import { findEntrySlots } from "../core/direntry";
 import { buildChain } from "../core/fatchain";
 import { ADDR_HELP, SIZE_HELP, parseAddr, parseSize } from "./addr";

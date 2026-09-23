@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { clusterByteRange } from "../../src/core/attribution";
+import { clusterByteRange } from "../../src/fs/fat16/geometry";
 import { findEntrySlots } from "../../src/core/direntry";
 import { ADDR_HELP } from "../../src/shell/addr";
 import { createCommands, rewoundWarning } from "../../src/shell/commands";

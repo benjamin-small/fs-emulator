@@ -1,9 +1,14 @@
-import { BOOT_SECTOR_LEN, touchesBootSector } from "../../core/patch";
+import type { ByteChangeLike } from "../../core/patch";
 import type { FsAdapter } from "../adapter";
 
-// Still defined in core/patch.ts until Task 3 moves the two here for real; this is
-// already their FAT home for every importer.
-export { BOOT_SECTOR_LEN, touchesBootSector };
+/** Bytes the FAT core re-parses as the boot sector after a raw write. */
+export const BOOT_SECTOR_LEN = 512;
+
+/** True when any change starts inside the boot sector. The core may then have adopted
+ *  a new geometry, so the store must re-read the layout (`Fat16Adapter.touchesMetadata`). */
+export function touchesBootSector(changes: ByteChangeLike[]): boolean {
+  return changes.some((c) => c.offset < BOOT_SECTOR_LEN);
+}
 
 /** DirTree's note while a raw write has left the boot sector unparsable. */
 export const CORRUPT_NOTE = "Boot sector does not parse; the tree is unavailable until a raw write repairs it.";
