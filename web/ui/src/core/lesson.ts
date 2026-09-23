@@ -19,7 +19,7 @@ export function describeFocus(
 ): string | null {
   if (!focus) return null;
   const parts: string[] = [];
-  if (typeof focus.path === "string") parts.push(`Files: ${focus.path}, its entry, chain, and clusters`);
+  if (typeof focus.path === "string") parts.push(`Files: ${focus.path}, its entry, chain, and ${space.unit.plural}`);
   // One place, not three: `ScenarioRunner.applyFocus` jumps to offset, else sector, else
   // unit, so the card names whichever of them the dump actually went to.
   if (focus.offset !== undefined) parts.push(`offset ${hex(focus.offset)} in ${regionNameAt(Math.floor(focus.offset / space.sectorSize))}`);
