@@ -170,7 +170,17 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 
 /* Lesson card: an ordinary panel at the top of the right column, marked out by its border
    alone — nothing is covered, dimmed, or made inert while a lesson runs. */
-.lesson { border: 2px solid var(--focus); }
+/* The Lesson card floats over the page and is dragged by its bar (LessonPanel.svelte
+   clamps it to the viewport and remembers the spot); under 760px it docks to the bottom
+   as a sheet instead. */
+.lesson { position: fixed; z-index: 30; width: 340px; max-width: calc(100vw - 16px); max-height: calc(100vh - 16px); overflow: auto; border: 2px solid var(--focus); box-shadow: 0 10px 30px color-mix(in srgb, black 35%, transparent); }
+.lesson.docked { left: 8px; right: 8px; bottom: 8px; width: auto; max-height: 50vh; }
+.lesson-bar { display: flex; align-items: center; gap: 8px; margin: -8px -10px 6px; padding: 5px 10px; border-bottom: 1px solid var(--hairline); cursor: grab; touch-action: none; user-select: none; }
+.lesson.dragging .lesson-bar { cursor: grabbing; }
+.lesson.docked .lesson-bar { cursor: default; }
+.lesson-bar .eyebrow { flex: 1; margin: 0; }
+.lesson-bar .handle { padding: 0 5px; font: 12px/1 var(--font-mono); letter-spacing: -2px; color: var(--ink-muted); background: none; border: 1px solid transparent; cursor: grab; }
+.lesson-bar .handle:hover { border-color: var(--hairline); color: var(--ink); }
 .lesson .eyebrow { margin: 0 0 2px; font: 500 11px var(--font-display); text-transform: uppercase; letter-spacing: 0.04em; color: var(--ink-muted); }
 .lesson h2 { margin: 0 0 6px; font: 500 16px/1.2 var(--font-display); }
 .lesson h2:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }

@@ -88,11 +88,13 @@
     </aside>
     <main class="col center"><HexView /></main>
     <aside class="col right">
-      {#if scenarios.current}<LessonPanel />{/if}
       <StringsPanel />
       <Inspector />
     </aside>
   </div>
   <footer id="timeline-slot"><Timeline /></footer>
   <TerminalPanel />
+  <!-- Floating (position: fixed), so its place in the DOM is only reading order: after
+       everything it talks about. -->
+  {#if scenarios.current}<LessonPanel />{/if}
 </div>

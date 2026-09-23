@@ -83,14 +83,18 @@ operation timeline along the bottom.
   disk, make a directory, and work from the shell (the same operations typed
   as commands, plus a raw-sector read and a raw patch of the volume label).
   Pick one in the top bar and press **Start**; it formats a fresh disk and a
-  **Lesson** card appears at the top of the right column, above Strings. The
+  **Lesson** card floats over the page, at the top right to begin with. Drag
+  it by its bar to wherever it is out of the way of the bytes it talks about,
+  or focus the ⋮⋮ handle and use the arrow keys (Shift for bigger steps); it
+  remembers where you left it, and `Escape` inside it closes it. Under 760px
+  it docks to the bottom of the screen instead. The
   card holds the scenario title, the step number, the step's title and text,
   a "Look at:" line naming what the step pointed the UI at (a file, a
   cluster, a sector, an offset and its region, the remnant hatching, the
   strings overlay), and **Prev** / **Next** (**Finish** on the last step) /
   **Close**; `n` and `p` do Next and Prev from anywhere outside a text
-  field. It is an ordinary panel: nothing is covered or dimmed, every other
-  pane stays live while a lesson runs, and the card's title takes focus on
+  field. It is a non-modal dialog: nothing is dimmed or made inert, every
+  other pane stays live while a lesson runs, and the card's title takes focus on
   each step so a keyboard or screen-reader user lands on the new text. Each
   step runs
   at most once: **Next** runs a step the first time you reach it, but once
@@ -231,6 +235,7 @@ it. `docs/ROADMAP.md` has the checklist.
 |---|---|
 | `[` / `]` | Step the timeline back / forward |
 | `n` / `p` | Next / previous step on the Lesson card (while a lesson is running) |
+| `Escape` (inside the Lesson card) | Close the lesson |
 | `/` | Focus the path field in Actions |
 | Arrow keys | Move the dump's byte cursor, or seek one ribbon column (ribbon focused) |
 | `Page Up` / `Page Down` | Scroll the dump by a page |
