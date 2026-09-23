@@ -61,7 +61,15 @@ export class VolumeStore {
 
   /** A fresh volume of `family` (the current one by default) with that family's options. */
   format(family: FsFamilyId = this.adapter.id, options?: unknown) {
-    try { this.adopt(FAMILIES[family].format(options)); this.status = null; selection.reset(); } catch (e) { this.fail(e); }
+    try {
+      const def = FAMILIES[family];
+      if (!def) throw new Error(`no filesystem family "${family}"`);
+      this.adopt(def.format(options));
+      this.status = null;
+      selection.reset();
+    } catch (e) {
+      this.fail(e);
+    }
   }
 
   /** Mount an image. An unregistered `fsType()` makes `adapterFor` throw, which lands in

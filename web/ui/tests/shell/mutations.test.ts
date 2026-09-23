@@ -257,4 +257,9 @@ describe("mkfs", () => {
     expect(host.vol.geometry().totalSectors).toBe(32768);
     expect((await callErr(defs, "mkfs", { flags: { spc: -1 } })).message).toBe("--spc must be a non-negative integer");
   });
+
+  it("host.format refuses an unregistered family with a named error instead of a TypeError", () => {
+    const { host } = setup();
+    expect(() => host.format("nope" as never)).toThrow('no filesystem family "nope"');
+  });
 });
