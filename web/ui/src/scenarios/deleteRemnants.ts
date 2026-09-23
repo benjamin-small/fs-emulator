@@ -23,7 +23,7 @@ export const scenario: Scenario = {
     {
       title: "The data never moved",
       text: "Cluster 2's bytes are untouched, and its FAT entry now reads free. That gap between 'marked deleted' and 'actually erased' is exactly what undelete tools rely on.",
-      focus: { cluster: 2, showRemnants: true },
+      focus: { unit: 2, showRemnants: true },
     },
     {
       title: "A new file overwrites the remnant",

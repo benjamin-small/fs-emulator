@@ -18,12 +18,14 @@ export class ShellError extends Error {
 }
 
 /**
- * The way back from an unparsable boot sector. `wrapFs` attaches it to every `CorruptImage`
- * error, whichever call produced it, and `assertMounted` uses the same text for the gate it
- * raises itself.
+ * The way back from on-disk metadata that no longer parses (for FAT, the boot sector).
+ * `wrapFs` attaches it to every `CorruptImage` error, whichever call produced it, and
+ * `assertMounted` uses the same text for the gate it raises itself. Family-neutral on
+ * purpose: `wrapFs` has no adapter, so the family's own sentence lives in
+ * `adapter.corruptNote` and in the Rust message the error carries.
  */
 export const CORRUPT_HELP =
-  "the boot sector no longer parses; rewind on the timeline, or write the saved sector back with: <the saved bytes> | dd --of=/dev/hda";
+  "the on-disk metadata no longer parses; rewind on the timeline, or write the saved bytes back with: <the saved bytes> | dd --of=/dev/hda";
 
 /** Coreutils phrasing for the wasm error codes a shell user meets most; other codes keep the wasm text. */
 const PHRASES: Record<string, string> = {

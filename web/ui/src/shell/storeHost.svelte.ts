@@ -1,4 +1,5 @@
-import type { FormatOptions, OpRecord, Volume } from "../lib/wasm";
+import type { OpRecord, Volume } from "../lib/wasm";
+import type { FsAdapter, FsFamilyId } from "../fs/adapter";
 import { selection } from "../state/selection.svelte";
 import { volume } from "../state/volume.svelte";
 import { statusToError, type ShellHost } from "./host";
@@ -18,6 +19,9 @@ export function createStoreHost(closeTerminal: () => void, applyPrompt: (prefix:
     get vol(): Volume {
       return volume.vol;
     },
+    get adapter(): FsAdapter {
+      return volume.adapter;
+    },
     get cursor(): number {
       return volume.cursor;
     },
@@ -29,8 +33,8 @@ export function createStoreHost(closeTerminal: () => void, applyPrompt: (prefix:
       if (rec) return rec;
       throw statusToError(volume.status);
     },
-    format(options: FormatOptions): void {
-      volume.format(options);
+    format(family: FsFamilyId, options?: unknown): void {
+      volume.format(family, options);
       // On failure VolumeStore.format sets status and leaves the disk alone. Read it
       // before select(null), whose side effect is to clear status.
       if (volume.status) throw statusToError(volume.status);

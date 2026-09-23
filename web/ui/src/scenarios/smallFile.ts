@@ -28,7 +28,7 @@ export const scenario: Scenario = {
     {
       title: "The data cluster",
       text: "Cluster 2 holds the file's actual bytes. Only the first 13 bytes were written; the rest of the cluster is still zero.",
-      focus: { cluster: 2 },
+      focus: { unit: 2 },
     },
   ],
 };

@@ -138,9 +138,10 @@ function readSource(host: ShellHost, vfs: Vfs, opts: DdOpts, input: Value): Uint
 }
 
 /**
- * Overlay `data` at `off` on the file at `path` (zero-padded; FAT has no partial writes).
- * Distinct from commands.ts's `writeVolumeFile`, which replaces or appends to a whole file:
- * this one is `dd`'s `--seek`, which places bytes inside an existing one.
+ * Overlay `data` at `off` on the file at `path` (zero-padded: the core has no partial writes,
+ * and `adapter.notes.partialWrite` says so in the family's words). Distinct from commands.ts's
+ * `writeVolumeFile`, which replaces or appends to a whole file: this one is `dd`'s `--seek`,
+ * which places bytes inside an existing one.
  */
 function overlayVolumeFile(host: ShellHost, path: string, display: string, off: number, data: Uint8Array, ctx: CommandCtx): void {
   const disk = host.vol.sectorCount() * host.vol.sectorSize();
@@ -160,7 +161,7 @@ function overlayVolumeFile(host: ShellHost, path: string, display: string, off: 
   out.set(data, off);
   const had = existing !== null;
   fsCall(display, () => host.run((v) => (had ? v.writeFile(path, out) : v.createFile(path, out))));
-  if (had || off > 0) ctx.log("FAT has no partial writes; the whole file was rewritten");
+  if (had || off > 0) ctx.log(host.adapter.notes.partialWrite);
   selectPath(host, path);
 }
 

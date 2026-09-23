@@ -1,7 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { clusterByteRange } from "../../src/fs/fat16/geometry";
-import { findEntrySlots } from "../../src/core/direntry";
-import { ADDR_HELP } from "../../src/shell/addr";
+import { addrHelp } from "../../src/shell/addr";
 import { createCommands, rewoundWarning } from "../../src/shell/commands";
 import { DD_MAX_BYTES } from "../../src/shell/dd";
 import { Vfs } from "../../src/shell/vfs";
@@ -159,10 +157,10 @@ describe("cat", () => {
 describe("stat", () => {
   it("reports where a file lives: entry slot, FAT entry, chain, data", async () => {
     const { host, defs } = setup();
-    const vol = host.vol;
-    const g = vol.geometry(), fat = vol.fatEntries(0), owners = vol.clusterOwners();
-    const first = owners.find((o) => o.path === "/DOCS/N.TXT")!.firstCluster;
-    const slots = findEntrySlots(vol, g, fat, owners, "/DOCS/N.TXT")!;
+    const fs = host.adapter;
+    const g = host.vol.geometry();
+    const first = fs.ownerOf("/DOCS/N.TXT")!.firstUnit;
+    const slots = fs.entrySlots("/DOCS/N.TXT")!;
     const r = (await call(defs, "stat", ["/mnt/docs/n.txt"])).value as Record<string, unknown>;
     expect(r).toMatchObject({
       path: "/mnt/DOCS/N.TXT",
@@ -175,7 +173,7 @@ describe("stat", () => {
       entryOffset: `0x${slots.start.toString(16)}`,
       entrySlots: `0x${slots.start.toString(16)}-0x${slots.end.toString(16)}`,
       fatEntryOffset: `0x${(g.reservedSectors * g.bytesPerSector + first * 2).toString(16)}`,
-      dataOffset: `0x${clusterByteRange(g, first).start.toString(16)}`,
+      dataOffset: `0x${fs.unitByteRange(first).start.toString(16)}`,
     });
     expect(typeof r.modified).toBe("string");
     expect(typeof r.created).toBe("string");
@@ -224,17 +222,16 @@ describe("df and mount", () => {
 describe("seek, select, exit", () => {
   it("seek jumps the dump to sector, cluster, hex, and decimal addresses", async () => {
     const { host, defs } = setup();
-    const g = host.vol.geometry();
     await call(defs, "seek", ["s:65"]);
     await call(defs, "seek", ["c:3"]);
     await call(defs, "seek", ["0x200"]);
     await call(defs, "seek", ["512"]);
-    expect(host.jumps).toEqual([65 * 512, clusterByteRange(g, 3).start, 512, 512]);
+    expect(host.jumps).toEqual([65 * 512, host.adapter.unitByteRange(3).start, 512, 512]);
   });
 
   it("seek rejects bad and out-of-range addresses", async () => {
     const { host, defs } = setup();
-    expect((await callErr(defs, "seek", ["nope"])).help).toBe(ADDR_HELP);
+    expect((await callErr(defs, "seek", ["nope"])).help).toBe(addrHelp(host.adapter));
     expect((await callErr(defs, "seek", ["0x1000000"])).message).toBe(`0x1000000 is past the end of the disk (${DISK_BYTES} bytes)`);
     expect(host.jumps).toEqual([]);
   });

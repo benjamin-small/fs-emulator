@@ -1,13 +1,13 @@
 import type { FormatOptions, OpRecord, Volume } from "../lib/wasm";
-import { clusterByteRange } from "../core/attribution";
 import { ScenarioCursor } from "../core/scenarioCursor";
+import { DEFAULT_FAMILY } from "../fs";
 import { selection } from "./selection.svelte";
 import { volume } from "./volume.svelte";
 
 export interface StepFocus {
   offset?: number;
   sector?: number;
-  cluster?: number;
+  unit?: number;
   path?: string | null;
   showRemnants?: boolean;
   strings?: boolean;
@@ -43,7 +43,7 @@ export class ScenarioRunner {
 
   /** Begin `s` from a clean default disk, then apply its first step. */
   start(s: Scenario) {
-    volume.format(); // also resets the selection
+    volume.format(DEFAULT_FAMILY); // also resets the selection
     selection.reset();
     this.current = s;
     this.index = -1;
@@ -91,7 +91,7 @@ export class ScenarioRunner {
   }
 
   private applyStep(step: Step) {
-    if (step.format) volume.format(step.format);
+    if (step.format) volume.format(DEFAULT_FAMILY, step.format);
     if (step.action) volume.run(step.action);
     this.applyFocus(step);
   }
@@ -104,8 +104,8 @@ export class ScenarioRunner {
     if (!focus) return;
     if (focus.path !== undefined) selection.select(focus.path);
     if (focus.offset !== undefined) selection.jumpTo(focus.offset);
-    else if (focus.sector !== undefined) selection.jumpTo(focus.sector * volume.geometry.bytesPerSector);
-    else if (focus.cluster !== undefined) selection.jumpTo(clusterByteRange(volume.geometry, focus.cluster).start);
+    else if (focus.sector !== undefined) selection.jumpTo(focus.sector * volume.sectorSize);
+    else if (focus.unit !== undefined) selection.jumpTo(volume.adapter.unitByteRange(focus.unit).start);
     if (focus.showRemnants !== undefined) selection.showRemnants = focus.showRemnants;
     if (focus.strings !== undefined) selection.stringsOn = focus.strings;
   }

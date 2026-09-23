@@ -30,7 +30,7 @@ export const scenario: Scenario = {
     {
       title: "Read it back",
       text: "`cat /mnt/HELLO.TXT` prints the text. `stat /mnt/HELLO.TXT` shows the entry offset, first cluster, chain, and data offset, and `seek c:2` moves the dump to that cluster.",
-      focus: (v) => ({ cluster: v.clusterOwners().find((o) => o.path === FILE)?.firstCluster }),
+      focus: (v) => ({ unit: v.clusterOwners().find((o) => o.path === FILE)?.firstCluster }),
     },
     {
       title: "Make a directory",

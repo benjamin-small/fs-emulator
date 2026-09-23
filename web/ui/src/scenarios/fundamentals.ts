@@ -70,7 +70,7 @@ export const scenario: Scenario = {
     {
       title: "Following the links",
       text: "Reading a file is three hops. The directory slot gives the first cluster: 2. The FAT entry for cluster 2 says whether more follow: it does not. And cluster 2's bytes live at sector 97 + (2 − 2) × 4 = sector 97, because cluster numbering starts at 2 and each cluster is 4 sectors. Only 13 of the cluster's 2,048 bytes are the file; the rest is untouched zeros.",
-      focus: { path: HELLO, cluster: 2 },
+      focus: { path: HELLO, unit: 2 },
     },
     {
       title: "A larger file chains clusters",
@@ -86,7 +86,7 @@ export const scenario: Scenario = {
     {
       title: "Size versus space",
       text: "The directory slot records 4,796 bytes; the chain reserves 3 × 2,048 = 6,144. The 1,348 bytes at the end of cluster 5 belong to the file's allocation but not to its contents: slack. The Files panel shows the size; the ribbon shows the space.",
-      focus: { path: BIGGER, cluster: 5 },
+      focus: { path: BIGGER, unit: 5 },
     },
     {
       title: "Free means zero in the table",

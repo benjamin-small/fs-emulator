@@ -20,7 +20,7 @@ export const scenario: Scenario = {
       text: "Jump into the directory's own cluster and the two dot entries are the first thing you find, before any file it holds.",
       focus: (v) => {
         const owner = v.clusterOwners().find((o) => o.path === DIR);
-        return { cluster: owner?.firstCluster };
+        return { unit: owner?.firstCluster };
       },
     },
     {

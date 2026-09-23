@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Volume } from "../../src/lib/wasm";
+import { adapterFor } from "../../src/fs";
 import { ShellError } from "../../src/shell/errors";
 import { DEVICE_HELP, MOUNT, PATH_HELP, Vfs, basename, canonicalize, joinVolume, promptFor } from "../../src/shell/vfs";
 
@@ -81,17 +82,19 @@ describe("canonicalize over a real volume", () => {
     vol.createFile("/Hello world.txt", new TextEncoder().encode("hi"));
     vol.createDir("/DOCS");
     vol.createFile("/DOCS/N.TXT", new Uint8Array(3));
-    expect(canonicalize(vol, "/hello world.txt")).toBe("/Hello world.txt");
-    expect(canonicalize(vol, "/HELLO WORLD.TXT")).toBe("/Hello world.txt");
-    expect(canonicalize(vol, "/docs/n.txt")).toBe("/DOCS/N.TXT");
-    expect(canonicalize(vol, "/docs")).toBe("/DOCS");
-    expect(canonicalize(vol, "/")).toBe("/");
+    const fs = adapterFor(vol);
+    expect(canonicalize(fs, "/hello world.txt")).toBe("/Hello world.txt");
+    expect(canonicalize(fs, "/HELLO WORLD.TXT")).toBe("/Hello world.txt");
+    expect(canonicalize(fs, "/docs/n.txt")).toBe("/DOCS/N.TXT");
+    expect(canonicalize(fs, "/docs")).toBe("/DOCS");
+    expect(canonicalize(fs, "/")).toBe("/");
   });
   it("keeps the typed spelling for components it cannot find or read", () => {
     const vol = Volume.formatFat16(undefined);
     vol.createDir("/DOCS");
-    expect(canonicalize(vol, "/docs/missing.txt")).toBe("/DOCS/missing.txt");
-    expect(canonicalize(vol, "/nope/deeper")).toBe("/nope/deeper");
+    const fs = adapterFor(vol);
+    expect(canonicalize(fs, "/docs/missing.txt")).toBe("/DOCS/missing.txt");
+    expect(canonicalize(fs, "/nope/deeper")).toBe("/nope/deeper");
   });
 });
 
