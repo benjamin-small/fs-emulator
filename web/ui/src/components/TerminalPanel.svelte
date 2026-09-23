@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick } from "svelte";
+  import { onMount, tick, untrack } from "svelte";
   // browser-terminal renders into our element with no shadow DOM and no stylesheet of
   // its own, so the app loads xterm's CSS. (@xterm/xterm has no `exports` map; the
   // deep path resolves.)
@@ -7,10 +7,13 @@
   // Type-only: the runtime import is the lazy `import()` in ensureCreated, so the
   // library's wasm loads only when someone opens the drawer.
   import type { BrowserTerminal } from "@benjamin-small/browser-terminal";
+  import type { Volume } from "../lib/wasm";
   import { createCommands } from "../shell/commands";
+  import type { ShellHost } from "../shell/host";
   import { createStoreHost } from "../shell/storeHost.svelte";
-  import { Vfs, promptFor } from "../shell/vfs";
+  import { MOUNT, Vfs, promptFor } from "../shell/vfs";
   import { terminal } from "../state/terminal.svelte";
+  import { volume } from "../state/volume.svelte";
 
   let mountEl = $state<HTMLDivElement>();
   let bt: BrowserTerminal | null = null;
@@ -19,6 +22,8 @@
   // One working directory per page (the commands' own rule), owned here so the prompt
   // can be seeded from it as soon as the commands are registered.
   const vfs = new Vfs();
+  // The registered commands' host, kept so the volume watcher below can reach `setPrompt`.
+  let host: ShellHost | null = null;
 
   /** Close the drawer and hand focus to the topbar button, since the element that had
    *  focus (xterm's helper textarea) is about to be hidden. `exit`, the Close button,
@@ -56,11 +61,12 @@
         const applyPrompt = (prefix: string) => (term as { setPrompt?: (p: string) => void }).setPrompt?.(prefix);
         // Commands read live store fields through the host on every call, so registering
         // once is enough (same pattern as browser-terminal's Svelte demo).
-        const host = createStoreHost(close, applyPrompt);
-        for (const { spec, fn } of createCommands(host, vfs)) term.registerCommand(spec, fn);
-        // Seed the prompt with the directory the shell starts in; `cd` and `mkfs` keep it
-        // in step from there.
-        host.setPrompt(promptFor(vfs.cwd));
+        const created = createStoreHost(close, applyPrompt);
+        for (const { spec, fn } of createCommands(created, vfs)) term.registerCommand(spec, fn);
+        // Seed the prompt with the directory the shell starts in; `cd`, `mkfs`, and the
+        // volume watcher below keep it in step from there.
+        created.setPrompt(promptFor(vfs.cwd));
+        host = created;
       } catch (e) {
         // A half-registered instance would still hold the library's one-per-page slot, so
         // every later open would fail to create and sit behind a permanent error banner.
@@ -91,9 +97,27 @@
       .then(() => requestAnimationFrame(focusShell));
   });
 
+  // A format or a load replaces the volume: VolumeStore.adopt swaps `vol` for a brand new
+  // wasm Volume, and the directory the shell was sitting in no longer exists. `mkfs` resets
+  // the cwd itself; the Actions panel's Format, a scenario step's `step.format`, and Load
+  // image do not, so follow the volume here and put the shell back at /mnt with a matching
+  // prompt. `volume.vol` is the only tracked read: `seenVol` and `vfs.cwd` are plain fields,
+  // and the prompt call is untracked so this effect can never depend on what it writes.
+  let seenVol: Volume | null = null;
+  $effect(() => {
+    const vol = volume.vol;
+    if (vol === seenVol) return;
+    const first = seenVol === null;
+    seenVol = vol;
+    if (first) return; // the disk the page started on; nothing to reset
+    vfs.cwd = MOUNT;
+    untrack(() => host?.setPrompt(promptFor(vfs.cwd)));
+  });
+
   function disposeTerminal() {
     bt?.dispose();
     bt = null;
+    host = null;
   }
   // HMR replaces this module: dispose first or the next create() throws "one instance
   // per page". The unmount cleanup covers the non-HMR teardown. dispose() is idempotent.

@@ -14,9 +14,12 @@
 </script>
 
 <div class="scenario-controls">
+  <!-- The visible label names the select on its own; an `aria-label` would override it and
+       leave the accessible name out of step with the words on screen. -->
   <label class="scenario-label" for="scenario-select">Learning scenarios</label>
-  <select id="scenario-select" bind:value={selectedId} aria-label="Learning scenario">
+  <select id="scenario-select" bind:value={selectedId}>
     {#each all as s (s.id)}<option value={s.id}>{s.title}</option>{/each}
   </select>
-  <button onclick={startScenario}>Start</button>
+  <!-- LessonPanel returns focus here when the card closes, so the id is load-bearing. -->
+  <button id="scenario-start" onclick={startScenario}>Start</button>
 </div>

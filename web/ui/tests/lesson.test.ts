@@ -26,14 +26,23 @@ describe("describeFocus", () => {
     expect(describe_({ offset: 0x8200 })).toBe("Offset 0x8200 in root directory");
   });
 
+  it("names one place only, the one the dump actually goes to", () => {
+    // `applyFocus` jumps to offset, else sector, else cluster; the card must say the same.
+    expect(describe_({ offset: 0x200, sector: 5, cluster: 9 })).toBe("Offset 0x200 in FAT 0");
+    expect(describe_({ sector: 5, cluster: 9 })).toBe("Sector 5, FAT 0");
+  });
+
   it("mentions the remnant hatching and the strings overlay", () => {
     expect(describe_({ showRemnants: true })).toBe("Deleted entries are shown hatched");
     expect(describe_({ strings: true })).toBe("Printable strings are highlighted");
   });
 
-  it("joins everything that applies, in a fixed order, capitalising once", () => {
+  it("joins the file, the one place, and the overlays, in a fixed order, capitalising once", () => {
     expect(describe_({ strings: true, sector: 1, path: "/A.TXT", showRemnants: true })).toBe(
       "Files: /A.TXT, its entry, chain, and clusters; sector 1, FAT 0; deleted entries are shown hatched; printable strings are highlighted",
+    );
+    expect(describe_({ path: "/A.TXT", cluster: 2, strings: true })).toBe(
+      "Files: /A.TXT, its entry, chain, and clusters; cluster 2 in the data region (offset 0xc200); printable strings are highlighted",
     );
   });
 

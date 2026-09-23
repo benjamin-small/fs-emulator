@@ -23,8 +23,17 @@
     void tick().then(() => titleEl?.focus());
   });
 
+  /** Finish and Close remove this card while focus is on the button that removed it, which
+   *  would drop focus to the document body. Hand it to the picker's Start button instead —
+   *  the pattern TerminalPanel.close uses for `#terminal-toggle`. The button is in the
+   *  topbar and outlives the card, so focusing it synchronously is safe. */
+  function closeLesson() {
+    scenarios.stop();
+    document.getElementById("scenario-start")?.focus();
+  }
+
   function advance() {
-    if (isLast) scenarios.stop();
+    if (isLast) closeLesson();
     else scenarios.next();
   }
 
@@ -42,15 +51,18 @@
 
 <section class="panel lesson" aria-labelledby="lesson-title">
   <p class="eyebrow">Lesson · step {scenarios.index + 1} of {scenarios.current?.steps.length ?? 0}</p>
-  <h2 id="lesson-title" tabindex="-1" bind:this={titleEl}>{scenarios.current?.title ?? ""}</h2>
-  <h3 class="lesson-step-title">{scenarios.step?.title ?? ""}</h3>
-  <p aria-live="polite">{scenarios.step?.text ?? ""}</p>
+  <!-- The title names the scenario, not the step, so it carries the step's own title and
+       text as its description: the focus move below then announces the new step in one
+       go. A polite live region on the text would race that announcement. -->
+  <h2 id="lesson-title" tabindex="-1" aria-describedby="lesson-step-title lesson-step-text" bind:this={titleEl}>{scenarios.current?.title ?? ""}</h2>
+  <h3 class="lesson-step-title" id="lesson-step-title">{scenarios.step?.title ?? ""}</h3>
+  <p id="lesson-step-text">{scenarios.step?.text ?? ""}</p>
   {#if lookAt}
     <p class="look-at muted">Look at: {lookAt}</p>
   {/if}
   <div class="btn-row">
     <button onclick={() => scenarios.prev()} disabled={scenarios.index <= 0}>Prev</button>
     <button onclick={advance}>{isLast ? "Finish" : "Next"}</button>
-    <button onclick={() => scenarios.stop()}>Close</button>
+    <button onclick={closeLesson}>Close</button>
   </div>
 </section>

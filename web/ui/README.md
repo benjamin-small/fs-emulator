@@ -70,9 +70,10 @@ timeline along the bottom.
   reconstructs the disk as it was after any step and highlights what that
   step changed, in amber, in both the dump and the ribbon. Running a command
   never moves the dump: it highlights the changed bytes and leaves the view
-  where you left it. The dump scrolls only when you navigate — pick a step
-  (a step button, Prev/Next/Play, the slider, or `[`/`]`), click the ribbon
-  or a tree node, or run `seek`.
+  where you left it. Any explicit navigation does move it — a timeline step
+  (a step button, Prev/Next/Play, the slider, `[`/`]`), the ribbon, a tree
+  node or a FAT-map cluster, an inspector, strings, or step-panel link, the
+  dump's own keys, or `seek`.
 - **Learning scenarios** (top bar) — guided walkthroughs: format an empty
   disk, add a small file, add a long-named file (LFN entries), overwrite
   with a larger file (chain grows), delete and see what remains, fill the
@@ -183,6 +184,9 @@ Things to know:
 - `dd` and `cat` refuse more than 1 MiB per invocation: every byte is
   journaled twice in Rust and again in the UI's history.
 - The working directory is one value per page, not per shell session.
+  Anything that replaces the volume — `mkfs`, the Actions panel's Format,
+  starting a learning scenario, or loading a raw image — returns the shell to
+  `/mnt`, since the directory it was in no longer exists.
 - `echo` is the shell's own builtin and behaves as in browser-terminal.
 - The terminal and its wasm load on first open, so the initial page load is
   unchanged.
