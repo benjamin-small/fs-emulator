@@ -95,15 +95,14 @@ minimum region width, so tiny regions can vanish at narrow widths;
 blanket `catch` around `rawDirEntries` on purpose, so a corrupt volume falls
 back to "no range" or "skip this entry" instead of throwing.
 
-**`web/ui` terminal** (decided 2026-09-22): no `>`, `>>`, or `<` redirection,
-only pipes into `write` and `dd --of=`; the working directory is one value per
-page, not per shell session (commands cannot learn their session from `ctx`);
+**`web/ui` terminal** (decided 2026-09-22): the working directory is one
+value per page, not per shell session, because `setPrompt` is engine-wide and
+two sessions could not show different directories in their prompts anyway;
 reads while the timeline is rewound show the latest state and warn (an
-`--at-step` flag reading the cached image is the follow-up); `dd` and `cat`
-are capped at 1 MiB per invocation in the shell, not in Rust; no `mv`,
-true append, or truncate until the core has them; the terminal's colors and
-font are applied through `!important` overrides on xterm's DOM because
-`CreateOptions` has no theme option; the library and its wasm load lazily on
+`--at-step` flag reading the cached image is the follow-up), except through a
+`<` redirect, which has no channel to warn on; `dd` and `cat` are capped at
+1 MiB per invocation in the shell, not in Rust; no `mv`, true append, or
+truncate until the core has them; the library and its wasm load lazily on
 first open; `Escape` closes the drawer only from its bar, since xterm cancels
 the key inside the terminal; no tab completion of `/mnt` paths. Deferred:
 under 760px the drawer track is capped at 40vh while the store's height can
@@ -119,37 +118,45 @@ it; `select` warns before validating its target; `flagGiven` and the range
 message are repeated between `commands.ts` and `dd.ts`; `commands.ts` should
 get a second module before the next command group; the loading and error
 notes in the drawer are not live regions; `TerminalStore` is only exercised
-manually; the terminal's font override is a broad `!important` selector; and
-the test harness's `callErr` swallows harness errors.
+manually; and the test harness's `callErr` swallows harness errors.
 
 ### browser-terminal follow-ups
 
-Changes in `@benjamin-small/browser-terminal` that would let the explorer's
-shell drop its workarounds, in order of value:
+All seven shipped in `@benjamin-small/browser-terminal` 0.3.0, and the
+explorer adopted them on 2026-09-22. Each workaround they replaced is gone:
 
-1. A prompt prefix (`setPrompt`), so the prompt can show the working
-   directory: https://github.com/benjamin-small/browser-terminal/issues/12.
-   The explorer already calls `host.setPrompt(promptFor(vfs.cwd))` on startup
-   and after every `cd` and `mkfs`; under 0.2.0 the call is a no-op, and the
-   pin moves to 0.3.0 when it lands.
-2. `>`, `>>`, and `<` redirection with a host-pluggable file hook (the parser
-   already lexes them and rejects them as reserved); the explorer would
-   register its `/mnt` and `/dev` resolver and the same commands gain real
-   redirection: https://github.com/benjamin-small/browser-terminal/issues/13.
+1. A prompt prefix (`setPrompt`), so the prompt shows the working directory:
+   https://github.com/benjamin-small/browser-terminal/issues/12. The explorer
+   was already calling `host.setPrompt(promptFor(vfs.cwd))` on startup and
+   after every `cd` and `mkfs`; the call reaches the terminal now instead of
+   an optional-chained no-op.
+2. `>`, `>>`, and `<` redirection with a host-pluggable file hook:
+   https://github.com/benjamin-small/browser-terminal/issues/13. The explorer
+   registers `src/shell/redirect.ts` over the same `/mnt` and `/dev` resolver
+   its commands use, so a redirect is an ordinary journaled write.
 3. `key=value` barewords, so `dd if=/dev/hda count=1` lexes without quotes:
-   https://github.com/benjamin-small/browser-terminal/issues/14.
+   https://github.com/benjamin-small/browser-terminal/issues/14. `parseDd`
+   already accepted that shape; the docs now lead with it.
 4. A bytes `Value`, replacing the `{ bytes: "<hex>", length }` blob record:
-   https://github.com/benjamin-small/browser-terminal/issues/15.
-5. A session or pane id on `ctx`, so each shell can keep its own working
+   https://github.com/benjamin-small/browser-terminal/issues/15. `cat
+   --bytes`, `dd` and `xxd` carry `Uint8Array` now, and the terminal shows it
+   as `<N bytes>`.
+5. A session or pane id on `ctx`, so each shell could keep its own working
    directory: https://github.com/benjamin-small/browser-terminal/issues/16.
-6. `CreateOptions.terminal` (theme, font family, font size), replacing the
-   `!important` CSS overrides:
+   `ctx.session` and `ctx.pane` are available, but the working directory
+   stays one per page: `setPrompt` is engine-wide, so per-session directories
+   could not be shown in their prompts. The ids are there for whenever that
+   changes.
+6. `CreateOptions.terminal` (theme, font family, font size) and `setTheme`,
+   replacing the `!important` CSS overrides:
    https://github.com/benjamin-small/browser-terminal/issues/17.
+   `src/core/terminalTheme.ts` maps the design tokens onto an `ITheme`, and
+   the panel re-pushes it when `prefers-color-scheme` flips.
 7. A public `focus()`, replacing the `.xterm-helper-textarea` query:
    https://github.com/benjamin-small/browser-terminal/issues/18.
 
-Until then the explorer pins the package exactly (0.2.0) so none of these
-workarounds break on a minor release.
+The explorer pins the package exactly (0.3.0) so a minor release cannot move
+any of this underneath it.
 
 ## Adding a filesystem: checklist
 
