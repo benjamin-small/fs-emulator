@@ -50,7 +50,7 @@
   }
 </script>
 <svelte:window onkeydown={onKeydown} />
-<div class="app" style:--term-h="{terminal.height}px">
+<div class="app" class:term-side={terminal.placement === "side"} style:--term-h="{terminal.height}px" style:--term-w="{terminal.width}px">
   <header class="topbar">
     <h1>FAT explorer</h1>
     <button

@@ -17,6 +17,12 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
    (set on .app by App.svelte), and a hidden drawer generates no grid item, so it adds
    neither a track nor a gap. */
 .app { display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; grid-auto-rows: var(--term-h, 220px); height: 100vh; gap: 8px; padding: 8px; }
+/* Wide viewports (placementFor in src/core/terminalPlacement.ts, mirrored by App.svelte as
+   `.term-side`): the terminal is a column down the right side spanning every row, sized by
+   `--term-w`. It is placed explicitly in column 2, so the implicit column exists only while
+   the drawer is rendered; hidden, it adds neither a track nor a gap. */
+.app.term-side { grid-template-columns: minmax(0, 1fr); grid-auto-columns: var(--term-w, 500px); }
+.app.term-side > .terminal-drawer { grid-column: 2; grid-row: 1 / -1; position: relative; }
 .topbar { display: flex; align-items: center; gap: 16px; }
 .topbar h1 { font: 500 18px var(--font-display); margin: 0; }
 /* Theme switch: a button with role="switch"; the track colour is the checked (dark) state. */
@@ -178,6 +184,11 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .terminal-drawer:focus-within { border-color: var(--focus); }
 .term-bar { display: flex; align-items: center; gap: 8px; padding: 4px 10px; border-bottom: 1px solid var(--hairline); cursor: row-resize; user-select: none; touch-action: none; font: 500 12px var(--font-display); }
 .term-bar button { margin-left: auto; cursor: pointer; }
+/* In the side column the bar is just a bar; the left edge is the handle. The grip sits
+   inside the border because the drawer clips overflow. */
+.terminal-drawer.side .term-bar { cursor: default; }
+.term-grip { position: absolute; top: 0; bottom: 0; left: 0; width: 6px; cursor: col-resize; touch-action: none; z-index: 1; }
+.term-grip:hover, .term-grip.dragging { background: color-mix(in srgb, var(--focus) 40%, transparent); }
 .term-note { margin: 4px 10px; font-size: 12px; }
 .terminal-drawer .err { color: var(--diff-ink); }
 .terminal-mount { flex: 1; min-height: 0; position: relative; }

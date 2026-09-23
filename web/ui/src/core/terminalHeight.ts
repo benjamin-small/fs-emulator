@@ -25,9 +25,15 @@ export function clampHeight(px: number, innerHeight: number): number {
  * chosen on a taller screen comes back when there is room for it again.
  */
 export function parseStoredHeight(raw: string | null): number {
-  if (raw === null) return TERM_DEFAULT_PX;
+  return parseStoredPx(raw, TERM_DEFAULT_PX);
+}
+
+/** The parse behind `parseStoredHeight` and the column width's `parseStoredWidth`
+ *  (src/core/terminalPlacement.ts): one rule for what counts as a stored size. */
+export function parseStoredPx(raw: string | null, fallback: number): number {
+  if (raw === null) return fallback;
   const trimmed = raw.trim();
-  if (trimmed === "") return TERM_DEFAULT_PX;
+  if (trimmed === "") return fallback;
   const n = Number(trimmed);
-  return Number.isFinite(n) ? n : TERM_DEFAULT_PX;
+  return Number.isFinite(n) ? n : fallback;
 }

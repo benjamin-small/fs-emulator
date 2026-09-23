@@ -100,14 +100,16 @@ timeline along the bottom.
 ## Terminal
 
 The **Terminal** button in the top bar (or the backtick key, from anywhere
-that is not a text field) opens a drawer along the bottom running a shell
+that is not a text field) opens the terminal, running a shell
 from `@benjamin-small/browser-terminal`, pinned at 0.3.0. The volume is
 mounted at `/mnt` and the raw disk is `/dev/hda`; `/dev/zero` and `/dev/null`
 exist too. Every write is an ordinary journaled operation, so it lands in
 the timeline, the dump, the ribbon, and the tree exactly like a form action,
-and it rewinds the same way. The drawer bar can be dragged to resize
-(120px to 60% of the window; the height persists), `Escape` on the bar,
-the Close button, or `exit` close it, and `help` or `<command> --help`
+and it rewinds the same way. On viewports 1500px and wider the terminal is
+a column down the right side, resized by dragging its left edge (320px to
+half the window); narrower viewports get a drawer along the bottom, resized
+by dragging its bar (120px to 60% of the window). Both sizes persist.
+`Escape` on the bar, the Close button, or `exit` close it, and `help` or `<command> --help`
 describe every command.
 
 The prompt shows the working directory: the shell hands it to the terminal on
@@ -232,7 +234,7 @@ it. `docs/ROADMAP.md` has the checklist.
 | `Home` / `End` | Jump to the start / end of the disk |
 | `g` | Jump to an offset, sector, or cluster (dump focused) |
 | `s` | Toggle string highlighting (dump focused) |
-| `` ` `` | Toggle the terminal drawer |
+| `` ` `` | Toggle the terminal |
 
 All shortcuts except the dump's own (which need the dump focused) work from
 anywhere that isn't a text field, so typing a path or file content in
