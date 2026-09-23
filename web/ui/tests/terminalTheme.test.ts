@@ -68,7 +68,26 @@ describe("themeFromTokens", () => {
     expect(theme).toEqual({ background: "#ffffff", foreground: "#111827" });
   });
 
-  it("names the tokens it reads so the CSS and the helper cannot drift apart", () => {
+  it("keeps the cursor but omits the selection when --focus is not 6-digit hex", () => {
+    // `#abc`, `rgb(...)`, `color-mix(...)` and a named colour are all valid CSS that xterm
+    // would choke on with `59` glued to the end; the cursor still takes them as they are.
+    for (const focus of ["#abc", "rgb(55, 138, 221)", "color-mix(in srgb, blue 50%, white)", "dodgerblue", "#378addff"]) {
+      const { theme } = themeFromTokens(style({ ...light, "--focus": focus }));
+      expect(theme.cursor, focus).toBe(focus);
+      expect(theme.cursorAccent, focus).toBe("#ffffff");
+      expect("selectionBackground" in theme, focus).toBe(false);
+    }
+  });
+
+  it("accepts uppercase 6-digit hex for the selection", () => {
+    const { theme } = themeFromTokens(style({ ...light, "--focus": "#378ADD" }));
+    expect(theme.selectionBackground).toBe("#378ADD59");
+  });
+
+  it("names the tokens it reads, and reads exactly those", () => {
     expect(THEME_TOKENS).toEqual(["--panel", "--ink", "--focus", "--font-mono"]);
+    const asked: string[] = [];
+    themeFromTokens({ getPropertyValue: (name) => { asked.push(name); return ""; } });
+    expect(asked).toEqual([...THEME_TOKENS]);
   });
 });

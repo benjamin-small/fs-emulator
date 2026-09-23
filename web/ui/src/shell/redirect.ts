@@ -1,11 +1,9 @@
-import type { RedirectHandler, Value } from "./types";
+import type { RedirectContext, RedirectHandler, Value } from "./types";
 import { decodeText, toBytes } from "./bytes";
 import { RAW_DEVICE_HELP, readVolumeFile, writeVolumeFile } from "./commands";
 import { ShellError } from "./errors";
 import type { ShellHost } from "./host";
 import { resolved, type Vfs } from "./vfs";
-
-export type { RedirectContext, RedirectHandler } from "./types";
 
 /** Where `>` sends someone who aimed at `/dev/hda`: the tool that can place bytes by address. */
 export const RAW_WRITE_HELP = "place the bytes at an address with: dd --of=/dev/hda --bs=512 --seek=<blocks>";
@@ -31,7 +29,7 @@ export function createRedirectHandler(host: ShellHost, vfs: Vfs): RedirectHandle
       switch (r.kind) {
         case "root":
         case "dev":
-          throw new ShellError(`${display}: Is a directory`, { code: "IsADirectory", help: `read a file instead, e.g. cat ${display === "/" ? "/mnt/A.TXT" : "/dev/null"}` });
+          throw new ShellError(`${display}: Is a directory`, { code: "IsADirectory", help: "read a file instead, e.g. cat /mnt/A.TXT" });
         case "raw":
         case "zero":
           throw new ShellError(`${display}: is a raw device`, { help: RAW_DEVICE_HELP });
@@ -46,7 +44,7 @@ export function createRedirectHandler(host: ShellHost, vfs: Vfs): RedirectHandle
     },
 
     /** `> target` / `>> target`: the pipeline's collected value, already complete. */
-    write(target: string, value: Value, ctx: { append: boolean }): void {
+    write(target: string, value: Value, ctx: RedirectContext & { append: boolean }): void {
       const { r, display } = resolved(vfs, target);
       switch (r.kind) {
         case "root":

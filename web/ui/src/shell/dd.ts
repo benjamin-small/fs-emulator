@@ -40,7 +40,7 @@ const isDdKey = (k: string): k is DdKey => (DD_KEYS as readonly string[]).includ
 export function parseDd(flags: Record<string, Value>, operands: Value[]): DdOpts {
   const given = new Map<DdKey, Value>();
   const put = (key: DdKey, value: Value) => {
-    if (given.has(key)) throw new ShellError(`'${key}' given twice`, { help: "give each of if/of/bs/count/skip/seek once, as a flag or a quoted operand" });
+    if (given.has(key)) throw new ShellError(`'${key}' given twice`, { help: "give each of if/of/bs/count/skip/seek once, as a flag or an operand" });
     given.set(key, value);
   };
   for (const key of DD_KEYS) if (key in flags) put(key, flags[key]);

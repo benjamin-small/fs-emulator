@@ -3,7 +3,7 @@ import { BYTES_HELP } from "../../src/shell/bytes";
 import { RAW_DEVICE_HELP } from "../../src/shell/commands";
 import { DD_MAX_BYTES } from "../../src/shell/dd";
 import { CORRUPT_HELP } from "../../src/shell/errors";
-import { createRedirectHandler } from "../../src/shell/redirect";
+import { RAW_WRITE_HELP, createRedirectHandler } from "../../src/shell/redirect";
 import type { RedirectContext, Value } from "../../src/shell/types";
 import { Vfs } from "../../src/shell/vfs";
 import { makeHost } from "./helpers";
@@ -93,9 +93,7 @@ describe("write (> and >>)", () => {
     for (const target of ["/dev/hda", "/dev/zero"]) {
       const e = await failed(() => hook.write(target, "x", ctx()));
       expect(e.message).toBe(`${target}: cannot redirect into a raw device`);
-      // `--seek` is in blocks, so the help names the block size alongside it.
-      expect(e.help).toContain("dd --of=/dev/hda");
-      expect(e.help).toContain("--seek=");
+      expect(e.help).toBe(RAW_WRITE_HELP);
     }
     expect(host.history).toEqual([]);
   });
@@ -162,10 +160,17 @@ describe("read (<)", () => {
     host.run((v) => v.createDir("/DOCS"));
     for (const target of ["/", "/dev", "/mnt", "/mnt/DOCS"]) {
       const e = await failed(() => hook.read(target, ctx()));
-      expect(e.message).toMatch(/: Is a directory$/);
-      expect(e.code).toBe("IsADirectory");
-      expect(e.help).toContain("cat ");
+      expect(e.message, target).toMatch(/: Is a directory$/);
+      expect(e.code, target).toBe("IsADirectory");
+      expect(e.help, target).toContain("cat ");
     }
+    // The two virtual directories are the hook's own arm: it names a real file under
+    // /mnt, never `cat /dev/null`, which would read nothing and look like it worked.
+    for (const target of ["/", "/dev"]) {
+      expect((await failed(() => hook.read(target, ctx()))).help).toBe("read a file instead, e.g. cat /mnt/A.TXT");
+    }
+    // A directory on the volume is `readVolumeFile`'s arm, shared with `cat`.
+    expect((await failed(() => hook.read("/mnt/DOCS", ctx()))).help).toBe("list it with: ls /mnt/DOCS, then cat a file inside it");
   });
 
   it("refuses a file over the 1 MiB cap, before reading it", async () => {
