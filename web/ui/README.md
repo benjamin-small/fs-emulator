@@ -121,10 +121,10 @@ the pinned 0.2.0 the call is a no-op and the prompt is the bare `❯`.
 |---|---|
 | `ls [path] [-l]` / `dir` | List a directory as a table of name, type, size (`-l` adds the modified time); entries keep their on-disk order. `ls /` shows `dev` and `mnt`; `ls /dev` shows `hda`, `zero`, `null` |
 | `cd [path]`, `pwd` | Change or print the working directory; `.` and `..` resolve client-side, `cd` alone returns to `/mnt`, and the stored path takes the on-disk case |
-| `cat <path> [--bytes]` | Print a file as UTF-8 text, or as a blob for pipes; refuses files over 1 MiB either way (use `dd`) and warns on binary content |
+| `cat <path> [--bytes]` | Print a file as UTF-8 text, or as raw bytes for pipes; refuses files over 1 MiB either way (use `dd`) and warns on binary content |
 | `write <path> [--append] [--at <addr>]` | Write the piped input, creating or overwriting the file (`echo hi \| write /mnt/A.TXT`). `--append` reads, concatenates, and rewrites; `write /dev/hda --at <addr>` patches the disk |
 | `dd --if=<src> --of=<dst> --bs=N --count=N --skip=N --seek=N` | Copy bytes between files and the raw disk; quoted `'if=/dev/hda'` operands also work; at most 1 MiB per invocation; `/dev/zero` needs `--count` |
-| `xxd [path] [--offset --len --cols]` / `hexdump` | Hex dump of a path, a piped blob, or piped text; on `/dev/hda` one sector at absolute addresses that match the dump |
+| `xxd [path] [--offset --len --cols]` / `hexdump` | Hex dump of a path, piped bytes, or piped text; on `/dev/hda` one sector at absolute addresses that match the dump |
 | `mkdir`, `rmdir`, `rm`, `touch`, `cp` | The usual; `cp` into an existing directory keeps the source name |
 | `stat <path>` | Name, type, size, timestamps, first cluster, chain, entry offset, FAT entry offset, data offset; `stat /dev/hda` reports the sector size and count |
 | `df`, `mount` | Cluster usage; device, mount point, type, and `ok` or `corrupt` |
@@ -173,9 +173,10 @@ Things to know:
   `write` or `dd --of=` instead.
 - `=` is not a bareword character, so write `dd --if=/dev/hda` (the
   documented form) or quote the classic spelling: `dd 'if=/dev/hda'`.
-- Strings cross pipes as UTF-8 text. Binary data crosses as a blob record
-  `{ bytes: "<hex>", length }`; `cat --bytes`, `dd`, `xxd`, and `write` all
-  speak it. `echo a b` produces a list, which `write` joins with one space.
+- Strings cross pipes as UTF-8 text; binary data crosses as raw bytes, which
+  the terminal shows as `<N bytes>`, `length` counts, and `to json` encodes as
+  hex. `cat --bytes`, `dd`, `xxd`, and `write` all speak them. `echo a b`
+  produces a list, which `write` joins with one space.
 - A command with nothing piped into it receives an empty list from
   browser-terminal, not `null`; the shell treats both as "no input" (`write`,
   `dd`, and `xxd` all check this the same way).

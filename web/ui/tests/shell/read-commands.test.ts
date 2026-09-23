@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import { clusterByteRange } from "../../src/core/attribution";
 import { findEntrySlots } from "../../src/core/direntry";
 import { ADDR_HELP } from "../../src/shell/addr";
-import { fromBytes } from "../../src/shell/bytes";
 import { createCommands, rewoundWarning } from "../../src/shell/commands";
 import { DD_MAX_BYTES } from "../../src/shell/dd";
 import { Vfs } from "../../src/shell/vfs";
@@ -113,14 +112,18 @@ describe("cd and pwd", () => {
 });
 
 describe("cat", () => {
-  it("prints UTF-8 text, or a blob with --bytes", async () => {
+  it("prints UTF-8 text, or the raw bytes with --bytes", async () => {
     const { host, defs } = setup();
     const r = await call(defs, "cat", ["/mnt/hello world.txt"]);
     expect(r.value).toBe("hello from the shell\n");
     expect(r.err).toEqual([]);
-    const blob = await call(defs, "cat", { positionals: ["/mnt/Hello world.txt"], flags: { bytes: true } });
-    expect(blob.value).toEqual(fromBytes(host.vol.readFile("/Hello world.txt")));
+    const bytes = await call(defs, "cat", { positionals: ["/mnt/Hello world.txt"], flags: { bytes: true } });
+    expect(bytes.value).toBeInstanceOf(Uint8Array);
+    expect(bytes.value).toEqual(host.vol.readFile("/Hello world.txt"));
     expect((await call(defs, "cat", ["/dev/null"])).value).toBe("");
+    // /dev/null with --bytes is an empty buffer, not the empty string, so a pipe into
+    // `xxd` or a redirect still sees bytes.
+    expect((await call(defs, "cat", { positionals: ["/dev/null"], flags: { bytes: true } })).value).toEqual(new Uint8Array(0));
   });
 
   it("warns once about binary content and refuses files over DD_MAX_BYTES", async () => {
@@ -134,9 +137,9 @@ describe("cat", () => {
     expect(e.message).toBe(`/mnt/BIG.BIN: file is ${DD_MAX_BYTES + 1} bytes; cat prints at most ${DD_MAX_BYTES} bytes`);
     expect(e.help).toContain("dd --if=/mnt/BIG.BIN");
     // --bytes is capped the same way: the size comes from stat, so nothing is read.
-    const asBlob = await callErr(defs, "cat", { positionals: ["/mnt/BIG.BIN"], flags: { bytes: true } });
-    expect(asBlob.message).toBe(e.message);
-    expect(asBlob.help).toBe(e.help);
+    const asBytes = await callErr(defs, "cat", { positionals: ["/mnt/BIG.BIN"], flags: { bytes: true } });
+    expect(asBytes.message).toBe(e.message);
+    expect(asBytes.help).toBe(e.help);
     expect(host.history.length).toBe(steps);
   });
 

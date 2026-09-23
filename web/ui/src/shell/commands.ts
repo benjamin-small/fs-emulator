@@ -4,7 +4,7 @@ import { clusterByteRange } from "../core/attribution";
 import { findEntrySlots } from "../core/direntry";
 import { buildChain } from "../core/fatchain";
 import { ADDR_HELP, SIZE_HELP, parseAddr, parseSize } from "./addr";
-import { decodeText, fromBytes, hasInput, toBytes } from "./bytes";
+import { decodeText, hasInput, toBytes } from "./bytes";
 import { DD_MAX_BYTES, parseDd, runDd } from "./dd";
 import { CORRUPT_HELP, ShellError, fsCall, wrapFs } from "./errors";
 import { atLatest, corruptionOf, selectPath, type ShellHost } from "./host";
@@ -169,15 +169,15 @@ export function readCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
   const cat: CommandDef = {
     spec: {
       name: "cat",
-      summary: "Print a file (--bytes for a blob)",
+      summary: "Print a file (--bytes for raw bytes)",
       required: [P("path", "a file under /mnt, or /dev/null")],
-      flags: [F("bytes", "return a { bytes, length } blob instead of text")],
+      flags: [F("bytes", "return the raw bytes instead of decoding them as text")],
     },
     fn: (args, _input, ctx) => {
       warnIfRewound(host, ctx);
       const r = vfs.resolve(reqStr(args, 0, "path"));
       const display = vfs.display(r);
-      const asBlob = flagOn(args, "bytes");
+      const asBytes = flagOn(args, "bytes");
       switch (r.kind) {
         case "root":
         case "dev":
@@ -186,10 +186,10 @@ export function readCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
         case "zero":
           throw new ShellError(`${display}: is a raw device`, { help: RAW_DEVICE_HELP });
         case "null":
-          return asBlob ? fromBytes(new Uint8Array(0)) : "";
+          return asBytes ? new Uint8Array(0) : "";
         case "volume": {
-          // The size comes from `stat`, so the cap is checked before the file is read and it
-          // covers `--bytes` too: a blob is twice the bytes again as hex.
+          // The size comes from `stat`, so the cap is checked before the file is read, and it
+          // covers `--bytes` too: both forms hold the whole file in memory.
           let info: EntryInfo;
           try {
             info = host.vol.stat(r.path);
@@ -207,7 +207,7 @@ export function readCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
           } catch (e) {
             throw wrapFs(display, e);
           }
-          if (asBlob) return fromBytes(bytes);
+          if (asBytes) return bytes;
           if (looksBinary(bytes)) ctx.err(`binary file; try cat --bytes ${display} | xxd`);
           return decodeText(bytes);
         }
@@ -611,7 +611,7 @@ function ddXxdCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
       rest: { name: "operand", shape: "str", desc: "quoted classic operands: 'if=/dev/hda' 'bs=512' 'count=1'" },
       flags: [
         { long: "if", shape: "str", desc: "source path (default: the piped input)" },
-        { long: "of", shape: "str", desc: "destination path (default: return the bytes as a blob)" },
+        { long: "of", shape: "str", desc: "destination path (default: return the bytes down the pipe)" },
         { long: "bs", shape: "str", desc: "block size, default 512 (k and M suffixes)" },
         { long: "count", shape: "str", desc: "blocks to copy (default: to the end of the source)" },
         { long: "skip", shape: "str", desc: "blocks to skip at the start of the source" },

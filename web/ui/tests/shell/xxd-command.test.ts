@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import { createCommands } from "../../src/shell/commands";
 import { Vfs } from "../../src/shell/vfs";
 import { formatXxd } from "../../src/shell/xxd";
-import type { BytesBlob } from "../../src/shell/bytes";
 import { call, callErr, makeHost } from "./helpers";
 
 function setup() {
@@ -45,13 +44,14 @@ describe("xxd command", () => {
     expect(lines(tail.value)).toHaveLength(1); // clipped at the end of the disk
   });
 
-  it("dumps a volume file, a piped blob, and a piped string from address 0", async () => {
+  it("dumps a volume file, piped bytes, and a piped string from address 0", async () => {
     const { host, defs } = setup();
     await call(defs, "write", { positionals: ["/mnt/a.txt"] }, "Hello, FAT16!");
     const expected = formatXxd(host.vol.readFile("/a.txt"), 0, 16);
     expect((await call(defs, "xxd", { positionals: ["/mnt/a.txt"] })).value).toBe(expected);
-    const blob = (await call(defs, "dd", { flags: { if: "/mnt/a.txt" } })).value as BytesBlob;
-    expect((await call(defs, "xxd", {}, blob)).value).toBe(expected);
+    const piped = (await call(defs, "dd", { flags: { if: "/mnt/a.txt" } })).value as Uint8Array;
+    expect(piped).toBeInstanceOf(Uint8Array);
+    expect((await call(defs, "xxd", {}, piped)).value).toBe(expected);
     expect((await call(defs, "xxd", {}, "Hello, FAT16!")).value).toBe(expected);
     expect(lines((await call(defs, "xxd", { positionals: ["/mnt/a.txt"], flags: { cols: 8 } })).value)).toHaveLength(2);
     expect((await call(defs, "xxd", { positionals: ["/mnt/a.txt"], flags: { offset: "7", len: "5" } })).value)

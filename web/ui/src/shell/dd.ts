@@ -1,14 +1,14 @@
 import type { CommandCtx, Value } from "./types";
 import { SIZE_HELP, parseSize } from "./addr";
-import { fromBytes, hasInput, toBytes, type BytesBlob } from "./bytes";
+import { hasInput, toBytes } from "./bytes";
 import { ShellError, fsCall, wrapFs } from "./errors";
 import { selectPath, type ShellHost } from "./host";
 import type { Vfs } from "./vfs";
 
 /**
  * Per-invocation cap on the bytes `dd` reads (and therefore writes). Every journaled byte is
- * stored twice in Rust (before/after) and again in two histories, and a blob is 2x as hex,
- * so the shell caps here rather than in the core. `cat` without `--bytes` uses the same limit.
+ * stored twice in Rust (before/after) and again in two histories, so the shell caps here
+ * rather than in the core. `cat` without `--bytes` uses the same limit.
  */
 export const DD_MAX_BYTES = 1 << 20;
 
@@ -162,15 +162,15 @@ function writeVolumeFile(host: ShellHost, path: string, display: string, off: nu
 /**
  * Run one parsed `dd`. Reads the source window (capped at `DD_MAX_BYTES` before anything is
  * written), copies it to `--of` (`/dev/hda` via `writeRaw`, a volume file via overlay and
- * rewrite, `/dev/null` discards) or returns it as a blob when `--of` is absent, then logs
- * `records in`, `records out` and `bytes copied` like the real tool.
+ * rewrite, `/dev/null` discards) or returns the bytes themselves when `--of` is absent,
+ * then logs `records in`, `records out` and `bytes copied` like the real tool.
  */
-export function runDd(host: ShellHost, vfs: Vfs, opts: DdOpts, input: Value, ctx: CommandCtx): BytesBlob | undefined {
+export function runDd(host: ShellHost, vfs: Vfs, opts: DdOpts, input: Value, ctx: CommandCtx): Uint8Array | undefined {
   const data = readSource(host, vfs, opts, input);
   const off = opts.seek * opts.bs;
-  let result: BytesBlob | undefined;
+  let result: Uint8Array | undefined;
   if (opts.of === undefined) {
-    result = fromBytes(data);
+    result = data;
   } else {
     const dst = vfs.resolve(opts.of);
     const display = vfs.display(dst);

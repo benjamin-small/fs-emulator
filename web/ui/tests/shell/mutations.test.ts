@@ -58,6 +58,17 @@ describe("write", () => {
     expect(text(host.vol.readFile("/w.txt"))).toBe("hello world");
   });
 
+  it("writes piped bytes verbatim, including a NUL and a byte no UTF-8 decoder would keep", async () => {
+    const { host, defs } = setup();
+    const bytes = new Uint8Array([0x00, 0xff, 0x41, 0x80]);
+    const r = await call(defs, "write", { positionals: ["/mnt/raw.bin"] }, bytes);
+    expect(r.log).toEqual(["4 bytes -> /mnt/raw.bin"]);
+    expect(Array.from(host.vol.readFile("/RAW.BIN"))).toEqual([0x00, 0xff, 0x41, 0x80]);
+    // And --append concatenates buffers the same way it concatenates text.
+    await call(defs, "write", { positionals: ["/mnt/raw.bin"], flags: { append: true } }, new Uint8Array([0x01]));
+    expect(Array.from(host.vol.readFile("/RAW.BIN"))).toEqual([0x00, 0xff, 0x41, 0x80, 0x01]);
+  });
+
   it("writes raw bytes to /dev/hda at --at and does not select anything", async () => {
     const { host, defs } = setup();
     const r = await call(defs, "write", { positionals: ["/dev/hda"], flags: { at: "s:65" } }, "RAW");
