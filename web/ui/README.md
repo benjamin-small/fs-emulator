@@ -3,7 +3,7 @@
 A Svelte 5 (runes) app for exploring a FAT16 volume byte by byte: a
 whole-disk hex dump with ASCII and a strings overlay, a disk ribbon and FAT
 cluster map for seeing where files land, an operation timeline with
-byte-diff replay, eight guided scenarios, and a terminal drawer that mounts
+byte-diff replay, nine guided scenarios, and a terminal drawer that mounts
 the volume at `/mnt` and the raw disk at `/dev/hda`. It runs entirely in the
 browser against the `fs-emulator-wasm` package — nothing is sent over the
 network, and there is no server component. The build from `main` is
@@ -77,7 +77,10 @@ operation timeline along the bottom.
   (a step button, Prev/Next/Play, the slider, `[`/`]`), the ribbon, a tree
   node or a FAT-map cluster, an inspector, strings, or step-panel link, the
   dump's own keys, or `seek`.
-- **Learning scenarios** (top bar) — guided walkthroughs: format an empty
+- **Learning scenarios** (top bar) — guided walkthroughs: the fundamentals
+  (a tour of the regions, the allocation table, the root directory, and how
+  a file's slot, chain, and clusters link together, on a disk that already
+  holds a small file and a three-cluster one), format an empty
   disk, add a small file, add a long-named file (LFN entries), overwrite
   with a larger file (chain grows), delete and see what remains, fill the
   disk, make a directory, and work from the shell (the same operations typed
