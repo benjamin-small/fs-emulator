@@ -17,7 +17,7 @@ const FAT16_IMPORTERS = (rel: string) => rel === "fs/index.ts" || rel === "fs/pa
 
 const FAT_ONLY_CALL = /\.(geometry|fatEntries|clusterOwners|annotateSectorWith|rawDirEntries|bootSector|clusterChain|formatFat16)\s*\(/g;
 const FAT_ONLY_TYPE = /\b(ClusterOwner|FatEntry|Geometry|RawEntry|BootSector|FormatOptions)\b/;
-const WASM_IMPORT = /(?:import\s+(?:type\s+)?|export\s+type\s+)\{([^}]*)\}\s+from\s+["'](?:[^"']*lib\/wasm|fs-emulator-wasm)["']/g;
+const WASM_IMPORT = /(?:import\s+(?:type\s+)?|export\s+type\s+)\{([^}]*)\}\s+from\s+["']([^"']*lib\/wasm|fs-emulator-wasm)["']/g;
 const FAT16_IMPORT = /from\s+["'](?:\.{1,2}\/)+(?:fs\/)?fat16(?:\/[^"']*)?["']/g;
 
 /** Every .ts and .svelte file under `dir`, as posix paths relative to src/, sorted. */
@@ -38,7 +38,8 @@ export function violations(rel: string, text: string): string[] {
     for (const m of text.matchAll(FAT_ONLY_CALL)) found.push(`${rel}: calls .${m[1]}( (FAT-only wasm method; go through the adapter)`);
     for (const m of text.matchAll(WASM_IMPORT)) {
       const t = FAT_ONLY_TYPE.exec(m[1]);
-      if (t) found.push(`${rel}: imports ${t[1]} from lib/wasm (FAT-only wasm type; use the fs/adapter types)`);
+      const source = m[2].endsWith("lib/wasm") ? "lib/wasm" : m[2];
+      if (t) found.push(`${rel}: imports ${t[1]} from ${source} (FAT-only wasm type; use the fs/adapter types)`);
     }
   }
   if (!rel.startsWith("fs/fat16/") && !FAT16_IMPORTERS(rel)) {
@@ -69,7 +70,7 @@ describe("the adapter boundary", () => {
       "shell/host.ts: imports Geometry from lib/wasm (FAT-only wasm type; use the fs/adapter types)",
     ]);
     expect(violations("shell/host.ts", 'import type { FatEntry } from "fs-emulator-wasm";')).toEqual([
-      "shell/host.ts: imports FatEntry from lib/wasm (FAT-only wasm type; use the fs/adapter types)",
+      "shell/host.ts: imports FatEntry from fs-emulator-wasm (FAT-only wasm type; use the fs/adapter types)",
     ]);
     expect(violations("core/tree.ts", 'import type {\n  ClusterOwner,\n  Volume,\n} from "../lib/wasm";')).toHaveLength(1);
     expect(violations("components/Inspector.svelte", 'import { asFat16 } from "../fs/fat16";')).toEqual([
