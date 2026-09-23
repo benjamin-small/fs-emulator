@@ -1,7 +1,6 @@
 <script lang="ts">
   import ActionsPanel from "./components/ActionsPanel.svelte";
   import DirTree from "./components/DirTree.svelte";
-  import FatMap from "./components/FatMap.svelte";
   import HexView from "./components/HexView.svelte";
   import Inspector from "./components/Inspector.svelte";
   import LessonPanel from "./components/LessonPanel.svelte";
@@ -13,11 +12,16 @@
   import TerminalPanel from "./components/TerminalPanel.svelte";
   import Timeline from "./components/Timeline.svelte";
   import { inTextEntry } from "./core/keys";
+  import { PANELS } from "./fs/panels";
   import { focusHistoryStep } from "./state/navigate.svelte";
   import { scenarios } from "./state/scenarios.svelte";
   import { terminal } from "./state/terminal.svelte";
   import { theme } from "./state/theme.svelte";
   import { volume } from "./state/volume.svelte";
+
+  /** The map panel of the mounted volume's family (the FAT map today), from the panel
+   *  registry; `volume.adapter` is re-bound on every format and load. */
+  const MapPanel = $derived(PANELS[volume.adapter.id].map);
 
   /** Scrub to `n` and recenter the dump on what that step changed, like the Timeline's
    *  own controls. Scrubbing is explicit navigation; running an operation is not, and
@@ -52,7 +56,7 @@
 <svelte:window onkeydown={onKeydown} />
 <div class="app" class:term-side={terminal.placement === "side"} style:--term-h="{terminal.height}px" style:--term-w="{terminal.width}px">
   <header class="topbar">
-    <h1>FAT explorer</h1>
+    <h1>fs explorer</h1>
     <button
       id="terminal-toggle"
       type="button"
@@ -83,7 +87,7 @@
   <div class="grid">
     <aside class="col left">
       <DirTree />
-      <FatMap />
+      <MapPanel />
       <ActionsPanel />
     </aside>
     <main class="col center"><HexView /></main>

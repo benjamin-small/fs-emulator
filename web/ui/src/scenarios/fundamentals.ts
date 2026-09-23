@@ -1,5 +1,4 @@
-import { findEntrySlots } from "../core/direntry";
-import type { Volume } from "../lib/wasm";
+import { asFat16 } from "../fs/fat16";
 import type { Scenario } from "../state/scenarios.svelte";
 
 /**
@@ -8,6 +7,10 @@ import type { Scenario } from "../state/scenarios.svelte";
  * creation itself is not the subject (that is "Add a small file"); every other step only
  * moves the dump. The numbers quoted in the copy are the default disk's, and
  * tests/fundamentals.test.ts checks them against a freshly formatted Volume.
+ *
+ * The FAT entry offsets are the one fact here that no generic adapter method answers, so
+ * this file reaches past the seam with `asFat16(fs).fatEntryOffset(cluster, copy)`; the
+ * boundary test allows `src/scenarios/` to import from `fs/fat16` for exactly this.
  */
 
 export const HELLO = "/HELLO.TXT";
@@ -23,18 +26,11 @@ export function biggerText(bytes: number): Uint8Array {
   return new TextEncoder().encode(s.slice(0, bytes));
 }
 
-const fatOffset = (v: Volume, fat: number, cluster: number): number => {
-  const g = v.geometry();
-  return (g.reservedSectors + fat * g.sectorsPerFat) * g.bytesPerSector + cluster * 2;
-};
-
-const entryOffset = (v: Volume, path: string): number | undefined =>
-  findEntrySlots(v, v.geometry(), v.fatEntries(0), v.clusterOwners(), path)?.start;
-
 export const scenario: Scenario = {
   id: "fundamentals",
   title: "The fundamentals",
   summary: "Tour the regions of a FAT16 disk and follow how a file's slot, chain, and clusters link together.",
+  family: "fat16",
   steps: [
     {
       title: "One disk, five regions",
@@ -50,27 +46,27 @@ export const scenario: Scenario = {
     {
       title: "Where each region starts",
       text: "One reserved sector, so FAT 0 begins at sector 1. Each FAT is 32 sectors, so FAT 1 begins at sector 33 and the root directory at 65. 512 entries × 32 bytes is 16,384 bytes, 32 sectors, so the data area begins at sector 97. Nothing on the disk stores those four numbers; the driver computes them from sector 0, and so does the explorer.",
-      focus: (v) => ({ sector: v.geometry().firstRootDirSector }),
+      focus: (fs) => ({ sector: fs.regionStart("directory") }),
     },
     {
       title: "The FAT: one entry per cluster",
       text: "The allocation table is an array of 16-bit entries, one per data cluster, indexed by cluster number. Entries 0 and 1 are reserved (F8 FF FF FF: the media descriptor and an end marker), so entry 2 is the first real one. A value of 0000 means the cluster is free, FFF8 through FFFF means end of chain, and anything else is the number of the next cluster in the same file. Cluster 2 is HELLO.TXT, and its entry reads end of chain: nothing follows.",
-      focus: (v) => ({ offset: fatOffset(v, 0, 2) }),
+      focus: (fs) => ({ offset: asFat16(fs).fatEntryOffset(2, 0) }),
     },
     {
       title: "FAT 1 is a mirror",
       text: "The second copy starts at sector 33 and is byte for byte the same as the first. Every allocation is written to both, so a damaged first table can be recovered from the second. The entry for cluster 2 here matches the one you just saw.",
-      focus: (v) => ({ offset: fatOffset(v, 1, 2) }),
+      focus: (fs) => ({ offset: asFat16(fs).fatEntryOffset(2, 1) }),
     },
     {
       title: "The root directory names the file",
       text: "The root directory is 512 fixed 32-byte slots starting at sector 65. HELLO.TXT's slot holds its 8.3 name padded with spaces, attribute flags, timestamps, its first cluster at byte 26 of the slot, and its size at byte 28. That first-cluster field is the link from the name to the data.",
-      focus: (v) => ({ path: HELLO, offset: entryOffset(v, HELLO) }),
+      focus: (fs) => ({ path: HELLO, offset: fs.entrySlots(HELLO)?.start }),
     },
     {
       title: "Following the links",
       text: "Reading a file is three hops. The directory slot gives the first cluster: 2. The FAT entry for cluster 2 says whether more follow: it does not. And cluster 2's bytes live at sector 97 + (2 − 2) × 4 = sector 97, because cluster numbering starts at 2 and each cluster is 4 sectors. Only 13 of the cluster's 2,048 bytes are the file; the rest is untouched zeros.",
-      focus: { path: HELLO, cluster: 2 },
+      focus: { path: HELLO, unit: 2 },
     },
     {
       title: "A larger file chains clusters",
@@ -81,17 +77,17 @@ export const scenario: Scenario = {
     {
       title: "The chain in the table",
       text: "Now the FAT reads like a linked list: entry 3 says 4, entry 4 says 5, entry 5 says end of chain. The links are sequential here because the disk was empty; on a busy disk they can point anywhere, and a chain that jumps around is what fragmentation means.",
-      focus: (v) => ({ path: BIGGER, offset: fatOffset(v, 0, 3) }),
+      focus: (fs) => ({ path: BIGGER, offset: asFat16(fs).fatEntryOffset(3, 0) }),
     },
     {
       title: "Size versus space",
       text: "The directory slot records 4,796 bytes; the chain reserves 3 × 2,048 = 6,144. The 1,348 bytes at the end of cluster 5 belong to the file's allocation but not to its contents: slack. The Files panel shows the size; the ribbon shows the space.",
-      focus: { path: BIGGER, cluster: 5 },
+      focus: { path: BIGGER, unit: 5 },
     },
     {
       title: "Free means zero in the table",
       text: "8,167 clusters exist and 4 are in use, so 8,163 entries read 0000. Nothing marks the data area itself as free: when a file is deleted its bytes stay until another file overwrites them, which the \"Delete and see what remains\" scenario shows.",
-      focus: (v) => ({ path: null, offset: fatOffset(v, 0, 6) }),
+      focus: (fs) => ({ path: null, offset: asFat16(fs).fatEntryOffset(6, 0) }),
     },
     {
       title: "Putting it together",

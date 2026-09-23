@@ -1,7 +1,7 @@
-# FAT explorer UI
+# fs explorer UI
 
-A Svelte 5 (runes) app for exploring a FAT16 volume byte by byte: a
-whole-disk hex dump with ASCII and a strings overlay, a disk ribbon and FAT
+A Svelte 5 (runes) app for exploring a filesystem byte by byte, FAT16 today:
+a whole-disk hex dump with ASCII and a strings overlay, a disk ribbon and FAT
 cluster map for seeing where files land, an operation timeline with
 byte-diff replay, nine guided scenarios, and a terminal drawer that mounts
 the volume at `/mnt` and the raw disk at `/dev/hda`. It runs entirely in the
@@ -24,7 +24,7 @@ Then, from `web/ui`:
 ```
 pnpm install
 pnpm dev       # dev server with HMR
-pnpm test      # vitest over src/core and src/shell (loads the real wasm package)
+pnpm test      # vitest over src/core, src/fs and src/shell (loads the real wasm package)
 pnpm build     # svelte-check, then vite build (the CI gate)
 pnpm preview   # serve the production build
 ```
@@ -221,18 +221,54 @@ Things to know:
 - The terminal and its wasm load on first open, so the initial page load is
   unchanged.
 
-## What is FAT-specific
+## What is filesystem-specific
 
-The app is the FAT explorer today, but most of it does not know what FAT is.
-The hex dump, ribbon, byte attribution, zero-run collapsing, strings overlay,
-timeline, and diff replay read `layout()` regions and the operation journal
-from `fs-emulator-wasm`, so a FAT32 or ext2 volume gets all of them
-unchanged. The FAT-specific pieces are the FAT map, the entry → chain → data
-trace in the inspector, the cluster labels in the dump, the Format panel's
-geometry fields, and the scenarios. Adding a filesystem means new region
-kinds and colors in `src/core/attribution.ts`, a map panel and inspector
-section for its structures, and scenarios that teach what is different about
-it. `docs/ROADMAP.md` has the checklist.
+The app is the fs explorer: one explorer for every filesystem family the wasm
+package can hold, FAT16 today. The hex dump, ribbon, byte attribution,
+zero-run collapsing, strings overlay, timeline, diff replay, and terminal read
+`layout()` regions and the operation journal from `fs-emulator-wasm`, so a
+second family gets all of them unchanged. Everything the UI knows about one
+family lives behind the adapter in `src/fs/`:
+
+- `src/fs/adapter.ts` declares the seam. `UnitSpace` is pure allocation-unit
+  arithmetic over one geometry: the unit noun, plural, and shell letter
+  (`cluster`, `clusters`, `c` for FAT), the unit count and size, sector to
+  unit and unit to byte range, the dump's row-label rule, and the region
+  colours. `FsAdapter` is bound to one `Volume` and adds what needs the disk:
+  owners, chains, entry slots, remnants, `stat` and `df` facts, the
+  Inspector's trace, sector annotations, extra address forms, name matching,
+  the "this write may have moved regions" trigger, and the notes the tree and
+  the shell print. Its caches are plain fields that the store refreshes after
+  every operation, so a `$derived` that calls an adapter method reads
+  `volume.epoch` first.
+- `src/fs/fat16/` is the FAT16 implementation: `Fat16Adapter`, the cluster
+  geometry, the FAT chain walk, the directory-entry and remnant scans, the
+  boot-sector trigger, the Format model (`clusterCountFor`, `checkFormat`,
+  the `mkfs` flags), `FatMap.svelte`, and `FormatForm.svelte`. It is the only
+  place, besides the type facade `src/lib/wasm.ts`, that calls the FAT-only
+  wasm methods (`geometry`, `fatEntries`, `clusterOwners`,
+  `annotateSectorWith`, `rawDirEntries`, `bootSector`, `clusterChain`,
+  `formatFat16`) or names their types.
+- `src/fs/index.ts` is the registry: `FAMILIES`, `DEFAULT_FAMILY`,
+  `familyIdOf(fsType)`, and `adapterFor(vol)`, which picks the adapter from
+  `Volume.fsType()`. `src/fs/panels.ts` maps a family id to its map and
+  Format panels, and `App.svelte` and `ActionsPanel.svelte` render whichever
+  the mounted family names. The panels sit in that table rather than on the
+  adapter because the node tests have no Svelte plugin and the adapter must
+  stay importable from them.
+- The scenarios keep their FAT16 copy (they teach FAT16) and declare
+  `family: "fat16"`; a step reaches generic facts through the adapter it is
+  handed and FAT-only ones through `asFat16(fs)`.
+
+`tests/adapterBoundary.test.ts` keeps it that way: it scans
+`src/**/*.{ts,svelte}` and fails on a FAT-only wasm call or type outside
+`src/fs/fat16/` and `src/lib/wasm.ts`, and on an import from `fs/fat16`
+anywhere but `src/fs/index.ts`, `src/fs/panels.ts`, and `src/scenarios/`.
+Adding a family means extending `FsFamilyId` in `fs/adapter.ts`, an adapter
+under `src/fs/<family>/`, an entry in `fs/index.ts` and `fs/panels.ts`, a map
+panel in its own words ("FAT map" stays; ext will get "Block groups"), and
+scenarios that teach what is different about it. `docs/ROADMAP.md` has the
+checklist.
 
 ## Keyboard shortcuts
 

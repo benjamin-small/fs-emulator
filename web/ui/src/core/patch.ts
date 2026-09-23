@@ -24,12 +24,3 @@ export function changedSectors(changes: ByteChangeLike[], sectorSize: number): n
   }
   return [...set].sort((a, b) => a - b);
 }
-
-/** Bytes the FAT core re-parses as the boot sector after a raw write. */
-export const BOOT_SECTOR_LEN = 512;
-
-/** True when any change starts inside the boot sector. The core may then have adopted
- *  a new geometry, so the store must re-read `geometry` and `layout`. */
-export function touchesBootSector(changes: ByteChangeLike[]): boolean {
-  return changes.some((c) => c.offset < BOOT_SECTOR_LEN);
-}

@@ -1050,6 +1050,9 @@ impl FileSystem for FatFs {
     fn write_raw(&mut self, offset: u64, bytes: &[u8]) -> Result<OpRecord> {
         FatFs::write_raw(self, offset, bytes)
     }
+    fn corruption(&self) -> Option<&Error> {
+        FatFs::corruption(self)
+    }
     fn disk(&self) -> &Disk {
         FatFs::disk(self)
     }

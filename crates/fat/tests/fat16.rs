@@ -232,6 +232,11 @@ fn usable_as_a_trait_object() {
     fs.create_file("/T", b"trait").unwrap();
     assert_eq!(fs.read_file("/T").unwrap(), b"trait");
     assert_eq!(fs.fs_type(), "FAT16");
+    assert!(fs.corruption().is_none());
+    fs.write_raw(510, &[0, 0]).unwrap();
+    assert!(matches!(fs.corruption(), Some(Error::CorruptImage(_))));
+    fs.write_raw(510, &[0x55, 0xAA]).unwrap();
+    assert!(fs.corruption().is_none());
 }
 
 #[test]

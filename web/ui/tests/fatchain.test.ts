@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildChain, clusterState } from "../src/core/fatchain";
+import { buildChain, clusterState } from "../src/fs/fat16/fatchain";
 import type { FatEntry } from "../src/lib/wasm";
 
 const fat: FatEntry[] = [

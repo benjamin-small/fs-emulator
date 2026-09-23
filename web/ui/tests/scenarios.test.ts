@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { Volume } from "../src/lib/wasm";
+import { adapterFor, FAMILIES } from "../src/fs";
 import { ScenarioCursor } from "../src/core/scenarioCursor";
 import { all } from "../src/scenarios";
+import { scenario as formatScenario } from "../src/scenarios/format";
 import { scenario as shell } from "../src/scenarios/shell";
 
 // Steps titled "Expect: ..." are the scenario's deliberate failure demonstrations; each
@@ -30,6 +31,15 @@ describe("scenario scripts", () => {
           expect(step.text, `${s.id} — "${step.title}"`).not.toContain(phrase);
         }
       }
+    }
+  });
+
+  // `start()` formats the scenario's family before its first step, so an id the registry
+  // does not know would only surface as a throw inside the runner. Pin it here instead.
+  it("every scenario names a registered family", () => {
+    for (const s of all) {
+      expect(FAMILIES[s.family], `${s.id} names family "${s.family}"`).toBeDefined();
+      expect(FAMILIES[s.family].id).toBe(s.family);
     }
   });
 
@@ -66,12 +76,22 @@ describe("scenario scripts", () => {
 
   for (const s of all) {
     it(`runs "${s.title}" end to end against a fresh Volume`, () => {
-      let vol = Volume.formatFat16(undefined);
+      // The runner's shape: format the scenario's family, bind an adapter to the result, and
+      // hand every action and function focus that adapter. A format is a new Volume (bind
+      // again); an action is the same Volume with new contents (refresh).
+      let vol = FAMILIES[s.family].format();
+      let fs = adapterFor(vol);
       for (const step of s.steps) {
         const run = () => {
-          if (step.format) vol = Volume.formatFat16(step.format);
-          if (step.action) step.action(vol);
-          if (typeof step.focus === "function") step.focus(vol);
+          if (step.format) {
+            vol = FAMILIES[s.family].format(step.format);
+            fs = adapterFor(vol);
+          }
+          if (step.action) {
+            step.action(vol, fs);
+            fs.refresh();
+          }
+          if (typeof step.focus === "function") step.focus(fs);
         };
         const expectedCode = EXPECTED_ERROR_CODE[step.title];
         if (step.title.startsWith("Expect:")) {
@@ -97,11 +117,14 @@ describe("scenario scripts", () => {
     });
 
     it("leaves the volume the way the equivalent commands would", () => {
-      const vol = Volume.formatFat16(undefined);
+      const vol = FAMILIES[shell.family].format();
+      const fs = adapterFor(vol);
       const run = (i: number) => {
         const step = shell.steps[i];
         expect(step.action, `step ${i} "${step.title}" has no action`).toBeDefined();
-        return step.action!(vol);
+        const rec = step.action!(vol, fs);
+        fs.refresh();
+        return rec;
       };
       const text = (b: Uint8Array) => new TextDecoder().decode(b);
 
@@ -133,6 +156,21 @@ describe("scenario scripts", () => {
       expect(run(7).op).toBe("delete_file /HELLO.TXT");
       expect(vol.listDir("/").map((e) => e.name)).toEqual(["DOCS"]);
       expect(text(vol.readFile("/DOCS/COPY.TXT"))).toBe("Hello from the shell");
+    });
+  });
+
+  // "Format an empty disk" quotes no numbers in its own copy, but its function-form
+  // focuses resolve region starts from the adapter; pin them to the default disk's sectors.
+  describe("format an empty disk", () => {
+    it("points the root directory and free space steps at sectors 65 and 97 on the default disk", () => {
+      const vol = FAMILIES.fat16.format();
+      const fs = adapterFor(vol);
+      const focusOf = (title: string) => {
+        const step = formatScenario.steps.find((s) => s.title === title)!;
+        return typeof step.focus === "function" ? step.focus(fs) : step.focus;
+      };
+      expect(focusOf("The root directory")).toEqual({ sector: 65 });
+      expect(focusOf("Free space collapses")).toEqual({ sector: 97 });
     });
   });
 });

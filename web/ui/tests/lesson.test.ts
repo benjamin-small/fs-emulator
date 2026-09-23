@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { describeFocus } from "../src/core/lesson";
-import { geo, layout } from "./fixtures/geometry";
+import { layout, space } from "./fixtures/geometry";
 
 /** The panel's `regionNameAt`, which reads the attribution table; the layout fixture is enough here. */
 const regionNameAt = (sector: number): string =>
   layout.find((r) => sector >= r.sectors.start && sector < r.sectors.end)?.name ?? "unknown";
 
-const describe_ = (focus: Parameters<typeof describeFocus>[0]) => describeFocus(focus, geo, regionNameAt);
+const describe_ = (focus: Parameters<typeof describeFocus>[0]) => describeFocus(focus, space, regionNameAt);
 
 describe("describeFocus", () => {
   it("names the selected file", () => {
@@ -14,8 +14,8 @@ describe("describeFocus", () => {
   });
 
   it("names a cluster with the byte offset it starts at", () => {
-    // Cluster 2 is the first data cluster: sector 97 x 512 bytes.
-    expect(describe_({ cluster: 2 })).toBe("Cluster 2 in the data region (offset 0xc200)");
+    // Cluster 2 is the first data cluster: sector 97 x 512 bytes. The noun comes from the space.
+    expect(describe_({ unit: 2 })).toBe("Cluster 2 in the data region (offset 0xc200)");
   });
 
   it("names a sector with its region", () => {
@@ -27,9 +27,9 @@ describe("describeFocus", () => {
   });
 
   it("names one place only, the one the dump actually goes to", () => {
-    // `applyFocus` jumps to offset, else sector, else cluster; the card must say the same.
-    expect(describe_({ offset: 0x200, sector: 5, cluster: 9 })).toBe("Offset 0x200 in FAT 0");
-    expect(describe_({ sector: 5, cluster: 9 })).toBe("Sector 5, FAT 0");
+    // `applyFocus` jumps to offset, else sector, else unit; the card must say the same.
+    expect(describe_({ offset: 0x200, sector: 5, unit: 9 })).toBe("Offset 0x200 in FAT 0");
+    expect(describe_({ sector: 5, unit: 9 })).toBe("Sector 5, FAT 0");
   });
 
   it("mentions the remnant hatching and the strings overlay", () => {
@@ -41,7 +41,7 @@ describe("describeFocus", () => {
     expect(describe_({ strings: true, sector: 1, path: "/A.TXT", showRemnants: true })).toBe(
       "Files: /A.TXT, its entry, chain, and clusters; sector 1, FAT 0; deleted entries are shown hatched; printable strings are highlighted",
     );
-    expect(describe_({ path: "/A.TXT", cluster: 2, strings: true })).toBe(
+    expect(describe_({ path: "/A.TXT", unit: 2, strings: true })).toBe(
       "Files: /A.TXT, its entry, chain, and clusters; cluster 2 in the data region (offset 0xc200); printable strings are highlighted",
     );
   });

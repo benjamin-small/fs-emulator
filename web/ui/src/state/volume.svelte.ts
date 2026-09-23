@@ -1,39 +1,51 @@
-import { Volume, type ClusterOwner, type FatEntry, type FormatOptions, type FsError, type Geometry, type OpRecord, type Region } from "../lib/wasm";
+import { Volume, type FsError, type OpRecord, type Region } from "../lib/wasm";
 import { buildAttribution, type AttributionTable } from "../core/attribution";
-import { applyChanges, changedSectors, touchesBootSector } from "../core/patch";
+import { applyChanges, changedSectors } from "../core/patch";
 import { rescanSectors, scanZeroSectors } from "../core/zeros";
+import { DEFAULT_FAMILY, FAMILIES, adapterFor } from "../fs";
+import type { FsAdapter, FsFamilyId } from "../fs/adapter";
 import { selection } from "./selection.svelte";
 
 export class VolumeStore {
-  vol = $state.raw<Volume>(Volume.formatFat16(undefined));
+  vol = $state.raw<Volume>(FAMILIES[DEFAULT_FAMILY].format());
+  /** The per-family view of `vol`: owners, tables, unit arithmetic. Its caches are plain
+   *  fields, not runes, so a `$derived` that calls a method on it must read `epoch` first or
+   *  it keeps answering from the previous op (the rule stated in fs/adapter.ts). `adopt`
+   *  re-binds it for a new volume; `refreshMeta` re-reads it after every op. */
+  adapter = $state.raw<FsAdapter>(adapterFor(this.vol));
   image = $state.raw<Uint8Array>(new Uint8Array(0));
   epoch = $state(0);
-  geometry = $state.raw<Geometry>(this.vol.geometry());
   layout = $state.raw<Region[]>(this.vol.layout());
-  owners = $state.raw<ClusterOwner[]>([]);
-  fat = $state.raw<FatEntry[]>([]);
+  sectorSize = $state(this.vol.sectorSize());
+  totalSectors = $state(this.vol.sectorCount());
   zeros = $state.raw<Uint8Array>(new Uint8Array(0));
   history = $state.raw<OpRecord[]>([]);
   cursor = $state(-1);
   status = $state<{ text: string; code?: string } | null>(null);
-  /** The `CorruptImage` message while a raw write has left the boot sector unparsable,
-   *  `null` while mounted. Refreshed alongside `owners`/`fat`, so it tracks the volume
+  /** The `CorruptImage` message while a raw write has left the on-disk metadata unparsable,
+   *  `null` while mounted. Refreshed alongside the adapter, so it tracks the volume
    *  through every op, format, and load. */
   corruption = $state<string | null>(null);
 
-  attribution: AttributionTable = $derived(buildAttribution(this.geometry, this.layout, this.owners));
-  sectorSize = $derived(this.geometry.bytesPerSector);
+  // `epoch` is read first on purpose: `adapter.owners` is a plain field, so nothing else
+  // in this expression would re-run it after an op.
+  attribution: AttributionTable = $derived.by(() => { this.epoch; return buildAttribution(this.adapter, this.layout, this.adapter.owners); });
   atLatest = $derived(this.cursor === this.history.length - 1);
 
   constructor() { this.adopt(this.vol); }
 
-  /** Take over a fresh Volume: full image copy, full scans, empty history. */
+  /** Take over a fresh Volume: bind its adapter, full image copy, full scans, empty history.
+   *  The adapter is resolved into a local before any field is assigned, so a `fsType()` with
+   *  no registered adapter throws before the store is half-switched to the new volume. */
   private adopt(vol: Volume) {
+    const adapter = adapterFor(vol);
     this.vol = vol;
+    this.adapter = adapter;
     this.image = vol.image();
-    this.geometry = vol.geometry();
     this.layout = vol.layout();
-    this.zeros = scanZeroSectors(this.image, this.geometry.bytesPerSector);
+    this.sectorSize = vol.sectorSize();
+    this.totalSectors = vol.sectorCount();
+    this.zeros = scanZeroSectors(this.image, this.sectorSize);
     this.history = [];
     this.cursor = -1;
     this.refreshMeta();
@@ -41,17 +53,26 @@ export class VolumeStore {
   }
 
   private refreshMeta() {
-    this.owners = this.vol.clusterOwners();
-    this.fat = this.vol.fatEntries(0);
-    // `corruption()` will throw `NotFat` on a non-FAT volume in the future; fall back to
-    // "not corrupt" rather than let that leave `this.corruption` stale.
-    try { this.corruption = this.vol.corruption(); } catch { this.corruption = null; }
+    this.adapter.refresh();
+    // `corruption()` is on the `FileSystem` trait, so every family answers it and it cannot
+    // throw `NotFat`; no guard is needed.
+    this.corruption = this.vol.corruption();
   }
 
-  format(options?: FormatOptions) {
-    try { this.adopt(Volume.formatFat16(options)); this.status = null; selection.reset(); } catch (e) { this.fail(e); }
+  /** A fresh volume of `family` (the current one by default) with that family's options. */
+  format(family: FsFamilyId = this.adapter.id, options?: unknown) {
+    try {
+      if (!Object.hasOwn(FAMILIES, family)) throw new Error(`no filesystem family "${family}"`);
+      this.adopt(FAMILIES[family].format(options));
+      this.status = null;
+      selection.reset();
+    } catch (e) {
+      this.fail(e);
+    }
   }
 
+  /** Mount an image. An unregistered `fsType()` makes `adapterFor` throw, which lands in
+   *  `status` like any other load failure. */
   load(bytes: Uint8Array) {
     try { this.adopt(Volume.fromImage(bytes)); this.status = null; selection.reset(); } catch (e) { this.fail(e); }
   }
@@ -67,10 +88,11 @@ export class VolumeStore {
     rescanSectors(this.zeros, this.image, this.sectorSize, changedSectors(rec.changes, this.sectorSize));
     this.history = [...this.history, rec];
     this.cursor = this.history.length - 1;
-    // A raw write into sector 0 may have been adopted as a new boot sector (the core
-    // re-parses it), moving the root directory and data regions. Bytes per sector cannot
+    // A raw write into the family's metadata may have been adopted by the core (FAT
+    // re-parses the boot sector), moving regions: only then is `layout` re-read. The
+    // adapter's `refresh()` below re-reads the geometry on every op. Bytes per sector cannot
     // change (the core rejects that), so `sectorSize` and `zeros` stay valid.
-    if (touchesBootSector(rec.changes)) { this.geometry = this.vol.geometry(); this.layout = this.vol.layout(); }
+    if (this.adapter.touchesMetadata(rec.changes)) this.layout = this.vol.layout();
     this.refreshMeta();
     this.status = null;
     this.epoch++;
@@ -79,7 +101,7 @@ export class VolumeStore {
   }
 
   /** View the disk as it was after `step` (0-based). No wasm calls; patches the cached image.
-   *  `geometry` and `layout` stay at the latest state, like the tree and the layers, so a
+   *  The adapter and `layout` stay at the latest state, like the tree and the layers, so a
    *  rewound view of a boot-sector change shows the older bytes under the newest layout. */
   seek(step: number) {
     step = Math.max(-1, Math.min(step, this.history.length - 1));

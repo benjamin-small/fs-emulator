@@ -1,4 +1,4 @@
-import type { FatEntry } from "../lib/wasm";
+import type { FatEntry } from "../../lib/wasm";
 
 export type ClusterState = "free" | "used" | "end" | "bad" | "reserved";
 
@@ -24,4 +24,15 @@ export function buildChain(fat: FatEntry[], first: number): number[] {
     c = e.cluster;
   }
   return out;
+}
+
+/** One FAT entry in words, as the Inspector's "At this byte" card prints it after "FAT: ". */
+export function describeFatEntry(e: FatEntry): string {
+  switch (e.kind) {
+    case "free": return "free";
+    case "next": return `next → ${e.cluster}`;
+    case "endOfChain": return "end of chain";
+    case "bad": return "bad";
+    case "reserved": return "reserved";
+  }
 }

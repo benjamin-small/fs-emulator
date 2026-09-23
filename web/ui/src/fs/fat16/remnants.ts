@@ -1,7 +1,7 @@
-import type { ClusterOwner, FatEntry, Geometry, Volume } from "../lib/wasm";
-import { clusterByteRange } from "./attribution";
+import type { ClusterOwner, FatEntry, Geometry, Volume } from "../../lib/wasm";
+import { clusterByteRange } from "./geometry";
 import { slotOffset, walkEntries } from "./direntry";
-import { normalize, type Interval } from "./intervals";
+import { normalize, type Interval } from "../../core/intervals";
 
 const ENTRY = 32;
 const MAX_DEPTH = 64;
@@ -20,7 +20,7 @@ export function findRemnants(vol: Volume, g: Geometry, fat: FatEntry[], owners: 
   const walk = (dir: string, depth: number) => {
     if (depth > MAX_DEPTH) return;
     let entries;
-    // Deliberately broad, as in core/direntry.ts: this walk runs inside a `$derived`, and a
+    // Deliberately broad, as in fs/fat16/direntry.ts: this walk runs inside a `$derived`, and a
     // directory that has gone away (NotFound after a delete) or become unreadable
     // (CorruptImage after a raw write) must be skipped, not thrown from.
     // See tests/corruption.test.ts.

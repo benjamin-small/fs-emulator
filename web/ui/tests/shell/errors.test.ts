@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Volume } from "../../src/lib/wasm";
+import { adapterFor } from "../../src/fs";
 import { CORRUPT_HELP, ShellError, fsCall, fsPhrase, wrapFs } from "../../src/shell/errors";
 import { atLatest, corruptionOf, statusToError, type ShellHost } from "../../src/shell/host";
 
@@ -58,10 +59,13 @@ describe("wrapFs", () => {
 });
 
 describe("host helpers", () => {
-  const stub = (cursor: number, historyLength: number): ShellHost => ({
-    vol: Volume.formatFat16(undefined), cursor, historyLength,
-    run: () => { throw new Error("unused"); }, format: () => {}, select: () => {}, jumpTo: () => {}, setPrompt: () => {}, closeTerminal: () => {},
-  });
+  const stub = (cursor: number, historyLength: number): ShellHost => {
+    const vol = Volume.formatFat16(undefined);
+    return {
+      vol, adapter: adapterFor(vol), cursor, historyLength,
+      run: () => { throw new Error("unused"); }, format: () => {}, select: () => {}, jumpTo: () => {}, setPrompt: () => {}, closeTerminal: () => {},
+    };
+  };
   it("atLatest is true before any op and at the last step only", () => {
     expect(atLatest(stub(-1, 0))).toBe(true);
     expect(atLatest(stub(2, 3))).toBe(true);

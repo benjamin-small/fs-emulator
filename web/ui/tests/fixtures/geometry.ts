@@ -1,4 +1,5 @@
 import type { Geometry, Region } from "../../src/lib/wasm";
+import { fat16Space } from "../../src/fs/fat16/geometry";
 
 // The default `Volume.formatFat16(undefined)` disk: 16 MiB, 512-byte sectors, 4 sectors per
 // cluster, two 32-sector FATs, a 32-sector root directory, data from sector 97.
@@ -10,3 +11,6 @@ export const layout: Region[] = [
   { name: "root directory", sectors: { start: 65, end: 97 }, kind: "directory" },
   { name: "data", sectors: { start: 97, end: 32768 }, kind: "data" },
 ];
+
+/** The same disk as a `UnitSpace`, for tests of the generic core that need no Volume. */
+export const space = fat16Space(geo);

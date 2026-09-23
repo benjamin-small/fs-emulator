@@ -1,9 +1,8 @@
 <script lang="ts">
   import { volume } from "../state/volume.svelte";
   import { selection } from "../state/selection.svelte";
-  import { layers } from "../state/layers.svelte";
-  import { attrAtOffset, clusterByteRange } from "../core/attribution";
-  import type { Annotation, FatEntry } from "../lib/wasm";
+  import { attrAtOffset } from "../core/attribution";
+  import type { Annotation } from "../lib/wasm";
   import { describeRange, formatRange, formatValue } from "../core/annotationFormat";
 
   const offset = $derived(selection.hoverOffset ?? selection.cursorOffset);
@@ -13,29 +12,28 @@
     if (attr === null) return [];
     const key = `${attr.sector}:${volume.epoch}`;
     let a = memo.get(key);
-    if (!a) { if (memo.size > 64) memo.clear(); a = volume.vol.annotateSectorWith(attr.sector, volume.owners); memo.set(key, a); }
+    if (!a) { if (memo.size > 64) memo.clear(); a = volume.adapter.annotateSector(attr.sector); memo.set(key, a); }
     return a;
   });
   const inSector = $derived(offset === null ? -1 : offset % volume.sectorSize);
   const hex = (n: number) => "0x" + n.toString(16);
+  const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
 
-  // The three places a selected file lives on disk, each one a jump target: its
-  // directory entry, its FAT chain, and the first cluster of its data.
-  const firstCluster = $derived(layers.chain[0] ?? null);
-  const fatEntryOffset = $derived(
-    firstCluster === null ? null : volume.geometry.reservedSectors * volume.geometry.bytesPerSector + firstCluster * 2,
-  );
-  const dataOffset = $derived(firstCluster === null ? null : clusterByteRange(volume.geometry, firstCluster).start);
+  // What the family's table says about the unit under the cursor ("FAT: end of chain"), or
+  // null when it has nothing to say. `describeUnit` and `trace` are adapter methods over
+  // plain caches, so both deriveds read `volume.epoch` first (the rule in fs/adapter.ts).
+  const unitNote = $derived.by(() => {
+    volume.epoch;
+    return attr === null || attr.unit === undefined ? null : volume.adapter.describeUnit(attr.unit);
+  });
 
-  function describe(e: FatEntry): string {
-    switch (e.kind) {
-      case "free": return "free";
-      case "next": return `next → ${e.cluster}`;
-      case "endOfChain": return "end of chain";
-      case "bad": return "bad";
-      case "reserved": return "reserved";
-    }
-  }
+  // The places a selected file lives on disk, in the family's words, each one a jump
+  // target unless its offset is null (FAT: its directory entry, its FAT chain, and the
+  // first cluster of its data).
+  const trace = $derived.by(() => {
+    volume.epoch;
+    return selection.path ? volume.adapter.trace(selection.path) : [];
+  });
 </script>
 <section class="panel inspector">
   <h2>At this byte</h2>
@@ -45,7 +43,7 @@
     <dl class="facts">
       <dt>Offset</dt><dd class="mono">{hex(offset)} · {offset.toLocaleString()}</dd>
       <dt>Sector</dt><dd class="mono">{attr.sector} · {attr.regionName}</dd>
-      {#if attr.cluster !== undefined}<dt>Cluster</dt><dd class="mono">{attr.cluster}{#if volume.fat[attr.cluster]} · FAT: {describe(volume.fat[attr.cluster])}{/if}</dd>{/if}
+      {#if attr.unit !== undefined}<dt>{cap(volume.adapter.unit.singular)}</dt><dd class="mono">{attr.unit}{#if unitNote}{" "}· {unitNote}{/if}</dd>{/if}
       {#if attr.ownerPath}<dt>Owner</dt><dd><button class="link" onclick={() => selection.select(attr.ownerPath!)}>{attr.ownerPath}</button></dd>{:else if attr.regionKind === "data"}<dt>Owner</dt><dd class="muted">free</dd>{/if}
     </dl>
     {#if !volume.atLatest}<p class="muted">Annotations describe the latest state, not the step you are viewing.</p>{/if}
@@ -65,15 +63,14 @@
       <h3>Selected file</h3>
       <p class="mono path">{selection.path}</p>
       <ul class="trace">
-        {#if layers.entry}
-          <li><button class="link" onclick={() => selection.jumpTo(layers.entry!.start)}>Directory entry · offset {hex(layers.entry.start)}</button></li>
-        {/if}
-        {#if firstCluster !== null && fatEntryOffset !== null && dataOffset !== null}
-          <li><button class="link" onclick={() => selection.jumpTo(fatEntryOffset!)}>FAT chain · {layers.chain.length} clusters starting at {firstCluster} · FAT entry at {hex(fatEntryOffset)}</button></li>
-          <li><button class="link" onclick={() => selection.jumpTo(dataOffset!)}>Data · cluster {firstCluster} at {hex(dataOffset)}</button></li>
-        {:else}
-          <li class="muted">Data · no data clusters</li>
-        {/if}
+        {#each trace as row}
+          {@const off = row.offset}
+          {#if off !== null}
+            <li><button class="link" onclick={() => selection.jumpTo(off)}>{row.label}</button></li>
+          {:else}
+            <li class="muted">{row.label}</li>
+          {/if}
+        {/each}
       </ul>
       <button onclick={() => selection.select(null)}>Clear selection</button>
     </div>

@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   build:
-    name: build FAT explorer
+    name: build fs explorer
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

@@ -179,7 +179,7 @@ describe("mkdir, rmdir, rm, touch", () => {
     expect(ops(host)).toEqual(["create_file /e.txt"]);
     expect(host.vol.stat("/e.txt").size).toBe(0);
     const again = await call(defs, "touch", { positionals: ["/mnt/e.txt"] });
-    expect(again.log).toEqual(["/mnt/e.txt exists; FAT explorer has no timestamp-only update, nothing written"]);
+    expect(again.log).toEqual(["/mnt/e.txt exists; fs explorer has no timestamp-only update, nothing written"]);
     expect(ops(host)).toEqual(["create_file /e.txt"]);
     expect(host.selected).toEqual(["/E.TXT", "/E.TXT"]); // "e.txt" fits an 8.3 short name; stored uppercased
     await call(defs, "mkdir", { positionals: ["/mnt/D"] });
@@ -256,5 +256,17 @@ describe("mkfs", () => {
     expect(err.code).toBe("InvalidGeometry");
     expect(host.vol.geometry().totalSectors).toBe(32768);
     expect((await callErr(defs, "mkfs", { flags: { spc: -1 } })).message).toBe("--spc must be a non-negative integer");
+  });
+});
+
+describe("format through the host", () => {
+  it("refuses an unregistered family with a named error instead of a TypeError", () => {
+    const { host } = setup();
+    expect(() => host.format("nope" as never)).toThrow('no filesystem family "nope"');
+  });
+
+  it("refuses an inherited key like \"constructor\" with the same named error", () => {
+    const { host } = setup();
+    expect(() => host.format("constructor" as never)).toThrow('no filesystem family "constructor"');
   });
 });

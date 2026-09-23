@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { Volume } from "../src/lib/wasm";
-import { findRemnants } from "../src/core/remnants";
-import { findEntrySlots } from "../src/core/direntry";
+import { findRemnants } from "../src/fs/fat16/remnants";
+import { findEntrySlots } from "../src/fs/fat16/direntry";
 import { scanZeroSectors } from "../src/core/zeros";
-import { clusterByteRange } from "../src/core/attribution";
+import { clusterByteRange } from "../src/fs/fat16/geometry";
 
 describe("remnants", () => {
   it("marks deleted directory slots and non-zero free clusters", () => {

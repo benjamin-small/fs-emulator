@@ -77,7 +77,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
    label must place the hex and ASCII columns identically. */
 .row { display: grid; grid-template-columns: 8ch 48ch 16ch minmax(0, 1fr); gap: 12px; height: var(--row-h); line-height: var(--row-h); padding-left: 10px; padding-right: 8px; border-left: 3px solid transparent; white-space: pre; font: var(--dump-size)/var(--row-h) var(--font-mono); }
 .row.sector-start { border-top: 1px solid var(--hairline); }
-.row.cluster-start { border-top-color: var(--ink-muted); }
+.row.unit-start { border-top-color: var(--ink-muted); }
 .row.own-1 { border-left-color: var(--own-1); } .row.own-1 .b { background: color-mix(in srgb, var(--own-1) 14%, transparent); }
 .row.own-2 { border-left-color: var(--own-2); } .row.own-2 .b { background: color-mix(in srgb, var(--own-2) 14%, transparent); }
 .row.own-3 { border-left-color: var(--own-3); } .row.own-3 .b { background: color-mix(in srgb, var(--own-3) 14%, transparent); }

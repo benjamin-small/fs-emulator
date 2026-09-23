@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { applyChanges, changedSectors, touchesBootSector } from "../src/core/patch";
+import { applyChanges, changedSectors } from "../src/core/patch";
+import { touchesBootSector } from "../src/fs/fat16/metadata";
 
 const c = (offset: number, before: number[], after: number[]) => ({ offset, before: new Uint8Array(before), after: new Uint8Array(after) });
 

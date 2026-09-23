@@ -1,8 +1,4 @@
-import { clusterByteRange } from "../core/attribution";
-import { findEntrySlots } from "../core/direntry";
-import { buildChain } from "../core/fatchain";
 import { intervalsToSectors, normalize, type Interval } from "../core/intervals";
-import { findRemnants } from "../core/remnants";
 import { GAP_REVEAL } from "../core/segments";
 import { selection } from "./selection.svelte";
 import { volume } from "./volume.svelte";
@@ -18,22 +14,26 @@ export class LayersStore {
     return rec ? normalize(rec.changes.map((c) => ({ start: c.offset, end: c.offset + c.after.length }))) : [];
   });
 
+  // Every derived below calls the adapter, whose caches are plain fields, so each one reads
+  // `volume.epoch` first (the rule in fs/adapter.ts). Without it a delete would leave the old
+  // chain highlighted until something else changed.
   chain: number[] = $derived.by(() => {
     const path = selection.path;
     if (!path) return [];
-    const owner = volume.owners.find((o) => o.path === path);
-    return owner ? buildChain(volume.fat, owner.firstCluster) : [];
+    volume.epoch;
+    return volume.adapter.chain(path);
   });
 
-  /** Byte range of the selected path's LFN + short directory entries, if any (Task 6). */
-  entry: Interval | null = $derived(selection.path ? (volume.epoch, findEntrySlots(volume.vol, volume.geometry, volume.fat, volume.owners, selection.path)) : null);
+  /** Byte range of the selected path's directory entry slots (FAT: LFN + short), if any. */
+  entry: Interval | null = $derived(selection.path ? (volume.epoch, volume.adapter.entrySlots(selection.path)) : null);
 
-  /** Deleted directory slots and dirty free clusters, when the "Show remnants" toggle is on (Task 8).
-   *  Empty while the timeline is rewound: the directory walk asks the live volume, so its
-   *  slots would be from the latest state while the bytes on screen are from an older one. */
-  remnant: Interval[] = $derived(selection.showRemnants && volume.atLatest ? (volume.epoch, findRemnants(volume.vol, volume.geometry, volume.fat, volume.owners, volume.zeros)) : []);
+  /** Deleted directory slots and dirty free units, when the "Show remnants" toggle is on. A
+   *  family without `adapter.remnants` has none. Empty while the timeline is rewound: the
+   *  directory walk asks the live volume, so its slots would be from the latest state while
+   *  the bytes on screen are from an older one. */
+  remnant: Interval[] = $derived(selection.showRemnants && volume.atLatest ? (volume.epoch, volume.adapter.remnants?.(volume.zeros) ?? []) : []);
 
-  sel: Interval[] = $derived(normalize([...this.chain.map((c) => clusterByteRange(volume.geometry, c)), ...(this.entry ? [this.entry] : []), ...this.extraSel]));
+  sel: Interval[] = $derived((volume.epoch, normalize([...this.chain.map((u) => volume.adapter.unitByteRange(u)), ...(this.entry ? [this.entry] : []), ...this.extraSel])));
 
   pinnedSectors: Set<number> = $derived.by(() => {
     const s = new Set<number>([...intervalsToSectors(this.diff, volume.sectorSize), ...intervalsToSectors(this.sel, volume.sectorSize), ...intervalsToSectors(this.remnant, volume.sectorSize)]);

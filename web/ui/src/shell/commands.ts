@@ -1,9 +1,6 @@
 import type { CommandArgs, CommandCtx, CommandDef, CommandSpec, FlagSpec, PosArg } from "./types";
-import type { DateTime, EntryInfo, FormatOptions, Volume } from "../lib/wasm";
-import { clusterByteRange } from "../core/attribution";
-import { findEntrySlots } from "../core/direntry";
-import { buildChain } from "../core/fatchain";
-import { ADDR_HELP, SIZE_HELP, parseAddr, parseSize } from "./addr";
+import type { DateTime, EntryInfo, Volume } from "../lib/wasm";
+import { SIZE_HELP, addrHelp, parseAddr, parseSize } from "./addr";
 import { decodeText, hasInput, toBytes } from "./bytes";
 import { DD_MAX_BYTES, parseDd, runDd } from "./dd";
 import { CORRUPT_HELP, ShellError, fsCall, wrapFs } from "./errors";
@@ -32,7 +29,7 @@ export function warnIfRewound(host: ShellHost, ctx: CommandCtx): void {
   if (!atLatest(host)) ctx.err(rewoundWarning(host));
 }
 
-/** Path-based commands refuse to run while the boot sector does not parse (the Rust gate says the same). */
+/** Path-based commands refuse to run while the on-disk metadata does not parse (the Rust gate says the same). */
 export function assertMounted(host: ShellHost, display: string): void {
   const c = corruptionOf(host.vol);
   if (c) throw new ShellError(`${display}: ${c}`, { code: "CorruptImage", help: CORRUPT_HELP });
@@ -62,6 +59,9 @@ export function fmtDate(d: DateTime | null): string {
 }
 
 export const hexAddr = (n: number): string => `0x${n.toString(16)}`;
+
+/** "cluster" -> "Cluster": a summary that opens with the family's unit noun. */
+const cap = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
 
 /** More than 10% control bytes (other than tab, LF, CR). Bytes >= 0x80 count as text so UTF-8 passes. */
 export function looksBinary(bytes: Uint8Array): boolean {
@@ -179,7 +179,7 @@ export function readCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
             throw wrapFs(display, e);
           }
           if (!info.isDir) throw new ShellError(`${display}: Not a directory`, { code: "NotADirectory" });
-          vfs.cwd = vfs.toVirtual(canonicalize(host.vol, r.path));
+          vfs.cwd = vfs.toVirtual(canonicalize(host.adapter, r.path));
           landed();
           return;
         }
@@ -260,14 +260,9 @@ export function readCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
           } catch (e) {
             throw wrapFs(display, e);
           }
-          const canon = canonicalize(vol, r.path);
-          const g = vol.geometry();
-          const fat = vol.fatEntries(0);
-          const owners = vol.clusterOwners();
-          const first = owners.find((o) => o.path === canon)?.firstCluster ?? 0;
-          const chain = buildChain(fat, first);
-          const slots = findEntrySlots(vol, g, fat, owners, canon);
-          const bps = g.bytesPerSector;
+          const canon = canonicalize(host.adapter, r.path);
+          // The generic facts first, then the family's own (FAT: firstCluster, chain,
+          // clusters, entryOffset, entrySlots, fatEntryOffset, dataOffset), already formatted.
           return {
             path: vfs.toVirtual(canon),
             name: info.name,
@@ -276,13 +271,7 @@ export function readCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
             created: fmtDate(info.created),
             modified: fmtDate(info.modified),
             accessed: fmtDate(info.accessed),
-            firstCluster: first,
-            chain,
-            clusters: chain.length,
-            entryOffset: slots ? hexAddr(slots.start) : "",
-            entrySlots: slots ? `${hexAddr(slots.start)}-${hexAddr(slots.end)}` : "",
-            fatEntryOffset: first >= 2 ? hexAddr(g.reservedSectors * bps + first * 2) : "",
-            dataOffset: canon === "/" ? hexAddr(g.firstRootDirSector * bps) : first >= 2 ? hexAddr(clusterByteRange(g, first).start) : "",
+            ...host.adapter.stat(canon),
           };
         }
       }
@@ -290,29 +279,25 @@ export function readCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
   };
 
   const df: CommandDef = {
-    spec: { name: "df", summary: "Cluster usage of the mounted volume" },
+    spec: { name: "df", summary: `${cap(host.adapter.unit.singular)} usage of the mounted volume` },
     fn: (_args, _input, ctx) => {
       warnIfRewound(host, ctx);
       assertMounted(host, "/mnt");
-      const vol = host.vol;
-      const g = vol.geometry();
-      const fat = vol.fatEntries(0);
-      let used = 0;
-      for (let c = 2; c < g.clusterCount + 2 && c < fat.length; c++) if (fat[c].kind !== "free") used++;
-      const free = g.clusterCount - used;
-      const clusterSize = g.bytesPerSector * g.sectorsPerCluster;
-      const pct = g.clusterCount > 0 ? Math.round((used / g.clusterCount) * 100) : 0;
+      const { unitSize, units, used, free } = host.adapter.df();
+      // The printed keys come from the noun, so FAT still prints `clusterSize` and `clusters`.
+      const { singular, plural } = host.adapter.unit;
+      const pct = units > 0 ? Math.round((used / units) * 100) : 0;
       return [
         {
           filesystem: "/dev/hda",
           mounted: "/mnt",
-          type: vol.fsType(),
-          clusterSize,
-          clusters: g.clusterCount,
+          type: host.vol.fsType(),
+          [`${singular}Size`]: unitSize,
+          [plural]: units,
           used,
           free,
-          bytesUsed: used * clusterSize,
-          bytesFree: free * clusterSize,
+          bytesUsed: used * unitSize,
+          bytesFree: free * unitSize,
           use: `${pct}%`,
         },
       ];
@@ -341,10 +326,14 @@ export function readCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
   };
 
   const seek: CommandDef = {
-    spec: { name: "seek", summary: "Move the hex dump to an address", required: [P("addr", "0x1f, 512, s:65 (sector), or c:3 (cluster)")] },
+    spec: {
+      name: "seek",
+      summary: "Move the hex dump to an address",
+      required: [P("addr", `0x1f, 512, s:65 (sector), or ${host.adapter.unit.letter}:3 (${host.adapter.unit.singular})`)],
+    },
     fn: (args) => {
       const vol = host.vol;
-      const off = parseAddr(reqStr(args, 0, "addr"), vol.geometry());
+      const off = parseAddr(reqStr(args, 0, "addr"), host.adapter);
       const limit = vol.sectorCount() * vol.sectorSize();
       if (off >= limit) throw new ShellError(`${hexAddr(off)} is past the end of the disk (${limit} bytes)`);
       host.jumpTo(off);
@@ -411,9 +400,10 @@ export interface VolumeWrite {
 
 /**
  * Put `bytes` in the volume file at `path`, creating it or overwriting it, and select it.
- * `append` reads the file and concatenates first — FAT has no append, so the whole file is
- * rewritten either way. The one place a file's contents change: the `write` command, which
- * adds the logging, and the `>`/`>>` redirect hook, which has no `ctx` to log to.
+ * `append` reads the file and concatenates first — the core has no append, so the whole file
+ * is rewritten either way (`adapter.notes.rewrite` says so in the family's words). The one
+ * place a file's contents change: the `write` command, which adds the logging, and the
+ * `>`/`>>` redirect hook, which has no `ctx` to log to.
  */
 export function writeVolumeFile(host: ShellHost, vfs: Vfs, path: string, bytes: Uint8Array, opts: { append: boolean }): VolumeWrite {
   const display = vfs.toVirtual(path);
@@ -452,7 +442,7 @@ function mutationCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
       required: [{ name: "path", shape: "str", desc: "/mnt/... or /dev/hda" }],
       flags: [
         { long: "append", desc: "read the file, append the input and rewrite the whole file" },
-        { long: "at", shape: "str", desc: `disk address for /dev/hda (${ADDR_HELP})` },
+        { long: "at", shape: "str", desc: `disk address for /dev/hda (${addrHelp(host.adapter)})` },
       ],
     },
     fn: (args, input, ctx) => {
@@ -468,9 +458,9 @@ function mutationCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
       if (target.kind === "zero") throw new ShellError("/dev/zero: cannot write to /dev/zero");
       if (target.kind === "raw") {
         if (append) throw new ShellError("--append is not supported on /dev/hda", { help: "give --at <addr> to place the bytes" });
-        if (!flagGiven(at)) throw new ShellError("/dev/hda: give --at <addr>", { help: ADDR_HELP });
+        if (!flagGiven(at)) throw new ShellError("/dev/hda: give --at <addr>", { help: addrHelp(host.adapter) });
         if (data.length === 0) throw new ShellError("nothing to write", { help: "a raw write needs at least one byte" });
-        const off = parseAddr(String(at), host.vol.geometry());
+        const off = parseAddr(String(at), host.adapter);
         const disk = host.vol.sectorCount() * host.vol.sectorSize();
         if (off + data.length > disk) throw new ShellError("/dev/hda: Range runs past the end of the disk", { code: "OutOfBounds" });
         fsCall(display, () => host.run((v) => v.writeRaw(off, data)));
@@ -480,7 +470,7 @@ function mutationCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
       if (target.kind !== "volume") throw new ShellError(`${display}: Is a directory`);
       if (flagGiven(at)) throw new ShellError("--at only applies to /dev/hda");
       const { written, appended } = writeVolumeFile(host, vfs, target.path, data, { append });
-      if (appended) ctx.log(`appended ${data.length} bytes by rewriting the whole file (FAT has no append; the old chain is freed and reallocated)`);
+      if (appended) ctx.log(`appended ${data.length} bytes by rewriting the whole file (${host.adapter.notes.rewrite})`);
       ctx.log(`${written} bytes -> ${display}`);
     },
   };
@@ -549,7 +539,7 @@ function mutationCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
       const info = statIfExists(host.vol, path, display);
       if (info?.isDir) throw new ShellError(`${display}: Is a directory`);
       if (info) {
-        ctx.log(`${display} exists; FAT explorer has no timestamp-only update, nothing written`);
+        ctx.log(`${display} exists; fs explorer has no timestamp-only update, nothing written`);
       } else {
         fsCall(display, () => host.run((v) => v.createFile(path, new Uint8Array(0))));
         ctx.log(`created empty ${display}`);
@@ -576,7 +566,7 @@ function mutationCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
       let dstDisplay = dstDisplay0;
       let info = statIfExists(host.vol, dstPath, dstDisplay);
       if (info?.isDir) {
-        dstPath = joinPath(canonicalize(host.vol, dstPath), baseName(canonicalize(host.vol, srcPath)));
+        dstPath = joinPath(canonicalize(host.adapter, dstPath), baseName(canonicalize(host.adapter, srcPath)));
         dstDisplay = vfs.toVirtual(dstPath);
         info = statIfExists(host.vol, dstPath, dstDisplay);
         if (info?.isDir) throw new ShellError(`${dstDisplay}: Is a directory`);
@@ -589,43 +579,31 @@ function mutationCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
     },
   };
 
+  // The flags, their option keys, and both messages are the family's (`FsFamily.mkfs`); the
+  // spec is built once at registration, for the family mounted then.
   const mkfs: CommandDef = {
     spec: {
       name: "mkfs",
-      summary: "Format /dev/hda as FAT16 (clears the timeline)",
-      flags: [
-        { long: "sectors", shape: "int", desc: "total sectors (default 32768 = 16 MB)" },
-        { long: "spc", shape: "int", desc: "sectors per cluster (default 4)" },
-        { long: "label", shape: "str", desc: "volume label, up to 11 characters" },
-        { long: "root-entries", shape: "int", desc: "root directory entries (default 512)" },
-        { long: "fats", shape: "int", desc: "FAT copies (default 2)" },
-        { long: "reserved", shape: "int", desc: "reserved sectors (default 1)" },
-      ],
+      summary: host.adapter.family.mkfs.summary,
+      flags: host.adapter.family.mkfs.flags.map((f) => F(f.long, f.desc, { shape: f.kind })),
     },
     fn: (args, _input, ctx) => {
-      const int = (name: string): number | undefined => {
-        const v = args.flags[name];
-        if (!flagGiven(v)) return undefined;
-        if (typeof v !== "number" || !Number.isInteger(v) || v < 0) throw new ShellError(`--${name} must be a non-negative integer`);
-        return v;
-      };
-      const options: FormatOptions = {};
-      const sectors = int("sectors");
-      if (sectors !== undefined) options.totalSectors = sectors;
-      const spc = int("spc");
-      if (spc !== undefined) options.sectorsPerCluster = spc;
-      const rootEntries = int("root-entries");
-      if (rootEntries !== undefined) options.rootEntries = rootEntries;
-      const fats = int("fats");
-      if (fats !== undefined) options.fatCount = fats;
-      const reserved = int("reserved");
-      if (reserved !== undefined) options.reservedSectors = reserved;
-      const label = args.flags.label;
-      if (flagGiven(label)) options.volumeLabel = String(label);
-      fsCall("/dev/hda", () => host.format(options));
+      const { flags, done } = host.adapter.family.mkfs;
+      const options: Record<string, number | string> = {};
+      for (const f of flags) {
+        const v = args.flags[f.long];
+        if (!flagGiven(v)) continue;
+        if (f.kind === "int") {
+          if (typeof v !== "number" || !Number.isInteger(v) || v < 0) throw new ShellError(`--${f.long} must be a non-negative integer`);
+          options[f.option] = v;
+        } else {
+          options[f.option] = String(v);
+        }
+      }
+      fsCall("/dev/hda", () => host.format(host.adapter.id, options));
       vfs.cwd = "/mnt";
       host.setPrompt(promptFor(vfs.cwd));
-      ctx.log("formatted /dev/hda as FAT16; the timeline was cleared");
+      ctx.log(done);
     },
   };
 
@@ -663,7 +641,7 @@ function ddXxdCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
     summary,
     optional: [{ name: "path", shape: "str", desc: "/mnt/file, /dev/hda (one sector by default) or /dev/zero --len; omit to dump piped bytes" }],
     flags: [
-      { long: "offset", shape: "str", desc: `start address (${ADDR_HELP})` },
+      { long: "offset", shape: "str", desc: `start address (${addrHelp(host.adapter)})` },
       { long: "len", shape: "str", desc: `bytes to show (${SIZE_HELP})` },
       { long: "cols", shape: "int", desc: "bytes per row, default 16" },
     ],
@@ -674,7 +652,7 @@ function ddXxdCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
     const cols = colsFlag === undefined || colsFlag === null ? 16 : Number(colsFlag);
     if (!Number.isInteger(cols) || cols < 1 || cols > 64) throw new ShellError("--cols must be 1..64");
     const offsetFlag = args.flags.offset;
-    const offset = offsetFlag === undefined || offsetFlag === null ? undefined : parseAddr(String(offsetFlag), host.vol.geometry());
+    const offset = offsetFlag === undefined || offsetFlag === null ? undefined : parseAddr(String(offsetFlag), host.adapter);
     const lenFlag = args.flags.len;
     const len = lenFlag === undefined || lenFlag === null ? undefined : parseSize(String(lenFlag));
     const base = offset ?? 0;

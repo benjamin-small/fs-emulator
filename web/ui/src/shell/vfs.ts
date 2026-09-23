@@ -1,4 +1,4 @@
-import type { Volume } from "../lib/wasm";
+import type { FsAdapter } from "../fs/adapter";
 import { ShellError } from "./errors";
 
 /** Where a virtual path lands. `volume.path` is the path fs-core sees ("/" for /mnt itself). */
@@ -71,22 +71,21 @@ export function resolved(vfs: Vfs, s: string): { r: Resolved; display: string } 
   return { r, display: vfs.display(r) };
 }
 
-const namesMatch = (a: string, b: string): boolean => a.toUpperCase() === b.toUpperCase();
-
 /**
- * Re-spell each component of a volume path the way the directory stores it (FAT lookups are
- * case-insensitive, so `/docs/n.txt` is `/DOCS/N.TXT` on disk). A component that is missing,
- * or whose parent cannot be listed (a file in the middle, a corrupt volume), keeps the typed
- * spelling; callers validate existence with `stat` separately.
+ * Re-spell each component of a volume path the way the directory stores it, matching names
+ * the family's way (`fs.namesMatch`: FAT lookups are case-insensitive, so `/docs/n.txt` is
+ * `/DOCS/N.TXT` on disk). A component that is missing, or whose parent cannot be listed (a
+ * file in the middle, a corrupt volume), keeps the typed spelling; callers validate
+ * existence with `stat` separately.
  */
-export function canonicalize(vol: Volume, volumePath: string): string {
+export function canonicalize(fs: Pick<FsAdapter, "vol" | "namesMatch">, volumePath: string): string {
   const out: string[] = [];
   let dir = "/";
   for (const part of volumePath.split("/")) {
     if (part === "") continue;
     let name = part;
     try {
-      const hit = vol.listDir(dir).find((e) => namesMatch(e.name, part));
+      const hit = fs.vol.listDir(dir).find((e) => fs.namesMatch(e.name, part));
       if (hit) name = hit.name;
     } catch {
       // unreadable parent: keep the typed spelling for this and the remaining components

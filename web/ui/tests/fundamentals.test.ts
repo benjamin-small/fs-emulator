@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { Volume } from "../src/lib/wasm";
+import type { Volume } from "../src/lib/wasm";
+import { adapterFor, FAMILIES } from "../src/fs";
 import { all } from "../src/scenarios";
 import { BIGGER, BIGGER_BYTES, biggerText, HELLO, HELLO_TEXT, scenario } from "../src/scenarios/fundamentals";
 
@@ -15,20 +16,27 @@ const stepText = (title: string) => {
   return s.text;
 };
 
-/** Run the scenario the way the runner does: a default format, then each action in order,
- *  stopping after the step with the given title. Returns the volume in that state. */
+/** Run the scenario the way the runner does: a format of its family, then each action in
+ *  order with the adapter refreshed after it, stopping after the step with the given title.
+ *  Returns the volume in that state. */
 function runThrough(title: string): Volume {
-  const vol = Volume.formatFat16(undefined);
+  const vol = FAMILIES[scenario.family].format();
+  const fs = adapterFor(vol);
   for (const step of scenario.steps) {
-    if (step.action) step.action(vol);
+    if (step.action) {
+      step.action(vol, fs);
+      fs.refresh();
+    }
     if (step.title === title) break;
   }
   return vol;
 }
 
+/** A step's focus as the runner resolves it: the function form gets an adapter bound to the
+ *  volume in its current state. */
 const focusOf = (title: string, vol: Volume) => {
   const s = scenario.steps.find((st) => st.title === title)!;
-  return typeof s.focus === "function" ? s.focus(vol) : s.focus;
+  return typeof s.focus === "function" ? s.focus(adapterFor(vol)) : s.focus;
 };
 
 describe("the fundamentals scenario", () => {
@@ -37,7 +45,7 @@ describe("the fundamentals scenario", () => {
   });
 
   it("quotes the default geometry correctly", () => {
-    const g = Volume.formatFat16(undefined).geometry();
+    const g = FAMILIES[scenario.family].format().geometry();
     expect(g).toMatchObject({
       bytesPerSector: 512, sectorsPerCluster: 4, reservedSectors: 1, fatCount: 2, sectorsPerFat: 32,
       rootEntries: 512, rootDirSectors: 32, firstRootDirSector: 65, firstDataSector: 97, totalSectors: 32768, clusterCount: 8167,
@@ -100,5 +108,10 @@ describe("the fundamentals scenario", () => {
     // HELLO.TXT took the first root slot, so its entry starts where the root directory does.
     expect(focusOf("The root directory names the file", vol)).toEqual({ path: HELLO, offset: g.firstRootDirSector * g.bytesPerSector });
     expect(focusOf("Sector 0 describes the rest", vol)).toEqual({ offset: 11 });
+  });
+
+  it("points the region-start step at the root directory's sector on the default disk", () => {
+    const vol = runThrough("One disk, five regions");
+    expect(focusOf("Where each region starts", vol)).toEqual({ sector: 65 });
   });
 });

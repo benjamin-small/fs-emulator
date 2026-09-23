@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { Volume } from "../src/lib/wasm";
 import { buildTree } from "../src/core/tree";
-import { findEntrySlots } from "../src/core/direntry";
-import { findRemnants } from "../src/core/remnants";
+import { adapterFor } from "../src/fs";
+import { findEntrySlots } from "../src/fs/fat16/direntry";
+import { findRemnants } from "../src/fs/fat16/remnants";
 import { scanZeroSectors } from "../src/core/zeros";
 
 function corruptFixture() {
@@ -16,18 +17,19 @@ function corruptFixture() {
   const geo = vol.geometry();
   const zeros = scanZeroSectors(vol.image(), geo.bytesPerSector);
   const saved = vol.readRaw(0, 512);
+  const fs = adapterFor(vol); // bound before the corrupting write: its cached owners are the good ones
 
   expect(vol.corruption()).toBeNull();
   vol.writeRaw(0, new Uint8Array(512));
   expect(vol.corruption()).toContain("boot sector no longer parses");
 
-  return { vol, owners, fat, geo, zeros, saved };
+  return { vol, fs, owners, fat, geo, zeros, saved };
 }
 
 describe("a corrupt volume", () => {
   it("buildTree returns an empty root instead of throwing", () => {
-    const { vol, owners } = corruptFixture();
-    const tree = buildTree(vol, owners);
+    const { vol, fs } = corruptFixture();
+    const tree = buildTree(vol, fs.owners);
     expect(tree).toMatchObject({ name: "/", path: "/", isDir: true, children: [] });
   });
 
@@ -45,7 +47,7 @@ describe("a corrupt volume", () => {
     const { vol, saved } = corruptFixture();
     vol.writeRaw(0, saved);
     expect(vol.corruption()).toBeNull();
-    const tree = buildTree(vol, vol.clusterOwners());
+    const tree = buildTree(vol, adapterFor(vol).owners);
     expect(tree.children.map((c) => c.name).sort()).toEqual(["A.TXT", "D"]);
   });
 

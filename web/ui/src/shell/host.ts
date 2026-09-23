@@ -1,4 +1,5 @@
-import type { FormatOptions, OpRecord, Volume } from "../lib/wasm";
+import type { OpRecord, Volume } from "../lib/wasm";
+import type { FsAdapter, FsFamilyId } from "../fs/adapter";
 import { canonicalize } from "./vfs";
 
 /**
@@ -9,13 +10,18 @@ import { canonicalize } from "./vfs";
 export interface ShellHost {
   /** The latest volume; every read goes here even while the timeline is rewound. */
   readonly vol: Volume;
+  /** The family adapter bound to `vol`: refreshed by the host after every `run`, re-bound by
+   *  `format`. Commands take unit arithmetic, `stat`/`df` facts, address help, `mkfs` flags,
+   *  and the rewrite notes from it, never from a family module directly. */
+  readonly adapter: FsAdapter;
   /** Timeline position: -1 before any op, `historyLength - 1` at the latest step. */
   readonly cursor: number;
   readonly historyLength: number;
   /** Run one journaled mutation at the latest state. Throws `{ message, code? }` on failure. */
   run(fn: (v: Volume) => OpRecord): OpRecord;
-  /** Replace the volume; the store discards the history. Throws `{ message, code? }` on failure. */
-  format(options: FormatOptions): void;
+  /** Replace the volume with a fresh one of `family`, formatted with that family's options;
+   *  the store discards the history. Throws `{ message, code? }` on failure. */
+  format(family: FsFamilyId, options?: unknown): void;
   select(path: string | null): void;
   jumpTo(offset: number): void;
   /**
@@ -30,9 +36,10 @@ export interface ShellHost {
 export const atLatest = (h: ShellHost): boolean => h.cursor === h.historyLength - 1;
 
 /**
- * `vol.corruption()`, or `null` when the call itself throws. `corruption()` will throw
- * `NotFat` on a non-FAT volume in the future, and a read command must not die on that;
- * VolumeStore.refreshMeta guards it the same way.
+ * `vol.corruption()`, or `null` when the call itself throws. `corruption()` is on the
+ * `FileSystem` trait, so no family makes it throw `NotFat`; the guard stays so a read
+ * command never dies on a wasm boundary failure (errors.test.ts feeds it a throwing
+ * double).
  */
 export function corruptionOf(vol: Volume): string | null {
   try {
@@ -44,7 +51,7 @@ export function corruptionOf(vol: Volume): string | null {
 
 /** Select the canonical volume path (a root path, "/", becomes `null`), the rule `select` uses inline. */
 export function selectPath(host: ShellHost, path: string): void {
-  const canon = canonicalize(host.vol, path);
+  const canon = canonicalize(host.adapter, path);
   host.select(canon === "/" ? null : canon);
 }
 

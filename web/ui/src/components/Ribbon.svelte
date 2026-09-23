@@ -37,7 +37,7 @@
   });
 
   const cols = $derived(Math.max(1, Math.floor(width)));
-  const sectorsPerCol = $derived(Math.max(1, Math.ceil(volume.geometry.totalSectors / cols)));
+  const sectorsPerCol = $derived(Math.max(1, Math.ceil(volume.totalSectors / cols)));
 
   $effect(() => {
     volume.epoch; layers.visible; layers.diff; cols;
@@ -105,7 +105,7 @@
   function ensureColors(): { idx: number; free: boolean }[] {
     const key = `${volume.epoch}:${cols}:${sectorsPerCol}`;
     if (key === colorCacheKey) return colorCache;
-    const total = volume.geometry.totalSectors;
+    const total = volume.totalSectors;
     const out = new Array<{ idx: number; free: boolean }>(cols);
     for (let i = 0; i < cols; i++) {
       const startSector = i * sectorsPerCol;
@@ -181,7 +181,7 @@
   }
 
   function jumpToColumn(col: number) {
-    const total = volume.geometry.totalSectors;
+    const total = volume.totalSectors;
     const startSector = Math.min(col * sectorsPerCol, Math.max(0, total - 1));
     selection.jumpTo(startSector * volume.sectorSize);
   }
@@ -224,7 +224,7 @@
 
   const caption = $derived.by(() => {
     if (hoverCol === null) return "";
-    const total = volume.geometry.totalSectors;
+    const total = volume.totalSectors;
     const sector = Math.min(hoverCol * sectorsPerCol, Math.max(0, total - 1));
     const attr: Attr = attrAtSector(volume.attribution, sector);
     return `sector ${sector} · ${attr.ownerPath ?? attr.regionName}`;
@@ -252,18 +252,17 @@
         else out.push({ path: c.path, name: c.name, colorIndex: colorIndexForPath(c.path) });
       }
     };
-    walk(buildTree(volume.vol, volume.owners));
+    walk(buildTree(volume.vol, volume.adapter.owners));
     return out;
   });
 
   const freeLabel = $derived.by(() => {
     volume.epoch;
-    const { clusterCount, bytesPerSector, sectorsPerCluster } = volume.geometry;
-    const clusterSize = bytesPerSector * sectorsPerCluster;
-    const owner = volume.attribution.ownerByCluster;
+    const { unit, unitCount, unitSize } = volume.adapter;
+    const owner = volume.attribution.ownerByUnit;
     let free = 0;
-    for (let c = 2; c <= clusterCount + 1; c++) if (owner[c] < 0) free++;
-    return `${((free * clusterSize) / (1024 * 1024)).toFixed(1)} MB free`;
+    for (let u = unit.first; u < unit.first + unitCount; u++) if (owner[u] < 0) free++;
+    return `${((free * unitSize) / (1024 * 1024)).toFixed(1)} MB free`;
   });
 </script>
 

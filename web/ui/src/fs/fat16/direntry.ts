@@ -1,5 +1,5 @@
-import type { ClusterOwner, FatEntry, Geometry, RawEntry, Volume } from "../lib/wasm";
-import { clusterByteRange } from "./attribution";
+import type { ClusterOwner, FatEntry, Geometry, RawEntry, Volume } from "../../lib/wasm";
+import { clusterByteRange } from "./geometry";
 import { buildChain } from "./fatchain";
 
 const ENTRY = 32;
