@@ -171,5 +171,5 @@
   <div class="fatmap-wrap" bind:this={wrap} style:max-height="{MAX_HEIGHT}px">
     <canvas bind:this={canvas} onmousemove={onMove} onmouseleave={onLeave} onclick={onClick} aria-label="FAT cluster map"></canvas>
   </div>
-  <p class="mono muted fatmap-caption">{caption || " "}</p>
+  <p class="mono muted fatmap-caption">{caption || " "}</p>
 </section>
