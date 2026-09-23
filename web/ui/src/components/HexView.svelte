@@ -78,9 +78,12 @@
       return { hex: b.toString(16).padStart(2, "0"), asc: b >= 0x20 && b <= 0x7e ? String.fromCharCode(b) : "·", cls, title };
     });
     const sectorStart = offset % volume.sectorSize === 0;
-    const clusterStart = attr.cluster !== undefined && sectorStart && (attr.sector - volume.geometry.firstDataSector) % volume.geometry.sectorsPerCluster === 0;
-    const label = clusterStart ? `cluster ${attr.cluster}${attr.ownerPath ? ` · ${attr.ownerPath}` : ""}` : sectorStart ? `sector ${attr.sector}${attr.cluster === undefined ? ` · ${attr.regionName}` : ""}` : "";
-    return { kind: "row" as const, key: r, offset, attr, cells, sectorStart, clusterStart, label };
+    // `unitStartsAt` is an adapter method (plain caches): `rowsInView`, the only caller of
+    // `describeRow`, reads `volume.epoch` first.
+    const { unit } = volume.adapter;
+    const unitStart = attr.unit !== undefined && sectorStart && volume.adapter.unitStartsAt(attr.sector);
+    const label = unitStart ? `${unit.singular} ${attr.unit}${attr.ownerPath ? ` · ${attr.ownerPath}` : ""}` : sectorStart ? `sector ${attr.sector}${attr.unit === undefined ? ` · ${attr.regionName}` : ""}` : "";
+    return { kind: "row" as const, key: r, offset, attr, cells, sectorStart, unitStart, label };
   }
 
   function beforeByte(rec: { changes: { offset: number; before: Uint8Array }[] }, off: number): number | null {
@@ -99,13 +102,13 @@
       case "ArrowUp": return move(-BYTES_PER_ROW); case "ArrowDown": return move(BYTES_PER_ROW);
       case "PageUp": return move(-Math.floor(height / ROW_H) * BYTES_PER_ROW); case "PageDown": return move(Math.floor(height / ROW_H) * BYTES_PER_ROW);
       case "Home": return move(-cur); case "End": return move(max - cur);
-      case "g": { const v = globalThis.prompt("Jump to offset (0x…, decimal, s:sector, c:cluster)"); if (v) jump(v); return; }
+      case "g": { const { letter, singular } = volume.adapter.unit; const v = globalThis.prompt(`Jump to offset (0x…, decimal, s:sector, ${letter}:${singular})`); if (v) jump(v); return; }
       case "s": selection.stringsOn = !selection.stringsOn; return;
     }
   }
   function jump(v: string) {
     let off: number;
-    try { off = parseAddr(v, volume.geometry); } catch { return; } // the prompt ignores bad input silently, as before
+    try { off = parseAddr(v, volume.adapter); } catch { return; } // the prompt ignores bad input silently, as before
     if (off >= 0 && off < volume.image.length) selection.jumpTo(off);
   }
   function onOver(e: MouseEvent) { const t = (e.target as HTMLElement).closest<HTMLElement>("[data-off]"); selection.hoverOffset = t ? Number(t.dataset.off) : null; }
@@ -126,7 +129,7 @@
           {#if r.kind === "gap"}
             <button class="gap mono" onclick={() => selection.expandGap(r.segment.startSector)}>{r.text}</button>
           {:else}
-            <HexRow offset={r.offset} attr={r.attr} cells={r.cells} sectorStart={r.sectorStart} clusterStart={r.clusterStart} label={r.label} />
+            <HexRow offset={r.offset} attr={r.attr} cells={r.cells} sectorStart={r.sectorStart} unitStart={r.unitStart} label={r.label} />
           {/if}
         {/each}
       </div>

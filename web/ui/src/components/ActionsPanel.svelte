@@ -1,49 +1,16 @@
 <script lang="ts">
   import { volume } from "../state/volume.svelte";
   import { selection } from "../state/selection.svelte";
-  import type { FormatOptions } from "../lib/wasm";
+  import { PANELS } from "../fs/panels";
 
-  const SIZES: { label: string; totalSectors: number }[] = [
-    { label: "4 MB", totalSectors: 8192 },
-    { label: "16 MB", totalSectors: 32768 },
-    { label: "64 MB", totalSectors: 131072 },
-  ];
-  const CLUSTER_SIZES = [1, 2, 4, 8];
-
-  // FAT16 geometry constants, matching the core's formatter.
-  const BYTES_PER_SECTOR = 512, ROOT_ENTRIES = 512, DIR_ENTRY = 32, RESERVED = 1, FAT_COPIES = 2;
-  const FAT16_MIN_CLUSTERS = 4085, FAT16_MAX_CLUSTERS = 65524;
+  /** The Format form of the mounted volume's family, from the panel registry. */
+  const FormatPanel = $derived(PANELS[volume.adapter.id].format);
 
   let path = $state("/Hello world.txt");
   let content = $state("Hello from the browser");
   let bytes = $state<Uint8Array | null>(null);
   let fileName = $state<string | null>(null);
   let bytesInput = $state<HTMLInputElement>();
-
-  // Mirror the mounted default disk (16 MB, 4 sectors per cluster) so opening the
-  // form shows the geometry that is already on screen.
-  let totalSectors = $state(32768);
-  let sectorsPerCluster = $state(4);
-  let volumeLabel = $state("");
-
-  /** The cluster count these options would produce, by the core's rule: the smallest
-   *  sectors-per-FAT that can index every cluster the leftover space yields. */
-  function clusterCountFor(total: number, spc: number): number {
-    const rootDirSectors = Math.ceil((ROOT_ENTRIES * DIR_ENTRY) / BYTES_PER_SECTOR);
-    const entriesPerFatSector = BYTES_PER_SECTOR / 2; // FAT16 entries are 2 bytes
-    for (let spf = 1; spf <= total; spf++) {
-      const usable = total - RESERVED - FAT_COPIES * spf - rootDirSectors;
-      if (usable <= 0) return 0;
-      const clusters = Math.floor(usable / spc);
-      if (spf * entriesPerFatSector >= clusters + 2) return clusters;
-    }
-    return 0;
-  }
-
-  const clusters = $derived(clusterCountFor(totalSectors, sectorsPerCluster));
-  const clusterProblem = $derived(
-    clusters < FAT16_MIN_CLUSTERS ? "too few for FAT16" : clusters > FAT16_MAX_CLUSTERS ? "too many for FAT16" : "",
-  );
 
   function data(): Uint8Array {
     return bytes ?? new TextEncoder().encode(content);
@@ -77,12 +44,6 @@
   }
   function removeFolder() {
     if (volume.run((v) => v.removeDir(path))) selection.select(null);
-  }
-
-  function formatDisk() {
-    const options: FormatOptions = { totalSectors, sectorsPerCluster, volumeLabel };
-    volume.format(options);
-    selection.select(null);
   }
 
   async function onLoadImage(e: Event) {
@@ -135,26 +96,7 @@
 
     <details class="format">
       <summary>Format</summary>
-      <label class="field">
-        Size
-        <select bind:value={totalSectors}>
-          {#each SIZES as s}<option value={s.totalSectors}>{s.label}</option>{/each}
-        </select>
-      </label>
-      <label class="field">
-        Sectors per cluster
-        <select bind:value={sectorsPerCluster}>
-          {#each CLUSTER_SIZES as n}<option value={n}>{n}</option>{/each}
-        </select>
-      </label>
-      <p class="cluster-count muted">
-        {clusters.toLocaleString()} clusters{#if clusterProblem}{" "}· <span class="warn">{clusterProblem}</span>{/if}
-      </p>
-      <label class="field">
-        Volume label
-        <input class="mono" type="text" maxlength="11" bind:value={volumeLabel} />
-      </label>
-      <button onclick={formatDisk} disabled={!!clusterProblem}>Format disk</button>
+      <FormatPanel />
     </details>
 
     <label class="field">

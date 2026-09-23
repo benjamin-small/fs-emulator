@@ -1,6 +1,5 @@
 <script lang="ts">
   import type { TreeNode } from "../core/tree";
-  import { clusterByteRange } from "../core/attribution";
   import { selection } from "../state/selection.svelte";
   import { volume } from "../state/volume.svelte";
   import TreeNodeView from "./TreeNodeView.svelte";
@@ -12,7 +11,7 @@
 
   function pick() {
     selection.select(node.path);
-    if (node.firstCluster >= 2) selection.jumpTo(clusterByteRange(volume.geometry, node.firstCluster).start);
+    if (node.firstUnit !== null) selection.jumpTo(volume.adapter.unitByteRange(node.firstUnit).start);
   }
 </script>
 
@@ -25,7 +24,7 @@
     {/if}
     <button class="row-btn" role="option" class:selected={isSelected} aria-selected={isSelected} onclick={pick}>
       <span class="name">{node.name}</span>
-      <span class="meta mono muted">{node.size.toLocaleString()} B · {node.firstCluster >= 2 ? `first cluster ${node.firstCluster}` : "no data"}</span>
+      <span class="meta mono muted">{node.size.toLocaleString()} B · {node.firstUnit !== null ? `first ${volume.adapter.unit.singular} ${node.firstUnit}` : "no data"}</span>
     </button>
   </div>
   {#if node.isDir && open}

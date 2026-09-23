@@ -1,4 +1,4 @@
-import { findEntrySlots } from "../core/direntry";
+import { findEntrySlots } from "../fs/fat16/direntry";
 import type { Scenario } from "../state/scenarios.svelte";
 
 const DIR = "/DOCS";

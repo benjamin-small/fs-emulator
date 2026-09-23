@@ -1,9 +1,10 @@
 <script lang="ts">
-  import { attrAtOffset, clusterByteRange } from "../core/attribution";
-  import { clusterState } from "../core/fatchain";
-  import { layers } from "../state/layers.svelte";
-  import { selection } from "../state/selection.svelte";
-  import { volume } from "../state/volume.svelte";
+  import { attrAtOffset } from "../../core/attribution";
+  import { layers } from "../../state/layers.svelte";
+  import { selection } from "../../state/selection.svelte";
+  import { volume } from "../../state/volume.svelte";
+  import { clusterState } from "./fatchain";
+  import { asFat16 } from "./index";
 
   const CELL = 6, GAP = 1, MAX_HEIGHT = 260;
 
@@ -12,7 +13,11 @@
   let width = $state(0);
   let hoverCluster = $state<number | null>(null);
 
-  const clusterCount = $derived(volume.geometry.clusterCount);
+  // The FAT view of the volume's adapter: `fat` (the table), `unitCount`, `unitByteRange`.
+  // Its caches are plain fields refreshed per op, not reactive, so every `$derived` and
+  // `$effect` below that reads them reads `volume.epoch` first (the rule in fs/adapter.ts).
+  const fs = $derived(asFat16(volume.adapter));
+  const clusterCount = $derived((volume.epoch, fs.unitCount));
   const cols = $derived(Math.max(1, Math.floor(width / (CELL + GAP))));
   const rows = $derived(Math.max(1, Math.ceil(clusterCount / cols)));
   const canvasWidth = $derived(Math.max(1, Math.floor(width)));
@@ -48,7 +53,7 @@
 
   function overlapsDiff(c: number): boolean {
     if (!layers.diff.length) return false;
-    const { start, end } = clusterByteRange(volume.geometry, c);
+    const { start, end } = fs.unitByteRange(c);
     for (const iv of layers.diff) if (iv.start < end && iv.end > start) return true;
     return false;
   }
@@ -71,7 +76,7 @@
     const ink = style.getPropertyValue("--ink").trim();
     const own = (i: number) => style.getPropertyValue(`--own-${i}`).trim();
 
-    const fat = volume.fat;
+    const fat = fs.fat;
     const attribution = volume.attribution;
 
     for (let c = 2; c <= clusterCount + 1; c++) {
@@ -82,8 +87,8 @@
       let fill = hairline;
       if (state === "bad") fill = diffInk;
       else {
-        const idx = attribution.ownerByCluster[c];
-        if (idx >= 0) fill = own(attribution.colorByCluster[c]);
+        const idx = attribution.ownerByUnit[c];
+        if (idx >= 0) fill = own(attribution.colorByUnit[c]);
       }
       ctx.fillStyle = fill;
       ctx.fillRect(x, y, CELL, CELL);
@@ -122,7 +127,7 @@
     // there gets a dashed outline here, so the map shows where in the whole disk
     // the hovered byte lives.
     if (selection.hoverOffset !== null) {
-      const c = attrAtOffset(attribution, selection.hoverOffset).cluster;
+      const c = attrAtOffset(attribution, selection.hoverOffset).unit;
       if (c !== undefined) {
         const { x, y } = cellRect(c);
         ctx.save();
@@ -143,17 +148,18 @@
   function onLeave() { hoverCluster = null; }
   function onClick() {
     if (hoverCluster === null) return;
-    const idx = volume.attribution.ownerByCluster[hoverCluster];
+    const idx = volume.attribution.ownerByUnit[hoverCluster];
     if (idx >= 0) selection.select(volume.attribution.owners[idx].path);
-    selection.jumpTo(clusterByteRange(volume.geometry, hoverCluster).start);
+    selection.jumpTo(fs.unitByteRange(hoverCluster).start);
   }
 
   const caption = $derived.by(() => {
     if (hoverCluster === null) return "";
-    const entry = volume.fat[hoverCluster];
+    volume.epoch;
+    const entry = fs.fat[hoverCluster];
     if (!entry) return "";
     const state = clusterState(entry);
-    const idx = volume.attribution.ownerByCluster[hoverCluster];
+    const idx = volume.attribution.ownerByUnit[hoverCluster];
     const owner = idx >= 0 ? volume.attribution.owners[idx].path : "—";
     return `cluster ${hoverCluster} · ${state} · ${owner}`;
   });
@@ -165,5 +171,5 @@
   <div class="fatmap-wrap" bind:this={wrap} style:max-height="{MAX_HEIGHT}px">
     <canvas bind:this={canvas} onmousemove={onMove} onmouseleave={onLeave} onclick={onClick} aria-label="FAT cluster map"></canvas>
   </div>
-  <p class="mono muted fatmap-caption">{caption || " "}</p>
+  <p class="mono muted fatmap-caption">{caption || " "}</p>
 </section>

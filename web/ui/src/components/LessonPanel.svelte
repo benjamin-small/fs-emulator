@@ -16,9 +16,12 @@
   // App.svelte renders this only while a scenario is running, so every read below has a
   // current scenario behind it; the `?.`s are for the type checker, not for a real case.
   const isLast = $derived(!!scenarios.current && scenarios.index === scenarios.current.steps.length - 1);
-  const lookAt = $derived(
-    describeFocus(scenarios.focus, volume.geometry, (sector) => attrAtSector(volume.attribution, sector).regionName),
-  );
+  // `describeFocus` reads the adapter's unit space (plain caches), so this derived reads
+  // `volume.epoch` first (the rule in fs/adapter.ts).
+  const lookAt = $derived.by(() => {
+    volume.epoch;
+    return describeFocus(scenarios.focus, volume.adapter, (sector) => attrAtSector(volume.attribution, sector).regionName);
+  });
 
   let titleEl = $state<HTMLHeadingElement>();
   let cardEl = $state<HTMLElement>();
