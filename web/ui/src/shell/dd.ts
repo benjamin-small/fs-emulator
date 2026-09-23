@@ -25,13 +25,14 @@ export interface DdOpts {
 }
 
 export const OPERAND_HELP =
-  "operands: if= of= bs= count= skip= seek= (quote them, e.g. 'if=/dev/hda', because = is reserved by the shell; or write --if=/dev/hda)";
+  "operands: if= of= bs= count= skip= seek= (classic form, e.g. dd if=/dev/hda count=1; or the flag form, --if=/dev/hda)";
 
 const isDdKey = (k: string): k is DdKey => (DD_KEYS as readonly string[]).includes(k);
 
 /**
- * Merge `--if/--of/--bs/--count/--skip/--seek` flags (the documented form is `--if=/dev/hda`)
- * with quoted classic `'if=/dev/hda'` operands. The same key from both sources, or twice
+ * Merge `--if/--of/--bs/--count/--skip/--seek` flags with classic `if=/dev/hda` operands,
+ * which browser-terminal 0.3.0 lexes unquoted and passes as positional strings (quotes are
+ * needed only for a value with a space). The same key from both sources, or twice
  * among the operands, is an error; so is any operand that is not `key=value` with a known key.
  * `bs` defaults to 512 and must be positive; `count`, `skip`, `seek` take sizes too (so
  * `--count=1k` works) and must be non-negative.

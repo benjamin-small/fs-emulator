@@ -638,7 +638,7 @@ function ddXxdCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
     spec: {
       name: "dd",
       summary: "Copy blocks between files, /dev/hda and /dev/zero (at most 1 MiB per run)",
-      rest: { name: "operand", shape: "str", desc: "quoted classic operands: 'if=/dev/hda' 'bs=512' 'count=1'" },
+      rest: { name: "operand", shape: "str", desc: "classic operands: if=/dev/hda bs=512 count=1" },
       flags: [
         { long: "if", shape: "str", desc: "source path (default: the piped input)" },
         { long: "of", shape: "str", desc: "destination path (default: return the bytes down the pipe)" },

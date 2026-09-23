@@ -22,11 +22,17 @@ describe("parseDd", () => {
     });
     expect(parseDd({ bs: "1k", count: "2" }, [])).toEqual({ bs: 1024, count: 2, skip: 0, seek: 0 });
   });
-  it("accepts quoted classic key=value operands and merges them with flags", () => {
+  it("accepts classic key=value operands and merges them with flags", () => {
     expect(parseDd({}, ["if=/dev/zero", "of=/dev/hda", "bs=512", "seek=0", "count=1"])).toEqual({
       if: "/dev/zero", of: "/dev/hda", bs: 512, count: 1, skip: 0, seek: 0,
     });
     expect(parseDd({ if: "/dev/hda" }, ["count=1"])).toEqual({ if: "/dev/hda", bs: 512, count: 1, skip: 0, seek: 0 });
+  });
+  it("takes `dd if=/dev/hda count=1` exactly as browser-terminal 0.3.0 lexes it", () => {
+    // Unquoted `key=value` barewords are positional strings now
+    // (https://github.com/benjamin-small/browser-terminal/issues/14), so this is the
+    // argument list the engine hands the command for that line — no flags at all.
+    expect(parseDd({}, ["if=/dev/hda", "count=1"])).toEqual({ if: "/dev/hda", bs: 512, count: 1, skip: 0, seek: 0 });
   });
   it("rejects a key given twice, across flags and operands", () => {
     const e = thrown(() => parseDd({ if: "/dev/hda" }, ["if=/dev/zero"]));
@@ -108,7 +114,7 @@ describe("dd copies", () => {
     expect(host.history).toEqual([]);
   });
 
-  it("accepts the quoted classic operand form", async () => {
+  it("accepts the classic operand form, unquoted, as the engine passes it", async () => {
     const { host, defs } = setup();
     const r = await call(defs, "dd", { positionals: ["if=/dev/hda", "bs=256", "skip=2", "count=1"] });
     const bytes = r.value as Uint8Array;

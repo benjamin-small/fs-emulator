@@ -101,7 +101,7 @@ timeline along the bottom.
 
 The **Terminal** button in the top bar (or the backtick key, from anywhere
 that is not a text field) opens a drawer along the bottom running a shell
-from `@benjamin-small/browser-terminal`, pinned at 0.2.0. The volume is
+from `@benjamin-small/browser-terminal`, pinned at 0.3.0. The volume is
 mounted at `/mnt` and the raw disk is `/dev/hda`; `/dev/zero` and `/dev/null`
 exist too. Every write is an ordinary journaled operation, so it lands in
 the timeline, the dump, the ribbon, and the tree exactly like a form action,
@@ -110,12 +110,8 @@ and it rewinds the same way. The drawer bar can be dragged to resize
 the Close button, or `exit` close it, and `help` or `<command> --help`
 describe every command.
 
-The shell already hands the terminal its working directory as a prompt
-prefix — on startup and after every `cd` or `mkfs` — so the prompt reads
-`/mnt/DOCS ❯` once the pin moves to browser-terminal 0.3.0, which adds
-`setPrompt` ([issue
-#12](https://github.com/benjamin-small/browser-terminal/issues/12)). Under
-the pinned 0.2.0 the call is a no-op and the prompt is the bare `❯`.
+The prompt shows the working directory: the shell hands it to the terminal on
+startup and after every `cd` or `mkfs`, so it reads `/mnt/DOCS ❯`.
 
 | Command | Does |
 |---|---|
@@ -123,7 +119,7 @@ the pinned 0.2.0 the call is a no-op and the prompt is the bare `❯`.
 | `cd [path]`, `pwd` | Change or print the working directory; `.` and `..` resolve client-side, `cd` alone returns to `/mnt`, and the stored path takes the on-disk case |
 | `cat <path> [--bytes]` | Print a file as UTF-8 text, or as raw bytes for pipes; refuses files over 1 MiB either way (use `dd`) and warns on binary content |
 | `write <path> [--append] [--at <addr>]` | Write the piped input, creating or overwriting the file (`echo hi \| write /mnt/A.TXT`). `--append` reads, concatenates, and rewrites; `write /dev/hda --at <addr>` patches the disk |
-| `dd --if=<src> --of=<dst> --bs=N --count=N --skip=N --seek=N` | Copy bytes between files and the raw disk; quoted `'if=/dev/hda'` operands also work; at most 1 MiB per invocation; `/dev/zero` needs `--count` |
+| `dd if=<src> of=<dst> bs=N count=N skip=N seek=N` | Copy bytes between files and the raw disk, in the classic operand form; `--if=<src>` and the rest work as flags too. At most 1 MiB per invocation; `/dev/zero` needs `count=` |
 | `xxd [path] [--offset --len --cols]` / `hexdump` | Hex dump of a path, piped bytes, or piped text; on `/dev/hda` one sector at absolute addresses that match the dump |
 | `mkdir`, `rmdir`, `rm`, `touch`, `cp` | The usual; `cp` into an existing directory keeps the source name |
 | `stat <path>` | Name, type, size, timestamps, first cluster, chain, entry offset, FAT entry offset, data offset; `stat /dev/hda` reports the sector size and count |
@@ -132,6 +128,21 @@ the pinned 0.2.0 the call is a no-op and the prompt is the bare `❯`.
 | `select [path]` | Select a file in every pane, or clear the selection |
 | `mkfs [--sectors --spc --label --root-entries --fats --reserved]` | Format a fresh disk; the timeline is cleared |
 | `exit` | Close the drawer |
+
+`>`, `>>`, and `<` resolve through the same tree:
+
+```
+echo hi > /mnt/A.TXT            # create, or overwrite
+cat /mnt/A.TXT >> /mnt/LOG.TXT  # read, concatenate, rewrite the whole file
+str upcase < /mnt/A.TXT         # feed a file to the first command
+```
+
+A `>` or `>>` is the same journaled write `write` performs — one timeline
+step, the file selected afterwards — and `<` reads the file as UTF-8 text
+under the same 1 MiB cap as `cat`. `/dev/null` discards, and `/dev/hda` and
+`/dev/zero` are refused in both directions: a redirect cannot say *where* on
+the disk to put the bytes, so use `dd of=/dev/hda seek=<blocks>` to write and
+`dd if=/dev/hda | xxd` to read.
 
 The "Work from the shell" scenario walks through these commands:
 
@@ -169,25 +180,27 @@ a parsable boot sector back to `/dev/hda` (or `mkfs`) clears the corruption.
 
 Things to know:
 
-- There is no `>`, `>>`, or `<` yet: the shell reserves them. Pipe into
-  `write` or `dd --of=` instead.
-- `=` is not a bareword character, so write `dd --if=/dev/hda` (the
-  documented form) or quote the classic spelling: `dd 'if=/dev/hda'`.
+- Quotes are only needed for a value with a space in it
+  (`dd 'of=/mnt/MY FILE.BIN'`); `dd if=/dev/hda count=1` needs none.
 - Strings cross pipes as UTF-8 text; binary data crosses as raw bytes, which
   the terminal shows as `<N bytes>`, `length` counts, and `to json` encodes as
-  hex. `cat --bytes`, `dd`, `xxd`, and `write` all speak them. `echo a b`
+  hex. `cat --bytes`, `dd`, `xxd`, and `write` all speak them — so
+  `cat --bytes /mnt/A.TXT | xxd` prints what `<13 bytes>` was hiding. `echo a b`
   produces a list, which `write` joins with one space.
 - A command with nothing piped into it receives an empty list from
   browser-terminal, not `null`; the shell treats both as "no input" (`write`,
   `dd`, and `xxd` all check this the same way).
 - While the timeline is rewound, reads show the latest state and print one
-  warning each; any write snaps the timeline back to now first.
+  warning each; any write snaps the timeline back to now first. A `<` redirect
+  reads the latest state too, but silently: a redirect hook has no channel to
+  warn on.
 - `dd` and `cat` refuse more than 1 MiB per invocation: every byte is
   journaled twice in Rust and again in the UI's history.
-- The working directory is one value per page, not per shell session.
-  Anything that replaces the volume — `mkfs`, the Actions panel's Format,
-  starting a learning scenario, or loading a raw image — returns the shell to
-  `/mnt`, since the directory it was in no longer exists.
+- The working directory is one value per page, not per shell session: the
+  prompt prefix is engine-wide, so two sessions could not show different
+  directories anyway. Anything that replaces the volume — `mkfs`, the Actions
+  panel's Format, starting a learning scenario, or loading a raw image —
+  returns the shell to `/mnt`, since the directory it was in no longer exists.
 - `echo` is the shell's own builtin and behaves as in browser-terminal.
 - The terminal and its wasm load on first open, so the initial page load is
   unchanged.
