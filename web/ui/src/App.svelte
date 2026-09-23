@@ -76,6 +76,9 @@
       <span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span>
     </button>
   </header>
+  <!-- The current step sits with the other controls, under the picker and the Terminal
+       button, so the right column is left to state and data (Lesson, Strings, Inspector). -->
+  <div id="step-slot" class="step-slot"><StepPanel /></div>
   <div id="ribbon-slot" class="ribbon-slot"><Ribbon /></div>
   <div class="grid">
     <aside class="col left">
@@ -86,7 +89,6 @@
     <main class="col center"><HexView /></main>
     <aside class="col right">
       {#if scenarios.current}<LessonPanel />{/if}
-      <StepPanel />
       <StringsPanel />
       <Inspector />
     </aside>

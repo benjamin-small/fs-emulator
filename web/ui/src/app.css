@@ -21,7 +21,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
    last layout (the ribbon's canvas, xterm's screen layers). With `auto`, narrowing the window
    left the column at the old width, the page scrolled sideways, and the resize observers that
    would refit those children never saw a smaller box. */
-.app { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr) auto; grid-auto-rows: var(--term-h, 220px); height: 100vh; gap: 8px; padding: 8px; }
+.app { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto auto minmax(0, 1fr) auto; grid-auto-rows: var(--term-h, 220px); height: 100vh; gap: 8px; padding: 8px; }
 /* Wide viewports (placementFor in src/core/terminalPlacement.ts, mirrored by App.svelte as
    `.term-side`): the terminal is a column down the right side spanning every row, sized by
    `--term-w`. It is placed explicitly in column 2, so the implicit column exists only while
@@ -135,7 +135,15 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .fatmap-caption { margin: 6px 0 0; font-size: 11px; min-height: 14px; }
 
 /* Step panel */
-.step .events { list-style: none; padding: 0; margin: 8px 0 0; display: flex; flex-direction: column; gap: 2px; font-size: 12px; }
+/* Step strip (under the top bar): one wrapping row of heading, counter, op, sector buttons,
+   and events. */
+.step { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; padding: 5px 10px; }
+.step > h2 { margin: 0; font: 500 13px var(--font-display); }
+.step p { margin: 0; }
+.step .counter { color: var(--ink-muted); }
+.step .btn-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.step .events { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 2px 14px; font-size: 12px; }
+.step .events .link { text-align: left; }
 
 /* Timeline */
 .timeline { padding: 4px 2px; }

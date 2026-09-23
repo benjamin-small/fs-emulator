@@ -31,10 +31,11 @@ pnpm preview   # serve the production build
 
 ## Panes
 
-Layout: a disk ribbon runs full width above a three-column grid — files,
-FAT map, and actions on the left; the hex dump in the center; byte
-inspector, strings, and the current step on the right — with an operation
-timeline along the bottom.
+Layout: the current step runs as a strip under the top bar, next to the
+other controls; a disk ribbon runs full width above a three-column grid —
+files, FAT map, and actions on the left; the hex dump in the center; the
+lesson card, strings, and the byte inspector on the right — with an
+operation timeline along the bottom.
 
 - **Ribbon** — the entire disk as one strip, one column per pixel of its
   width, colored by owning file or region (or a hairline for free space),
@@ -66,8 +67,9 @@ timeline along the bottom.
 - **Strings** — printable runs (4+ bytes) in the visible window, or the
   whole disk on request, each with its offset and owner; click one to jump
   to it.
-- **Step / Timeline** — the current operation's plain-language events and
-  changed sectors, with Prev/Next/Play scrubbing through history. Replay
+- **Step** (strip under the top bar) **/ Timeline** (bottom) — the current
+  operation's plain-language events and changed sectors, with Prev/Next/Play
+  scrubbing through history. Replay
   reconstructs the disk as it was after any step and highlights what that
   step changed, in amber, in both the dump and the ribbon. Running a command
   never moves the dump: it highlights the changed bytes and leaves the view
@@ -81,7 +83,7 @@ timeline along the bottom.
   disk, make a directory, and work from the shell (the same operations typed
   as commands, plus a raw-sector read and a raw patch of the volume label).
   Pick one in the top bar and press **Start**; it formats a fresh disk and a
-  **Lesson** card appears at the top of the right column, above Step. The
+  **Lesson** card appears at the top of the right column, above Strings. The
   card holds the scenario title, the step number, the step's title and text,
   a "Look at:" line naming what the step pointed the UI at (a file, a
   cluster, a sector, an offset and its region, the remnant hatching, the
