@@ -121,3 +121,8 @@ on every pull request.
 - `docs/superpowers/plans/`: the task-by-task implementation plans each spec
   was built from. They record how the code came to be, not how it must stay;
   the specs and the code win where they differ.
+
+## License
+
+MIT. See [LICENSE](LICENSE). The Cargo workspace and both web packages declare
+the same license.
