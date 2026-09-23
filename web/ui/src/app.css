@@ -16,12 +16,17 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 /* The terminal drawer is the implicit fifth row: `grid-auto-rows` sizes it from `--term-h`
    (set on .app by App.svelte), and a hidden drawer generates no grid item, so it adds
    neither a track nor a gap. */
-.app { display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; grid-auto-rows: var(--term-h, 220px); height: 100vh; gap: 8px; padding: 8px; }
+/* The single column is `minmax(0, 1fr)`, never the implicit `auto`: an auto track grows to
+   the max-content of its children, and two of them carry pixel widths measured from their
+   last layout (the ribbon's canvas, xterm's screen layers). With `auto`, narrowing the window
+   left the column at the old width, the page scrolled sideways, and the resize observers that
+   would refit those children never saw a smaller box. */
+.app { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr) auto; grid-auto-rows: var(--term-h, 220px); height: 100vh; gap: 8px; padding: 8px; }
 /* Wide viewports (placementFor in src/core/terminalPlacement.ts, mirrored by App.svelte as
    `.term-side`): the terminal is a column down the right side spanning every row, sized by
    `--term-w`. It is placed explicitly in column 2, so the implicit column exists only while
    the drawer is rendered; hidden, it adds neither a track nor a gap. */
-.app.term-side { grid-template-columns: minmax(0, 1fr); grid-auto-columns: var(--term-w, 500px); }
+.app.term-side { grid-auto-columns: var(--term-w, 500px); }
 .app.term-side > .terminal-drawer { grid-column: 2; grid-row: 1 / -1; position: relative; }
 .topbar { display: flex; align-items: center; gap: 16px; }
 .topbar h1 { font: 500 18px var(--font-display); margin: 0; }
