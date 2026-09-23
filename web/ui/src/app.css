@@ -19,6 +19,13 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .app { display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; grid-auto-rows: var(--term-h, 220px); height: 100vh; gap: 8px; padding: 8px; }
 .topbar { display: flex; align-items: center; gap: 16px; }
 .topbar h1 { font: 500 18px var(--font-display); margin: 0; }
+/* Theme switch: a button with role="switch"; the track colour is the checked (dark) state. */
+.switch { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; background: none; border: 0; padding: 2px 4px; font: 500 12px var(--font-display); color: var(--ink-muted); }
+.switch:hover { color: var(--ink); }
+.switch-track { position: relative; width: 28px; height: 16px; border-radius: 8px; background: var(--hairline); border: 1px solid var(--ink-muted); transition: background 0.15s, border-color 0.15s; }
+.switch-knob { position: absolute; top: 1px; left: 1px; width: 12px; height: 12px; border-radius: 50%; background: var(--ink); transition: left 0.15s, background 0.15s; }
+.switch[aria-checked="true"] .switch-track { background: var(--focus); border-color: var(--focus); }
+.switch[aria-checked="true"] .switch-knob { left: 13px; background: var(--canvas); }
 .grid { display: grid; grid-template-columns: 220px minmax(0, 1fr) 260px; gap: 8px; min-height: 0; }
 .col { display: flex; flex-direction: column; gap: 8px; min-height: 0; overflow: auto; }
 /* Side panels keep their natural height and the column scrolls; only the Files tree and
@@ -165,7 +172,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 /* Terminal drawer */
 /* Only layout here: since browser-terminal 0.3.0 the panes' colours and font come from
    `CreateOptions.terminal` and `setTheme`, which TerminalPanel fills from the same tokens
-   (src/core/terminalTheme.ts) and re-pushes when `prefers-color-scheme` flips. */
+   (src/core/terminalTheme.ts) and re-pushes when the theme switch flips. */
 .terminal-drawer { display: flex; flex-direction: column; min-height: 0; padding: 0; overflow: hidden; }
 .terminal-drawer[hidden] { display: none; }
 .terminal-drawer:focus-within { border-color: var(--focus); }

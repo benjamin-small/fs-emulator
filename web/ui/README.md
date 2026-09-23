@@ -241,6 +241,7 @@ into it, including `[`, `]`, `/`, `n`, `p`, and the backtick, never reach the
 app's shortcuts, so close the drawer with `exit`, the Close button, or
 `Escape` on its bar.
 
-Respects `prefers-color-scheme` for light/dark and `prefers-reduced-motion`
-(the diff fade, the ribbon's flash, and the timeline's Play speed all back
-off).
+Dark by default, whatever the OS prefers: the **Dark mode** switch at the
+right of the top bar flips to light, remembers the choice across reloads, and
+the terminal follows. Respects `prefers-reduced-motion` (the diff fade, the
+ribbon's flash, and the timeline's Play speed all back off).

@@ -16,6 +16,7 @@
   import { focusHistoryStep } from "./state/navigate.svelte";
   import { scenarios } from "./state/scenarios.svelte";
   import { terminal } from "./state/terminal.svelte";
+  import { theme } from "./state/theme.svelte";
   import { volume } from "./state/volume.svelte";
 
   /** Scrub to `n` and recenter the dump on what that step changed, like the Timeline's
@@ -62,6 +63,18 @@
     >Terminal</button>
     <div id="scenario-slot"><ScenarioPanel /></div>
     <StatusLine />
+    <button
+      id="theme-toggle"
+      type="button"
+      role="switch"
+      class="switch"
+      aria-checked={theme.isDark}
+      title="Switch between dark and light"
+      onclick={() => theme.toggle()}
+    >
+      <span>Dark mode</span>
+      <span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span>
+    </button>
   </header>
   <div id="ribbon-slot" class="ribbon-slot"><Ribbon /></div>
   <div class="grid">

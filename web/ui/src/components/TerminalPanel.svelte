@@ -15,6 +15,7 @@
   import { createStoreHost } from "../shell/storeHost.svelte";
   import { MOUNT, Vfs, promptFor } from "../shell/vfs";
   import { terminal } from "../state/terminal.svelte";
+  import { theme } from "../state/theme.svelte";
   import { volume } from "../state/volume.svelte";
 
   let mountEl = $state<HTMLDivElement>();
@@ -40,18 +41,18 @@
   }
 
   /** The app's tokens as xterm settings. Read off the document each time, so the values
-   *  are whatever `prefers-color-scheme` currently resolves them to. */
+   *  are whatever `data-theme` on the root currently resolves them to. */
   function currentTheme() {
     return themeFromTokens(getComputedStyle(document.documentElement));
   }
 
-  // The tokens swap under `prefers-color-scheme: dark`, but xterm holds its theme in JS
-  // rather than reading CSS, so the swap has to be pushed in. Registered with the instance
-  // and removed in disposeTerminal.
-  const darkQuery = window.matchMedia("(prefers-color-scheme: dark)");
-  function onSchemeChange() {
-    bt?.setTheme(currentTheme().theme);
-  }
+  // The tokens swap when the switch sets `data-theme`, but xterm holds its theme in JS
+  // rather than reading CSS, so the swap has to be pushed in. The store puts the attribute
+  // on the root before this effect runs, so the computed tokens are already the new ones.
+  $effect(() => {
+    void theme.current;
+    untrack(() => bt?.setTheme(currentTheme().theme));
+  });
 
   /**
    * Create the terminal on first use. Called after the drawer is visible so the
@@ -68,10 +69,10 @@
     terminal.error = null;
     creating = (async () => {
       const { BrowserTerminal } = await import("@benjamin-small/browser-terminal");
-      const { theme, fontFamily } = currentTheme();
+      const { theme: xtermTheme, fontFamily } = currentTheme();
       // 12px matches the dump's `--dump-size` neighbourhood and keeps a usable number of
       // columns in a 220px drawer; the library's own default is 13.
-      const term = await BrowserTerminal.create({ mount, terminal: { theme, fontFamily, fontSize: 12 } });
+      const term = await BrowserTerminal.create({ mount, terminal: { theme: xtermTheme, fontFamily, fontSize: 12 } });
       try {
         // Commands read live store fields through the host on every call, so registering
         // once is enough (same pattern as browser-terminal's Svelte demo).
@@ -92,7 +93,6 @@
         throw e;
       }
       bt = term;
-      darkQuery.addEventListener("change", onSchemeChange);
       terminal.ready = "ready";
     })()
       .catch((e: unknown) => {
@@ -133,7 +133,6 @@
   });
 
   function disposeTerminal() {
-    darkQuery.removeEventListener("change", onSchemeChange);
     bt?.dispose();
     bt = null;
     host = null;
