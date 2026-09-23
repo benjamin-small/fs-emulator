@@ -14,6 +14,30 @@ enum Inner {
     Fat(FatFs),
 }
 
+/// The family an image's signature names; `from_image` picks the parser from it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Detected {
+    Fat,
+    Unknown,
+}
+
+/// Detection rule: FAT when the image is at least one 512-byte sector long
+/// and bytes 510..512 are `55 AA`. Whether the BPB inside parses is
+/// `FatFs::from_image`'s job, not this function's.
+///
+/// Reserved for the ext slice: an ext superblock is recognised by the `u16le`
+/// at offset 1080 equal to `0xEF53`, and that check must run before the FAT
+/// check because a bootable ext image can also carry `55 AA` at 510. Once
+/// `Inner::Ext` exists, `Unknown` becomes
+/// `Unsupported("no recognisable filesystem signature")` in `from_image`.
+fn detect(bytes: &[u8]) -> Detected {
+    if bytes.len() >= 512 && bytes[510..512] == [0x55, 0xAA] {
+        Detected::Fat
+    } else {
+        Detected::Unknown
+    }
+}
+
 /// Largest volume the wrapper will allocate in browser memory.
 pub const MAX_VOLUME_BYTES: u64 = 256 * 1024 * 1024;
 
@@ -77,7 +101,8 @@ impl Volume {
         }
     }
 
-    /// The FAT volume, or a `NotFat` error once other filesystems exist.
+    /// The FAT volume: `Ok` for the only variant today; the `NotFat` arm
+    /// arrives with `Inner::Ext`.
     fn fat(&self) -> Result<&FatFs, JsValue> {
         match &self.inner {
             Inner::Fat(f) => Ok(f),
@@ -126,7 +151,13 @@ impl Volume {
                 &format!("volume of {len} bytes exceeds the {MAX_VOLUME_BYTES}-byte limit"),
             ));
         }
-        let fs = FatFs::from_image(bytes).map_err(to_js)?;
+        let fs = match detect(&bytes) {
+            // Both arms parse as FAT today, so an image without the signature
+            // still fails inside `FatFs::from_image` with the same
+            // `CorruptImage` text and code as before. The ext slice adds an
+            // `Ext` arm and turns `Unknown` into `Unsupported`.
+            Detected::Fat | Detected::Unknown => FatFs::from_image(bytes).map_err(to_js)?,
+        };
         Ok(Volume {
             inner: Inner::Fat(fs),
         })
@@ -288,6 +319,17 @@ impl Volume {
             .to_vec())
     }
 
+    /// The `CorruptImage` message a raw write left behind (the on-disk
+    /// metadata no longer parses), or `null` while the volume is mounted.
+    /// Families without a gate answer `null` always.
+    #[wasm_bindgen(unchecked_return_type = "string | null")]
+    pub fn corruption(&self) -> Result<JsValue, JsValue> {
+        Ok(match self.fs().corruption() {
+            Some(err) => JsValue::from_str(&err.to_string()),
+            None => JsValue::NULL,
+        })
+    }
+
     /// A copy of the whole disk image.
     pub fn image(&self) -> Vec<u8> {
         self.fs().disk().as_bytes().to_vec()
@@ -305,16 +347,6 @@ impl Volume {
     #[wasm_bindgen(unchecked_return_type = "Geometry")]
     pub fn geometry(&self) -> Result<JsValue, JsValue> {
         to_value(&dto::Geometry::from(self.fat()?.geometry()))
-    }
-
-    /// The `CorruptImage` message while the boot sector does not parse after
-    /// a `writeRaw`, or `null` while the volume is mounted.
-    #[wasm_bindgen(unchecked_return_type = "string | null")]
-    pub fn corruption(&self) -> Result<JsValue, JsValue> {
-        Ok(match self.fat()?.corruption() {
-            Some(err) => JsValue::from_str(&err.to_string()),
-            None => JsValue::NULL,
-        })
     }
 
     /// Every entry of one FAT copy, indexed by cluster; empty for a copy that does not exist.
@@ -368,5 +400,30 @@ impl Volume {
             .map(Into::into)
             .collect();
         to_value(&list)
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests {
+    use super::{detect, Detected};
+
+    #[test]
+    fn detect_names_fat_by_the_55_aa_signature_in_a_full_first_sector() {
+        let mut img = vec![0u8; 512];
+        assert_eq!(detect(&img), Detected::Unknown);
+        img[510] = 0x55;
+        img[511] = 0xAA;
+        assert_eq!(detect(&img), Detected::Fat);
+        assert_eq!(detect(&img[..511]), Detected::Unknown);
+        assert_eq!(detect(&[]), Detected::Unknown);
+        img[510] = 0xAA;
+        img[511] = 0x55;
+        assert_eq!(detect(&img), Detected::Unknown);
+        let mut long = vec![0xFFu8; 4096];
+        long[510] = 0x55;
+        long[511] = 0xAA;
+        assert_eq!(detect(&long), Detected::Fat);
+        let real = fat::FatFs::format(fat::FormatOptions::default()).unwrap();
+        assert_eq!(detect(real.disk().as_bytes()), Detected::Fat);
     }
 }

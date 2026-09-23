@@ -2,7 +2,7 @@
 //! live on the concrete filesystem types because their options differ.
 
 use crate::layout::{Annotation, Region};
-use crate::{DateTime, Disk, EntryInfo, OpRecord, Result};
+use crate::{DateTime, Disk, EntryInfo, Error, OpRecord, Result};
 
 pub trait FileSystem {
     /// `"FAT16"`, later `"FAT32"`, `"ext2"`.
@@ -29,6 +29,11 @@ pub trait FileSystem {
     /// makes path operations fail with `CorruptImage` until a later raw
     /// write repairs it.
     fn write_raw(&mut self, offset: u64, bytes: &[u8]) -> Result<OpRecord>;
+    /// The `CorruptImage` a raw write left behind, or `None` while mounted;
+    /// families without a gate keep the default.
+    fn corruption(&self) -> Option<&Error> {
+        None
+    }
 
     fn disk(&self) -> &Disk;
     fn layout(&self) -> Vec<Region>;
@@ -109,6 +114,7 @@ mod tests {
             history: Vec::new(),
         });
         assert_eq!(fs.fs_type(), "null");
+        assert!(fs.corruption().is_none());
         assert_eq!(fs.layout()[0].kind, crate::layout::RegionKind::Other);
         assert_eq!(fs.list_dir("/").unwrap(), Vec::new());
     }

@@ -30,6 +30,12 @@ These hold for every filesystem the project adds.
   strings overlay, and timeline read `layout()` regions and the journal, not
   FAT structures. Filesystem-specific panels (the FAT map, the entry and chain
   trace, the scenarios) sit beside them.
+- **Per-family UI knowledge lives behind `FsAdapter`.** What the explorer
+  knows about one family (its allocation-unit noun, byte ownership, chain
+  tracing, `stat` facts, the Format form, the map panel) is one adapter under
+  `web/ui/src/fs/<family>/`, chosen from `fsType()` and guarded by a
+  source-scan test (`web/ui/tests/adapterBoundary.test.ts`) that keeps family-specific wasm calls out of the rest of
+  `web/ui/src`.
 
 ## Next: FAT32 in `crates/fat`
 
@@ -112,11 +118,10 @@ allocates up to the disk size before `DiskFull`; `rm` and `rmdir` clear the
 selection even when a different file was selected; on keyboard layouts where
 backtick is a dead key only the Terminal button toggles the drawer; `readRaw`
 recomputes its display sum; `planWindow`'s message for an absent count on
-`/dev/zero` is unreachable through the runner; `fatEntryOffset` is duplicated
-between the shell's `stat` and `Inspector.svelte` until FAT32 work extracts
-it; `select` warns before validating its target; `flagGiven` and the range
-message are repeated between `commands.ts` and `dd.ts`; `commands.ts` should
-get a second module before the next command group; the loading and error
+`/dev/zero` is unreachable through the runner; `select` warns before
+validating its target; `flagGiven` and the range message are repeated
+between `commands.ts` and `dd.ts`; `commands.ts` should get a second module
+before the next command group; the loading and error
 notes in the drawer are not live regions; `TerminalStore` is only exercised
 manually; `>>` and `write --append` read the whole existing file with no cap
 before rewriting it, so appending one byte to a file larger than 1 MiB
@@ -172,8 +177,8 @@ any of this underneath it.
 4. Wasm: an `Inner` variant, a `formatXxx` constructor, `fromImage`
    detection, family-specific inspection methods with a `NotXxx` error code,
    TypeScript types for any new DTOs.
-5. UI: extend `attribution` with the new region kinds and colors, add a
-   family-specific map panel, extend the inspector and the Format panel, and
-   write scenarios that teach what is different about this filesystem.
+5. UI: implement `FsAdapter` under `web/ui/src/fs/<family>/`, register it in
+   `fs/index.ts` and `fs/panels.ts`, add its signature to `detect`, and write
+   scenarios that teach what is different about this filesystem.
 6. CI already builds every crate for `wasm32-unknown-unknown` and runs the
    web builds; nothing to add unless the crate needs a new tool.

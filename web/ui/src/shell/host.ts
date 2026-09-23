@@ -30,9 +30,10 @@ export interface ShellHost {
 export const atLatest = (h: ShellHost): boolean => h.cursor === h.historyLength - 1;
 
 /**
- * `vol.corruption()`, or `null` when the call itself throws. `corruption()` will throw
- * `NotFat` on a non-FAT volume in the future, and a read command must not die on that;
- * VolumeStore.refreshMeta guards it the same way.
+ * `vol.corruption()`, or `null` when the call itself throws. `corruption()` is on the
+ * `FileSystem` trait, so no family makes it throw `NotFat`; the guard stays so a read
+ * command never dies on a wasm boundary failure (errors.test.ts feeds it a throwing
+ * double).
  */
 export function corruptionOf(vol: Volume): string | null {
   try {
