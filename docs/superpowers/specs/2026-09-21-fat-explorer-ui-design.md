@@ -39,7 +39,7 @@ The goal is the real learning UI: a whole-disk hex dump with ASCII/strings rende
 
 **Type.** `IBM Plex Sans Condensed` 500 for panel titles and the ribbon legend; `IBM Plex Sans` 400 for body and inspector; `IBM Plex Mono` 400 for the dump, FAT map labels, offsets. Scale: 11px mono dump at 1.5 line height (16 rows per 264px), 12px captions, 13px body, 15px panel titles. Loaded from Google Fonts with `font-display: swap`; system fallbacks `ui-monospace` / `system-ui`.
 
-**Layout.** Ribbon (28px tall, full width) → three-column grid `220px minmax(0,1fr) 260px` with 8px gutters → panels are bordered surfaces with 4px radius (this is a datasheet, not cards). Below 1100px the right column tucks under the left as tabs; below 760px the dump goes full width and side panels become a bottom sheet.
+**Layout.** Ribbon (28px tall, full width) → three-column grid `220px minmax(0,1fr) 260px` with 8px gutters (*2026-09-23: the right column is 340px, so Inspector annotation lines fit unwrapped*) → panels are bordered surfaces with 4px radius (this is a datasheet, not cards). Below 1100px the right column tucks under the left as tabs; below 760px the dump goes full width and side panels become a bottom sheet.
 
 **Signature.** The disk ribbon: the entire disk as one horizontal strip, one pixel column per 32 sectors (1024 columns at 16 MiB), colored by region or owning file, with a bracket showing the current viewport and tick marks at region boundaries. Clicking scrolls the dump; hovering shows sector and owner. During replay, the ribbon flashes the columns whose bytes changed in the current step. Everything else stays quiet so this one element carries the "where did my file land" answer.
 

@@ -108,7 +108,7 @@ from `@benjamin-small/browser-terminal`, pinned at 0.3.0. The volume is
 mounted at `/mnt` and the raw disk is `/dev/hda`; `/dev/zero` and `/dev/null`
 exist too. Every write is an ordinary journaled operation, so it lands in
 the timeline, the dump, the ribbon, and the tree exactly like a form action,
-and it rewinds the same way. On viewports 1500px and wider the terminal is
+and it rewinds the same way. On viewports 1600px and wider the terminal is
 a column down the right side, resized by dragging its left edge (320px to
 half the window); narrower viewports get a drawer along the bottom, resized
 by dragging its bar (120px to 60% of the window). Both sizes persist.

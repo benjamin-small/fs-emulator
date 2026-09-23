@@ -41,7 +41,7 @@ back.
    unchanged. *(2026-09-22: the pin moved to 0.3.0, still exact.)*
 3. **Placement is a bottom drawer** owned by the explorer via
    `BrowserTerminal.create({ mount })`, toggled by a key and a button. No
-   tmux chrome. *(2026-09-23: on viewports 1500px and wider the same
+   tmux chrome. *(2026-09-23: on viewports 1600px and wider the same
    panel is a column down the right side spanning every row; the drawer stays
    for narrower ones. `placementFor` in `src/core/terminalPlacement.ts`
    decides from `window.innerWidth`.)*
@@ -320,7 +320,7 @@ more than 10% of bytes are non-text. `ls` keeps on-disk order.
 - Layout: `.app` adds `grid-auto-rows: var(--term-h, 220px)` and
   `App.svelte` sets `--term-h` on `.app` (custom properties inherit
   downward only). A hidden drawer adds no track. Under 760px the height
-  caps at 40vh. On viewports 1500px and wider `App.svelte` adds `.term-side`
+  caps at 40vh. On viewports 1600px and wider `App.svelte` adds `.term-side`
   and `--term-w` to `.app`: the drawer is placed in an implicit second column
   spanning every row, 320px to half the viewport (default 500px), resized by
   a grip on its left edge and remembered separately from the height. The

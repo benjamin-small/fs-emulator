@@ -6,12 +6,12 @@ export type TerminalPlacement = "side" | "bottom";
 
 /**
  * Narrowest viewport that gets the side column. The explorer's three columns need about
- * 1000px (220 + 260 plus a dump wide enough for sixteen bytes and their labels), and a
+ * 1080px (220 + 340 plus a dump wide enough for sixteen bytes and their ASCII), and a
  * terminal column that shows an `xxd` line unwrapped needs about 500px; below their sum
  * the drawer along the bottom is the better use of the space. Measured on the viewport,
  * not the screen, so a narrow window on a big monitor still gets the drawer.
  */
-export const TERM_SIDE_MIN_VIEWPORT = 1500;
+export const TERM_SIDE_MIN_VIEWPORT = 1600;
 
 export function placementFor(innerWidth: number): TerminalPlacement {
   return innerWidth >= TERM_SIDE_MIN_VIEWPORT ? "side" : "bottom";
