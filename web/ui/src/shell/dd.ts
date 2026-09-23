@@ -136,8 +136,12 @@ function readSource(host: ShellHost, vfs: Vfs, opts: DdOpts, input: Value): Uint
   }
 }
 
-/** Overlay `data` at `off` on the file at `path` (zero-padded; FAT has no partial writes). */
-function writeVolumeFile(host: ShellHost, path: string, display: string, off: number, data: Uint8Array, ctx: CommandCtx): void {
+/**
+ * Overlay `data` at `off` on the file at `path` (zero-padded; FAT has no partial writes).
+ * Distinct from commands.ts's `writeVolumeFile`, which replaces or appends to a whole file:
+ * this one is `dd`'s `--seek`, which places bytes inside an existing one.
+ */
+function overlayVolumeFile(host: ShellHost, path: string, display: string, off: number, data: Uint8Array, ctx: CommandCtx): void {
   const disk = host.vol.sectorCount() * host.vol.sectorSize();
   // Bounded before the allocation below: `off` is seek*bs, an unbounded non-negative integer,
   // so an unchecked --seek would either allocate a huge buffer or overflow Uint8Array's length.
@@ -187,7 +191,7 @@ export function runDd(host: ShellHost, vfs: Vfs, opts: DdOpts, input: Value, ctx
         break;
       }
       case "volume":
-        writeVolumeFile(host, dst.path, display, off, data, ctx);
+        overlayVolumeFile(host, dst.path, display, off, data, ctx);
         break;
       default:
         throw new ShellError(`${display}: Is a directory`);

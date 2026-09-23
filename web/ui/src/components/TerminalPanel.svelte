@@ -11,6 +11,7 @@
   import { themeFromTokens } from "../core/terminalTheme";
   import { createCommands } from "../shell/commands";
   import type { ShellHost } from "../shell/host";
+  import { createRedirectHandler } from "../shell/redirect";
   import { createStoreHost } from "../shell/storeHost.svelte";
   import { MOUNT, Vfs, promptFor } from "../shell/vfs";
   import { terminal } from "../state/terminal.svelte";
@@ -76,6 +77,9 @@
         // once is enough (same pattern as browser-terminal's Svelte demo).
         const created = createStoreHost(close, (prefix) => term.setPrompt(prefix));
         for (const { spec, fn } of createCommands(created, vfs)) term.registerCommand(spec, fn);
+        // `>`, `>>` and `<` resolve through the same VFS the commands do, so
+        // `echo hi > /mnt/A.TXT` is the journaled write `echo hi | write /mnt/A.TXT` is.
+        term.setRedirectHandler(createRedirectHandler(created, vfs));
         // Seed the prompt with the directory the shell starts in; `cd`, `mkfs`, and the
         // volume watcher below keep it in step from there.
         created.setPrompt(promptFor(vfs.cwd));
