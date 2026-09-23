@@ -155,7 +155,7 @@ seek c:2
 mkdir /mnt/DOCS
 cd /mnt/DOCS
 cp /mnt/HELLO.TXT /mnt/DOCS/COPY.TXT
-dd --if=/dev/hda --bs=512 --count=1 | xxd
+dd if=/dev/hda bs=512 count=1 | xxd
 echo 'SHELLDISK  ' | dd --of=/dev/hda --bs=1 --seek=43
 rm /mnt/HELLO.TXT
 ```
@@ -189,7 +189,9 @@ Things to know:
   produces a list, which `write` joins with one space.
 - A command with nothing piped into it receives an empty list from
   browser-terminal, not `null`; the shell treats both as "no input" (`write`,
-  `dd`, and `xxd` all check this the same way).
+  `dd`, and `xxd` all check this the same way). A redirect does not: `>` and
+  `>>` always write, so an empty pipeline leaves an empty file where `write`
+  would have refused with "nothing to write".
 - While the timeline is rewound, reads show the latest state and print one
   warning each; any write snaps the timeline back to now first. A `<` redirect
   reads the latest state too, but silently: a redirect hook has no channel to

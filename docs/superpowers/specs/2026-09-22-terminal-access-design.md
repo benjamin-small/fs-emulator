@@ -317,9 +317,12 @@ more than 10% of bytes are non-text. `ls` keeps on-disk order.
 - Layout: `.app` adds `grid-auto-rows: var(--term-h, 220px)` and
   `App.svelte` sets `--term-h` on `.app` (custom properties inherit
   downward only). A hidden drawer adds no track. Under 760px the height
-  caps at 40vh. Token-driven `!important` overrides on `.terminal-mount
-  .xterm*` for background (`--panel`), text (`--ink`), cursor (`--focus`),
-  `--font-mono` at 12px; dark mode follows the tokens.
+  caps at 40vh. The panes' own colours and font come from
+  `CreateOptions.terminal` and `bt.setTheme`, built from the tokens by
+  `src/core/terminalTheme.ts`: background (`--panel`), text (`--ink`), cursor
+  and selection (`--focus`), `--font-mono` at 12px. `app.css` keeps only the
+  drawer layout and the focus-ring suppression; dark mode follows the tokens
+  because the panel re-pushes the theme when `prefers-color-scheme` changes.
 - Topbar: `<button id="terminal-toggle" aria-pressed aria-controls="terminal-drawer">Terminal</button>`
   after the title.
 

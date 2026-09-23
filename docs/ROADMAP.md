@@ -118,7 +118,10 @@ it; `select` warns before validating its target; `flagGiven` and the range
 message are repeated between `commands.ts` and `dd.ts`; `commands.ts` should
 get a second module before the next command group; the loading and error
 notes in the drawer are not live regions; `TerminalStore` is only exercised
-manually; and the test harness's `callErr` swallows harness errors.
+manually; `>>` and `write --append` read the whole existing file with no cap
+before rewriting it, so appending one byte to a file larger than 1 MiB
+journals more than the `dd`/`cat` rule allows in a single step; and the test
+harness's `callErr` swallows harness errors.
 
 ### browser-terminal follow-ups
 
