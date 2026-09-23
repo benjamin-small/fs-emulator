@@ -9,6 +9,7 @@
 
 <section class="panel dirtree">
   <h2>Files</h2>
+  {#if volume.corruption}<p class="muted stale-note">Boot sector does not parse; the tree is unavailable until a raw write repairs it.</p>{/if}
   {#if !volume.atLatest}<p class="muted stale-note">Shows the latest state, not the step you are viewing.</p>{/if}
   <label class="remnants">
     <input type="checkbox" bind:checked={selection.showRemnants} />

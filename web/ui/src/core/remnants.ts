@@ -20,6 +20,10 @@ export function findRemnants(vol: Volume, g: Geometry, fat: FatEntry[], owners: 
   const walk = (dir: string, depth: number) => {
     if (depth > MAX_DEPTH) return;
     let entries;
+    // Deliberately broad, as in core/direntry.ts: this walk runs inside a `$derived`, and a
+    // directory that has gone away (NotFound after a delete) or become unreadable
+    // (CorruptImage after a raw write) must be skipped, not thrown from.
+    // See tests/corruption.test.ts.
     try { entries = vol.rawDirEntries(dir); } catch { return; }
     walkEntries(entries, (i, e, longName) => {
       if (e.kind === "deleted") {

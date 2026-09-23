@@ -4,6 +4,9 @@ use fs_core::{Error, Result};
 use std::ops::Range;
 
 pub const SIGNATURE: [u8; 2] = [0x55, 0xAA];
+/// How many bytes `BootSector::parse` and `decode` read: the BPB, EBPB and
+/// signature all lie inside the first 512 bytes whatever the sector size.
+pub const BOOT_SECTOR_LEN: usize = 512;
 pub const OEM_NAME: [u8; 8] = *b"FAT16EMU";
 /// Fewer clusters than this is FAT12 to a real driver.
 pub const FAT16_MIN_CLUSTERS: u32 = 4085;
@@ -171,25 +174,17 @@ impl BootSector {
         Ok(bs)
     }
 
-    /// Parse the first 512 bytes of a volume.
-    pub fn parse(bytes: &[u8]) -> Result<BootSector> {
-        if bytes.len() < 512 {
-            return Err(Error::CorruptImage(
-                "boot sector is shorter than 512 bytes".into(),
-            ));
-        }
-        if bytes[510..512] != SIGNATURE {
-            return Err(Error::CorruptImage(
-                "boot sector signature is not 55 AA".into(),
-            ));
-        }
+    /// Read the BPB/EBPB fields of the first `BOOT_SECTOR_LEN` bytes without
+    /// validating any of them, so callers can describe whatever is on disk.
+    /// Panics if `bytes` is shorter than `BOOT_SECTOR_LEN`.
+    pub fn decode(bytes: &[u8]) -> BootSector {
         let mut oem_name = [0u8; 8];
         oem_name.copy_from_slice(&bytes[3..11]);
         let mut volume_label = [0u8; 11];
         volume_label.copy_from_slice(&bytes[43..54]);
         let mut fs_type = [0u8; 8];
         fs_type.copy_from_slice(&bytes[54..62]);
-        let bs = BootSector {
+        BootSector {
             oem_name,
             bytes_per_sector: u16_at(bytes, 11),
             sectors_per_cluster: bytes[13],
@@ -208,7 +203,22 @@ impl BootSector {
             volume_id: u32_at(bytes, 39),
             volume_label,
             fs_type,
-        };
+        }
+    }
+
+    /// Parse and validate the first `BOOT_SECTOR_LEN` bytes of a volume.
+    pub fn parse(bytes: &[u8]) -> Result<BootSector> {
+        if bytes.len() < BOOT_SECTOR_LEN {
+            return Err(Error::CorruptImage(
+                "boot sector is shorter than 512 bytes".into(),
+            ));
+        }
+        if bytes[510..512] != SIGNATURE {
+            return Err(Error::CorruptImage(
+                "boot sector signature is not 55 AA".into(),
+            ));
+        }
+        let bs = Self::decode(bytes);
         if ![512, 1024, 2048, 4096].contains(&bs.bytes_per_sector) {
             return Err(Error::CorruptImage(format!(
                 "bytes per sector is {}",
@@ -444,6 +454,25 @@ mod tests {
         assert_eq!(&bytes[3..11], b"FAT16EMU");
         assert_eq!(&bytes[510..512], &[0x55, 0xAA]);
         assert_eq!(BootSector::parse(&bytes).unwrap(), bs);
+    }
+
+    #[test]
+    fn decode_reads_fields_without_validating() {
+        let zeros = BootSector::decode(&[0u8; BOOT_SECTOR_LEN]);
+        assert_eq!(zeros.bytes_per_sector, 0);
+        assert_eq!(zeros.sectors_per_cluster, 0);
+        assert_eq!(zeros.volume_label, [0u8; 11]);
+        let bs = BootSector::from_options(&FormatOptions::default()).unwrap();
+        let bytes = bs.to_bytes();
+        assert_eq!(BootSector::decode(&bytes), bs);
+        assert_eq!(
+            BootSector::decode(&bytes),
+            BootSector::parse(&bytes).unwrap()
+        );
+        let mut unsigned = bytes.clone();
+        unsigned[510] = 0;
+        assert_eq!(BootSector::decode(&unsigned), bs);
+        assert!(BootSector::parse(&unsigned).is_err());
     }
 
     #[test]

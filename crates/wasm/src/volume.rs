@@ -258,6 +258,36 @@ impl Volume {
         Ok(disk.sector(n as u64).to_vec())
     }
 
+    /// Write bytes at an absolute byte offset, journaled like every other
+    /// operation. Throws `OutOfBounds` if the range runs past the disk.
+    #[wasm_bindgen(js_name = writeRaw, unchecked_return_type = "OpRecord")]
+    pub fn write_raw(&mut self, offset: u32, bytes: &[u8]) -> Result<JsValue, JsValue> {
+        let r = self.fs_mut().write_raw(offset as u64, bytes);
+        self.op(r)
+    }
+
+    /// A copy of `len` bytes starting at an absolute byte offset.
+    #[wasm_bindgen(js_name = readRaw)]
+    pub fn read_raw(&self, offset: u32, len: u32) -> Result<Vec<u8>, JsValue> {
+        let disk = self.fs().disk();
+        let disk_len = disk.len() as u64;
+        let end = (offset as u64)
+            .checked_add(len as u64)
+            .filter(|&end| end <= disk_len);
+        let Some(end) = end else {
+            return Err(js_error(
+                "BadArgument",
+                &format!(
+                    "range {offset}..{} is out of range (disk is {disk_len} bytes)",
+                    offset as u64 + len as u64
+                ),
+            ));
+        };
+        Ok(disk
+            .read(offset as usize, (end - offset as u64) as usize)
+            .to_vec())
+    }
+
     /// A copy of the whole disk image.
     pub fn image(&self) -> Vec<u8> {
         self.fs().disk().as_bytes().to_vec()
@@ -275,6 +305,16 @@ impl Volume {
     #[wasm_bindgen(unchecked_return_type = "Geometry")]
     pub fn geometry(&self) -> Result<JsValue, JsValue> {
         to_value(&dto::Geometry::from(self.fat()?.geometry()))
+    }
+
+    /// The `CorruptImage` message while the boot sector does not parse after
+    /// a `writeRaw`, or `null` while the volume is mounted.
+    #[wasm_bindgen(unchecked_return_type = "string | null")]
+    pub fn corruption(&self) -> Result<JsValue, JsValue> {
+        Ok(match self.fat()?.corruption() {
+            Some(err) => JsValue::from_str(&err.to_string()),
+            None => JsValue::NULL,
+        })
     }
 
     /// Every entry of one FAT copy, indexed by cluster; empty for a copy that does not exist.

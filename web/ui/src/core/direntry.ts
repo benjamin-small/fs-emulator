@@ -33,6 +33,10 @@ export function findEntrySlots(vol: Volume, g: Geometry, fat: FatEntry[], owners
   const parent = cut === 0 ? "/" : path.slice(0, cut);
   const name = path.slice(cut + 1).toUpperCase();
   let entries: RawEntry[];
+  // Deliberately broad: this runs inside a `$derived` behind a selection that can be stale
+  // (NotFound right after a delete) or unreadable (CorruptImage after a raw write), and a
+  // throw there would take the whole render down. "No slots" is the right answer for both.
+  // See tests/corruption.test.ts.
   try { entries = vol.rawDirEntries(parent); } catch { return null; }
   let result: { start: number; end: number } | null = null;
   walkEntries(entries, (i, e, longName, firstIndex) => {

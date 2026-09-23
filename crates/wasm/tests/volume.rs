@@ -275,3 +275,91 @@ fn serializer_contract_null_and_bytes() {
     assert!(accessed.is_null(), "expected null, got {:?}", accessed);
     assert!(!accessed.is_undefined());
 }
+
+#[wasm_bindgen_test]
+fn raw_write_and_read_round_trip() {
+    let mut v = fresh();
+    let rec = v.write_raw(0x1000, &[1, 2, 3]).unwrap();
+    assert_eq!(get(&rec, "op").as_string().unwrap(), "write_raw 0x1000 +3");
+    let changes = Array::from(&get(&rec, "changes"));
+    assert_eq!(changes.length(), 1);
+    let c0 = changes.get(0);
+    assert_eq!(get(&c0, "offset").as_f64(), Some(4096.0));
+    let before = get(&c0, "before");
+    let after = get(&c0, "after");
+    assert!(before.is_instance_of::<Uint8Array>());
+    assert!(after.is_instance_of::<Uint8Array>());
+    assert_eq!(Uint8Array::from(before).to_vec(), vec![0, 0, 0]);
+    assert_eq!(Uint8Array::from(after).to_vec(), vec![1, 2, 3]);
+    let events = Array::from(&get(&rec, "events"));
+    assert_eq!(events.length(), 1);
+    let e0 = events.get(0);
+    assert_eq!(get(&e0, "kind").as_string().unwrap(), "raw_write");
+    assert_eq!(
+        get(&e0, "text").as_string().unwrap(),
+        "wrote 3 raw bytes at 0x1000"
+    );
+    let region = get(&e0, "region");
+    assert_eq!(get(&region, "start").as_f64(), Some(4096.0));
+    assert_eq!(get(&region, "end").as_f64(), Some(4099.0));
+    assert_eq!(v.read_raw(0x1000, 3).unwrap(), vec![1, 2, 3]);
+    assert_eq!(&v.sector(8).unwrap()[..3], &[1, 2, 3]);
+    assert_eq!(v.history_length(), 1);
+    assert_eq!(
+        get(&v.history_at(0).unwrap(), "op").as_string().unwrap(),
+        "write_raw 0x1000 +3"
+    );
+}
+
+#[wasm_bindgen_test]
+fn raw_errors_carry_codes() {
+    let mut v = fresh();
+    let disk_len: u32 = 32768 * 512;
+    let err = v.write_raw(u32::MAX, &[1]).unwrap_err();
+    assert_eq!(code(err.clone()), "OutOfBounds");
+    assert!(get(&err, "message")
+        .as_string()
+        .unwrap()
+        .starts_with("out of bounds:"));
+    assert_eq!(
+        code(v.write_raw(disk_len - 1, &[1, 2]).unwrap_err()),
+        "OutOfBounds"
+    );
+    assert_eq!(code(v.read_raw(u32::MAX, 1).unwrap_err()), "BadArgument");
+    assert_eq!(code(v.read_raw(0, u32::MAX).unwrap_err()), "BadArgument");
+    assert_eq!(code(v.read_raw(disk_len, 1).unwrap_err()), "BadArgument");
+    assert_eq!(v.read_raw(disk_len - 1, 1).unwrap().len(), 1);
+    assert!(v.read_raw(disk_len, 0).unwrap().is_empty());
+    assert_eq!(v.history_length(), 0);
+}
+
+#[wasm_bindgen_test]
+fn corruption_is_null_until_sector_zero_breaks_and_clears_when_repaired() {
+    let mut v = fresh();
+    v.create_file("/A", b"a").unwrap();
+    assert!(v.corruption().unwrap().is_null());
+    let saved = v.sector(0).unwrap();
+    v.write_raw(0, &vec![0u8; 512]).unwrap();
+    let msg = v.corruption().unwrap();
+    assert!(msg.is_string(), "expected a message, got {:?}", msg);
+    assert!(msg.as_string().unwrap().starts_with("corrupt image:"));
+    let err = v.list_dir("/").unwrap_err();
+    assert_eq!(code(err.clone()), "CorruptImage");
+    assert!(get(&err, "message")
+        .as_string()
+        .unwrap()
+        .contains("boot sector no longer parses after a raw write"));
+    assert_eq!(code(v.raw_dir_entries("/").unwrap_err()), "CorruptImage");
+    assert_eq!(Array::from(&v.layout().unwrap()).length(), 5);
+    assert_eq!(
+        get(&v.boot_sector().unwrap(), "fsType")
+            .as_string()
+            .unwrap(),
+        "FAT16"
+    );
+    assert_eq!(&v.sector(0).unwrap()[510..], &[0, 0]);
+    v.write_raw(0, &saved).unwrap();
+    assert!(v.corruption().unwrap().is_null());
+    assert_eq!(v.read_file("/A").unwrap(), b"a");
+    assert_eq!(v.history_length(), 3);
+}

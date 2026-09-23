@@ -13,8 +13,12 @@ These hold for every filesystem the project adds.
   on a real OS.
 - **Every operation journals its bytes.** An `OpRecord` carries each changed
   byte's offset, before value, and after value, plus plain-language events.
-  The UI's timeline, diff replay, and rewind are built only on that journal,
-  so a new filesystem gets them for free.
+  This includes raw writes (`FileSystem::write_raw`), which journal like any
+  other operation and are never capped in Rust; a filesystem re-parses its
+  on-disk metadata when a raw write touches it and reports `CorruptImage`
+  from path operations until that metadata parses again. The UI's timeline,
+  diff replay, rewind, and terminal are built only on that journal, so a new
+  filesystem gets them for free.
 - **`fs-core` stays filesystem-agnostic** with zero external dependencies and
   no I/O, clock, or threads. The `FileSystem` trait, `Region`, and
   `Annotation` are what the wasm layer and the UI program against.
@@ -67,8 +71,10 @@ ext3 as ext2 plus a journal. Expected shape:
 
 ## Core API additions
 
-Out of scope so far, in rough order: rename, append, truncate to size, and
-undo derived from `ByteChange.before` (the journal already stores it).
+Out of scope so far, in rough order: rename (the shell's `mv` waits on it),
+append and truncate to size (the shell's `write --append` rewrites the whole
+file and says so), and undo derived from `ByteChange.before` (the journal
+already stores it).
 
 ## Deferred, by area
 
@@ -84,7 +90,57 @@ both web apps with `build.target: esnext`.
 memory is uncapped; the FAT map chain has no arrowheads; `[` and `]` are not
 scenario-aware; canvas captions are not live regions; the `prompt()` used for
 jump-to-offset should be guarded in browsers that block it; the ribbon has no
-minimum region width, so tiny regions can vanish at narrow widths.
+minimum region width, so tiny regions can vanish at narrow widths;
+`src/core/direntry.ts` and `src/core/remnants.ts` keep their pre-existing
+blanket `catch` around `rawDirEntries` on purpose, so a corrupt volume falls
+back to "no range" or "skip this entry" instead of throwing.
+
+**`web/ui` terminal** (decided 2026-09-22): no `>`, `>>`, or `<` redirection,
+only pipes into `write` and `dd --of=`; the working directory is one value per
+page, not per shell session (commands cannot learn their session from `ctx`);
+reads while the timeline is rewound show the latest state and warn (an
+`--at-step` flag reading the cached image is the follow-up); `dd` and `cat`
+are capped at 1 MiB per invocation in the shell, not in Rust; no `mv`,
+true append, or truncate until the core has them; the terminal's colors and
+font are applied through `!important` overrides on xterm's DOM because
+`CreateOptions` has no theme option; the library and its wasm load lazily on
+first open; `Escape` closes the drawer only from its bar, since xterm cancels
+the key inside the terminal; no tab completion of `/mnt` paths. Deferred:
+under 760px the drawer track is capped at 40vh while the store's height can
+be 60%, so the first drag on a phone-width window jumps; `dd`'s volume-file
+sink bounds `--seek` by the disk size, not a sane file size, so a huge seek
+allocates up to the disk size before `DiskFull`; `rm` and `rmdir` clear the
+selection even when a different file was selected; on keyboard layouts where
+backtick is a dead key only the Terminal button toggles the drawer; `readRaw`
+recomputes its display sum; `planWindow`'s message for an absent count on
+`/dev/zero` is unreachable through the runner; `fatEntryOffset` is duplicated
+between the shell's `stat` and `Inspector.svelte` until FAT32 work extracts
+it; `select` warns before validating its target; `flagGiven` and the range
+message are repeated between `commands.ts` and `dd.ts`; `commands.ts` should
+get a second module before the next command group; the loading and error
+notes in the drawer are not live regions; `TerminalStore` is only exercised
+manually; the terminal's font override is a broad `!important` selector; and
+the test harness's `callErr` swallows harness errors.
+
+### browser-terminal follow-ups
+
+Changes in `@benjamin-small/browser-terminal` that would let the explorer's
+shell drop its workarounds, in order of value:
+
+1. `>`, `>>`, and `<` redirection with a host-pluggable file hook (the parser
+   already lexes them and rejects them as reserved); the explorer would
+   register its `/mnt` and `/dev` resolver and the same commands gain real
+   redirection.
+2. `key=value` barewords, so `dd if=/dev/hda count=1` lexes without quotes.
+3. A bytes `Value`, replacing the `{ bytes: "<hex>", length }` blob record.
+4. A session or pane id on `ctx`, so each shell can keep its own working
+   directory.
+5. `CreateOptions.terminal` (theme, font family, font size), replacing the
+   `!important` CSS overrides.
+6. A public `focus()`, replacing the `.xterm-helper-textarea` query.
+
+Until then the explorer pins the package exactly (0.2.0) so none of these
+workarounds break on a minor release.
 
 ## Adding a filesystem: checklist
 

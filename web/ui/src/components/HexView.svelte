@@ -6,6 +6,7 @@
   import { attrAtOffset } from "../core/attribution";
   import { BYTES_PER_ROW, buildSegments, offsetToRow, rowAt, rowToOffset, totalRows, type Segment } from "../core/segments";
   import { contains } from "../core/intervals";
+  import { parseAddr } from "../shell/addr";
   import HexRow from "./HexRow.svelte";
 
   const ROW_H = 17, OVERSCAN = 10, MIN_RUN = 8, MAX_SPACER = 10_000_000;
@@ -103,13 +104,9 @@
     }
   }
   function jump(v: string) {
-    const g = volume.geometry;
-    let off: number | null = null;
-    if (/^s:\d+$/i.test(v)) off = Number(v.slice(2)) * g.bytesPerSector;
-    else if (/^c:\d+$/i.test(v)) off = g.firstDataSector * g.bytesPerSector + (Number(v.slice(2)) - 2) * g.bytesPerSector * g.sectorsPerCluster;
-    else if (/^0x[0-9a-f]+$/i.test(v)) off = parseInt(v, 16);
-    else if (/^\d+$/.test(v)) off = Number(v);
-    if (off !== null && off >= 0 && off < volume.image.length) selection.jumpTo(off);
+    let off: number;
+    try { off = parseAddr(v, volume.geometry); } catch { return; } // the prompt ignores bad input silently, as before
+    if (off >= 0 && off < volume.image.length) selection.jumpTo(off);
   }
   function onOver(e: MouseEvent) { const t = (e.target as HTMLElement).closest<HTMLElement>("[data-off]"); selection.hoverOffset = t ? Number(t.dataset.off) : null; }
   function onClick(e: MouseEvent) { const t = (e.target as HTMLElement).closest<HTMLElement>("[data-off]"); if (t) selection.cursorOffset = Number(t.dataset.off); }

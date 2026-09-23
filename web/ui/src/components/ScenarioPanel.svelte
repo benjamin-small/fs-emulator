@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { inTextEntry } from "../core/keys";
   import { all } from "../scenarios";
   import { scenarios } from "../state/scenarios.svelte";
 
@@ -56,9 +57,10 @@
   }
 
   function onKeydown(e: KeyboardEvent) {
-    if (!scenarios.current) return;
-    const tag = (e.target as HTMLElement | null)?.tagName;
-    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+    // A modifier means the chord belongs to the browser or the OS (Cmd-N, Cmd-P), so a
+    // scenario step is not ours to advance; the same guard App.svelte's handler uses.
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (!scenarios.current || inTextEntry(e)) return;
     if (e.key === "n") advance();
     else if (e.key === "p") scenarios.prev();
   }

@@ -1,7 +1,7 @@
 //! `FatFs`: a FAT16 volume on an in-memory disk. The disk bytes are the only
 //! state; every method re-reads what it needs from them.
 
-use crate::boot_sector::{BootSector, FormatOptions, Geometry};
+use crate::boot_sector::{BootSector, FormatOptions, Geometry, BOOT_SECTOR_LEN};
 use crate::dir::{self, DirLocation};
 use crate::dir_entry::{self, attr, LfnEntry, ShortEntry, DELETED, ENTRY_SIZE, FREE};
 use crate::events::{EntryKind, FatEvent};
@@ -21,6 +21,10 @@ pub struct FatFs {
     geo: Geometry,
     now: DateTime,
     history: Vec<OpRecord>,
+    /// The gate error (`corrupt image: boot sector no longer parses after a raw write: {cause}`), or `None`
+    /// while mounted. `boot` and `geo` keep their last good values so
+    /// layout and annotation stay stable.
+    corrupt: Option<Error>,
 }
 
 impl FatFs {
@@ -40,6 +44,7 @@ impl FatFs {
             geo,
             now: DateTime::default(),
             history: Vec::new(),
+            corrupt: None,
         })
     }
 
@@ -68,6 +73,7 @@ impl FatFs {
             geo,
             now: DateTime::default(),
             history: Vec::new(),
+            corrupt: None,
         })
     }
 
@@ -77,6 +83,13 @@ impl FatFs {
 
     pub fn geometry(&self) -> &Geometry {
         &self.geo
+    }
+
+    /// `Some(error)` while the boot sector does not parse or does not fit
+    /// the disk (after a raw write); path operations fail with
+    /// `CorruptImage` until a later raw write repairs it.
+    pub fn corruption(&self) -> Option<&Error> {
+        self.corrupt.as_ref()
     }
 
     pub fn fs_type(&self) -> &'static str {
@@ -148,6 +161,76 @@ impl FatFs {
         }
         self.history.push(record.clone());
         Ok(record)
+    }
+
+    /// The gate every path-based method passes first: `CorruptImage` while
+    /// a raw write has left the boot sector unparsable.
+    fn ensure_mounted(&self) -> Result<()> {
+        match &self.corrupt {
+            None => Ok(()),
+            Some(e) => Err(e.clone()),
+        }
+    }
+
+    /// Re-read the boot sector after a raw write touched it. If it parses
+    /// and its geometry fits the physical disk (same bytes per sector, no
+    /// more sectors than the disk has), adopt it: the disk is the truth.
+    /// Otherwise keep the last good `boot`/`geo` and mark the volume
+    /// corrupt. Never fails: the bytes stay as written.
+    fn reparse_boot_sector(&mut self) {
+        let disk = &self.disk;
+        let parsed = BootSector::parse(disk.read(0, BOOT_SECTOR_LEN))
+            .and_then(|boot| boot.geometry().map(|geo| (boot, geo)))
+            .and_then(|(boot, geo)| {
+                if geo.bytes_per_sector != disk.sector_size() {
+                    return Err(Error::CorruptImage(format!(
+                        "boot sector says {} bytes per sector but the disk has {}-byte sectors",
+                        geo.bytes_per_sector,
+                        disk.sector_size()
+                    )));
+                }
+                if geo.total_sectors > disk.sector_count() {
+                    return Err(Error::CorruptImage(format!(
+                        "boot sector describes {} sectors but the disk has {}",
+                        geo.total_sectors,
+                        disk.sector_count()
+                    )));
+                }
+                Ok((boot, geo))
+            });
+        match parsed {
+            Ok((boot, geo)) => {
+                self.boot = boot;
+                self.geo = geo;
+                self.corrupt = None;
+            }
+            Err(e) => {
+                let cause = match e {
+                    Error::CorruptImage(cause) => cause,
+                    other => other.to_string(),
+                };
+                self.corrupt = Some(Error::CorruptImage(format!(
+                    "boot sector no longer parses after a raw write: {cause}"
+                )));
+            }
+        }
+    }
+
+    /// Write bytes anywhere on the disk, journaled like every other
+    /// operation. A write that starts inside the first `BOOT_SECTOR_LEN`
+    /// bytes re-parses the boot sector (see `reparse_boot_sector`). Works
+    /// while the volume is corrupt, so a later write can repair it.
+    pub fn write_raw(&mut self, offset: u64, bytes: &[u8]) -> Result<OpRecord> {
+        self.run_op(fs_core::raw_write_op(offset, bytes.len()), |fs| {
+            let range = fs_core::raw_write(&mut fs.disk, offset, bytes)?;
+            if range.start < BOOT_SECTOR_LEN {
+                fs.reparse_boot_sector();
+            }
+            // Nothing fallible may follow this call: `run_op` rolls the bytes back on an
+            // error, but not `boot`/`geo`/`corrupt`, which would then describe a disk that
+            // no longer exists.
+            Ok(())
+        })
     }
 
     /// `/` for the root, otherwise `/A/B` from components.
@@ -271,6 +354,7 @@ impl FatFs {
     }
 
     pub fn list_dir(&self, path: &str) -> Result<Vec<EntryInfo>> {
+        self.ensure_mounted()?;
         let parts = path::parse(path)?;
         let loc = self.resolve_dir(&parts)?;
         Ok(self
@@ -282,6 +366,7 @@ impl FatFs {
     }
 
     pub fn stat(&self, path: &str) -> Result<EntryInfo> {
+        self.ensure_mounted()?;
         match self.resolve(path)? {
             Some(located) => Ok(located.info()),
             None => Ok(EntryInfo {
@@ -296,6 +381,7 @@ impl FatFs {
     }
 
     pub fn read_file(&self, path: &str) -> Result<Vec<u8>> {
+        self.ensure_mounted()?;
         let located = self.resolve(path)?.ok_or(Error::IsADirectory)?;
         if located.entry.is_dir() {
             return Err(Error::IsADirectory);
@@ -304,6 +390,7 @@ impl FatFs {
     }
 
     pub fn create_file(&mut self, path: &str, data: &[u8]) -> Result<OpRecord> {
+        self.ensure_mounted()?;
         let (parent_parts, name) = path::split_parent(path)?;
         name::validate_long_name(&name)?;
         let parent = self.resolve_dir(&parent_parts)?;
@@ -321,6 +408,7 @@ impl FatFs {
     }
 
     pub fn create_dir(&mut self, path: &str) -> Result<OpRecord> {
+        self.ensure_mounted()?;
         let (parent_parts, name) = path::split_parent(path)?;
         name::validate_long_name(&name)?;
         let parent = self.resolve_dir(&parent_parts)?;
@@ -358,6 +446,7 @@ impl FatFs {
     }
 
     pub fn delete_file(&mut self, path: &str) -> Result<OpRecord> {
+        self.ensure_mounted()?;
         let located = self.resolve(path)?.ok_or(Error::InvalidPath)?;
         if located.entry.is_dir() {
             return Err(Error::IsADirectory);
@@ -369,6 +458,7 @@ impl FatFs {
     }
 
     pub fn remove_dir(&mut self, path: &str) -> Result<OpRecord> {
+        self.ensure_mounted()?;
         let located = self.resolve(path)?.ok_or(Error::InvalidPath)?;
         if !located.entry.is_dir() {
             return Err(Error::NotADirectory);
@@ -384,6 +474,7 @@ impl FatFs {
     }
 
     pub fn write_file(&mut self, path: &str, data: &[u8]) -> Result<OpRecord> {
+        self.ensure_mounted()?;
         let located = self.resolve(path)?.ok_or(Error::InvalidPath)?;
         if located.entry.is_dir() {
             return Err(Error::IsADirectory);
@@ -557,6 +648,7 @@ impl FatFs {
 
     /// Every slot of a directory, including free, deleted and LFN slots.
     pub fn raw_dir_entries(&self, path: &str) -> Result<Vec<RawEntry>> {
+        self.ensure_mounted()?;
         let parts = path::parse(path)?;
         let loc = self.resolve_dir(&parts)?;
         Ok(dir::slots(&self.disk, &self.geo, loc)?
@@ -674,9 +766,13 @@ impl FatFs {
         }
     }
 
+    /// Always describes the live bytes, mounted or not, so sector-0
+    /// annotations match what is on screen even while the volume is corrupt.
     fn annotate_boot_sector(&self) -> Vec<Annotation> {
-        let b = &self.boot;
-        let jump = self.disk.read(0, 3);
+        let raw = self.disk.read(0, BOOT_SECTOR_LEN);
+        let decoded = BootSector::decode(raw);
+        let b = &decoded;
+        let jump = &raw[0..3];
         let text = |bytes: &[u8]| String::from_utf8_lossy(bytes).to_string();
         vec![
             annotation(
@@ -720,7 +816,11 @@ impl FatFs {
             annotation(43..54, "volume label", text(&b.volume_label)),
             annotation(54..62, "filesystem type", text(&b.fs_type)),
             annotation(62..510, "boot code", "unused"),
-            annotation(510..512, "boot signature", "55 AA"),
+            annotation(
+                510..512,
+                "boot signature",
+                format!("{:02X} {:02X}", raw[510], raw[511]),
+            ),
         ]
     }
 
@@ -946,6 +1046,9 @@ impl FileSystem for FatFs {
     }
     fn set_now(&mut self, now: DateTime) {
         FatFs::set_now(self, now)
+    }
+    fn write_raw(&mut self, offset: u64, bytes: &[u8]) -> Result<OpRecord> {
+        FatFs::write_raw(self, offset, bytes)
     }
     fn disk(&self) -> &Disk {
         FatFs::disk(self)
@@ -1875,5 +1978,179 @@ mod tests {
         assert_eq!(fs.disk().sector_count(), 32768);
         fs.set_now(DateTime::new(2000, 1, 1, 0, 0, 0));
         assert!(!fs.annotate_sector(0).is_empty());
+        let rec = fs.write_raw(0x2000, b"x").unwrap();
+        assert_eq!(rec.op, "write_raw 0x2000 +1");
+        assert_eq!(fs.history().len(), 6);
+    }
+
+    #[test]
+    fn write_raw_journals_and_appears_in_history() {
+        let mut fs = FatFs::format(FormatOptions::default()).unwrap();
+        let rec = fs.write_raw(0x1000, b"hello").unwrap();
+        assert_eq!(rec.op, "write_raw 0x1000 +5");
+        assert_eq!(
+            rec.changes,
+            vec![fs_core::ByteChange {
+                offset: 0x1000,
+                before: vec![0; 5],
+                after: b"hello".to_vec(),
+            }]
+        );
+        assert_eq!(rec.event_kinds(), vec!["raw_write"]);
+        assert_eq!(rec.events[0].region(), Some(0x1000..0x1005));
+        assert_eq!(fs.history().len(), 1);
+        assert_eq!(fs.history()[0].op, "write_raw 0x1000 +5");
+        assert_eq!(fs.disk().read(0x1000, 5), b"hello");
+        assert!(fs.corruption().is_none());
+        assert!(!fs.disk().op_open());
+    }
+
+    #[test]
+    fn write_raw_out_of_bounds_leaves_no_history_and_no_open_op() {
+        let mut fs = FatFs::format(FormatOptions::default()).unwrap();
+        let len = fs.disk().len() as u64;
+        assert_eq!(
+            fs.write_raw(len - 1, &[1, 2]).unwrap_err(),
+            Error::OutOfBounds {
+                offset: len - 1,
+                len: 2,
+                disk_len: len
+            }
+        );
+        assert!(matches!(
+            fs.write_raw(u64::MAX, &[1]),
+            Err(Error::OutOfBounds { .. })
+        ));
+        assert!(fs.history().is_empty());
+        assert!(!fs.disk().op_open());
+        assert_eq!(fs.disk().read(len as usize - 1, 1), &[0]);
+        fs.create_file("/A", b"").unwrap();
+        assert_eq!(fs.history().len(), 1);
+    }
+
+    #[test]
+    fn write_raw_to_the_boot_sector_that_still_parses_is_adopted() {
+        let mut fs = FatFs::format(FormatOptions::default()).unwrap();
+        let geo_before = fs.geometry().clone();
+        let rec = fs.write_raw(43, b"RAWLABEL   ").unwrap();
+        assert_eq!(rec.op, "write_raw 0x2b +11");
+        assert_eq!(fs.boot_sector().volume_label, *b"RAWLABEL   ");
+        assert_eq!(fs.geometry(), &geo_before);
+        assert!(fs.corruption().is_none());
+        let label = fs
+            .annotate_sector(0)
+            .into_iter()
+            .find(|a| a.label == "volume label")
+            .unwrap();
+        assert_eq!(label.value, "RAWLABEL   ");
+        assert!(fs.list_dir("/").is_ok());
+    }
+
+    #[test]
+    fn write_raw_that_changes_geometry_is_adopted_and_layout_follows() {
+        let mut fs = tiny_fs();
+        let before = fs.geometry().first_data_sector;
+        assert_eq!(fs.layout()[3].name, "root directory");
+        assert_eq!(fs.layout()[3].sectors.end, before);
+        fs.write_raw(17, &32u16.to_le_bytes()).unwrap();
+        assert!(fs.corruption().is_none());
+        assert_eq!(fs.boot_sector().root_entries, 32);
+        assert_eq!(fs.geometry().root_entries, 32);
+        assert_eq!(fs.geometry().first_data_sector, before + 1);
+        assert_eq!(fs.layout()[3].sectors.end, before + 1);
+        assert_eq!(fs.layout()[4].sectors.start, before + 1);
+        assert_eq!(fs.raw_dir_entries("/").unwrap().len(), 32);
+    }
+
+    #[test]
+    fn write_raw_that_breaks_the_signature_unmounts_until_repaired() {
+        let mut fs = FatFs::format(FormatOptions::default()).unwrap();
+        fs.create_file("/A", b"a").unwrap();
+        let layout_before = fs.layout();
+        let geo_before = fs.geometry().clone();
+        fs.write_raw(510, &[0, 0]).unwrap();
+        assert!(matches!(fs.corruption(), Some(Error::CorruptImage(_))));
+        let gate = "boot sector no longer parses after a raw write";
+        let results: Vec<Result<()>> = vec![
+            fs.list_dir("/").map(|_| ()),
+            fs.stat("/A").map(|_| ()),
+            fs.read_file("/A").map(|_| ()),
+            fs.raw_dir_entries("/").map(|_| ()),
+            fs.create_file("/B", b"").map(|_| ()),
+            fs.write_file("/A", b"x").map(|_| ()),
+            fs.delete_file("/A").map(|_| ()),
+            fs.create_dir("/D").map(|_| ()),
+            fs.remove_dir("/A").map(|_| ()),
+        ];
+        for r in results {
+            match r {
+                Err(Error::CorruptImage(m)) => assert!(m.starts_with(gate), "message was {m}"),
+                other => panic!("expected the corruption gate, got {other:?}"),
+            }
+        }
+        assert_eq!(fs.layout(), layout_before);
+        assert_eq!(fs.geometry(), &geo_before);
+        let boot = fs.annotate_sector(0);
+        assert_eq!(boot.last().unwrap().label, "boot signature");
+        assert_eq!(boot.last().unwrap().value, "00 00");
+        let data = fs.annotate_sector(geo_before.first_data_sector);
+        assert_eq!(data[0].value, "data of /A");
+        assert_eq!(fs.disk().read(510, 2), &[0, 0]);
+        assert_eq!(fs.history().len(), 2);
+        fs.write_raw(510, &[0x55, 0xAA]).unwrap();
+        assert!(fs.corruption().is_none());
+        assert_eq!(fs.read_file("/A").unwrap(), b"a");
+        assert_eq!(fs.annotate_sector(0).last().unwrap().value, "55 AA");
+        assert_eq!(fs.history().len(), 3);
+    }
+
+    #[test]
+    fn write_raw_with_a_geometry_that_does_not_fit_the_disk_is_corrupt() {
+        let mut fs = FatFs::format(FormatOptions::default()).unwrap();
+        fs.write_raw(11, &1024u16.to_le_bytes()).unwrap();
+        let msg = fs.corruption().unwrap().to_string();
+        assert!(
+            msg.contains("says 1024 bytes per sector"),
+            "message was {msg}"
+        );
+        assert_eq!(fs.geometry().bytes_per_sector, 512);
+        fs.write_raw(11, &512u16.to_le_bytes()).unwrap();
+        assert!(fs.corruption().is_none());
+        // 32800 sectors still yields a FAT16 geometry the FAT can hold, but
+        // the disk only has 32768.
+        fs.write_raw(19, &32800u16.to_le_bytes()).unwrap();
+        let msg = fs.corruption().unwrap().to_string();
+        assert!(
+            msg.contains("describes 32800 sectors but the disk has 32768"),
+            "message was {msg}"
+        );
+        assert_eq!(fs.geometry().total_sectors, 32768);
+        assert!(matches!(fs.list_dir("/"), Err(Error::CorruptImage(_))));
+        fs.write_raw(19, &32768u16.to_le_bytes()).unwrap();
+        assert!(fs.corruption().is_none());
+        assert!(fs.list_dir("/").is_ok());
+        assert_eq!(fs.history().len(), 4);
+    }
+
+    #[test]
+    fn write_raw_reparses_on_the_512_byte_boundary_not_the_sector_size() {
+        let mut fs = FatFs::format(FormatOptions {
+            bytes_per_sector: 4096,
+            sectors_per_cluster: 1,
+            total_sectors: 8192,
+            ..Default::default()
+        })
+        .unwrap();
+        let boot_before = fs.boot_sector().clone();
+        fs.write_raw(600, &[1]).unwrap();
+        assert!(fs.corruption().is_none());
+        assert_eq!(fs.boot_sector(), &boot_before);
+        fs.write_raw(300, &[1]).unwrap();
+        assert!(fs.corruption().is_none());
+        assert_eq!(fs.boot_sector(), &boot_before);
+        fs.write_raw(511, &[0]).unwrap();
+        assert!(fs.corruption().is_some());
+        fs.write_raw(511, &[0xAA]).unwrap();
+        assert!(fs.corruption().is_none());
     }
 }

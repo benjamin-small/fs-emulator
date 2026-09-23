@@ -18,14 +18,14 @@ Try it: https://benjamin-small.github.io/fs-emulator/
 ## How it fits together
 
 ```
-web/ui  (Svelte)         the explorer: hex dump, ribbon, timeline, scenarios
+web/ui  (Svelte)         the explorer: hex dump, ribbon, timeline, scenarios, terminal
 web/demo (TypeScript)    smoke test for the wasm package
         │
 crates/wasm              one `Volume` class over the FileSystem trait
         │
 crates/fat   crates/ext (planned)      one crate per filesystem family
         │
-crates/fs-core           Disk, byte journal, regions, annotations, FileSystem trait
+crates/fs-core           Disk, byte journal (incl. raw writes), regions, annotations, FileSystem trait
 ```
 
 Each layer only depends on the one below it. The UI programs against the
@@ -43,13 +43,14 @@ above `fs-core` needs to change shape.
 | FAT32 (`crates/fat`) | Planned. Cluster width, FAT entry codec, and `FatVariant` are already dispatched; see the roadmap for what is not |
 | ext2, ext3 (`crates/ext`) | Planned |
 | `crates/wasm` | Complete for FAT16; FAT-only methods throw `NotFat` on other volumes |
-| `web/ui` | Complete for FAT16; the dump, ribbon, timeline, and strings are region-driven and carry over |
+| `web/ui` | Complete for FAT16; the dump, ribbon, timeline, strings, and the terminal drawer (`/mnt`, `/dev/hda`) are region-driven and carry over |
 
 ## Crates
 
 - `fs-core`: filesystem-agnostic core. The `Disk`, the change journal
   (`OpRecord`, `ByteChange`, `Event`), `Region` and `Annotation`, shared types,
-  and the `FileSystem` trait. Zero external dependencies, no I/O or clock, so
+  and the `FileSystem` trait, including `write_raw` for journaled writes to
+  arbitrary disk offsets. Zero external dependencies, no I/O or clock, so
   it compiles unchanged for `wasm32-unknown-unknown`.
 - `fat`: the FAT family. FAT16 today (`FatFs`) with FAT32's seams designed in,
   plus FAT-specific inspection: `fat_entries`, `cluster_chain`,
@@ -76,10 +77,12 @@ let image: &[u8] = fs.disk().as_bytes();
 
 `web/ui` is the explorer: a whole-disk hex dump with an ASCII gutter and
 strings overlay, a disk ribbon and FAT cluster map showing where files land, an
-operation timeline that rewinds the disk byte for byte, and guided scenarios.
-The build from `main` is published to GitHub Pages by
-`.github/workflows/pages.yml`. See `web/ui/README.md` for panes, shortcuts,
-and what in it is FAT-specific.
+operation timeline that rewinds the disk byte for byte, guided scenarios, and a
+terminal drawer (the user's `@benjamin-small/browser-terminal`) with the volume
+at `/mnt` and the raw disk at `/dev/hda`, so `ls`, `cat`, `write`, `dd`, and
+`xxd` drive the same journal as the forms. The build from `main` is published
+to GitHub Pages by `.github/workflows/pages.yml`. See `web/ui/README.md` for
+panes, the command table, shortcuts, and what in it is FAT-specific.
 
 `web/demo` is a plain TypeScript page that exercises the wasm package; it
 exists as a smoke test for the package, not as a UI.
@@ -112,8 +115,9 @@ on every pull request.
 - `docs/superpowers/specs/`: the design documents, one per feature. They are
   the binding description of how each piece works:
   `2026-09-21-fat16-emulator-design.md` (core and FAT16, including the FAT32
-  seams), `2026-09-21-wasm-wrapper-design.md`, and
-  `2026-09-21-fat-explorer-ui-design.md`.
+  seams), `2026-09-21-wasm-wrapper-design.md`,
+  `2026-09-21-fat-explorer-ui-design.md`, and
+  `2026-09-22-terminal-access-design.md` (raw writes and the terminal drawer).
 - `docs/superpowers/plans/`: the task-by-task implementation plans each spec
   was built from. They record how the code came to be, not how it must stay;
   the specs and the code win where they differ.

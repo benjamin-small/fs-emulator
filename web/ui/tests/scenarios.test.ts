@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { Volume } from "../src/lib/wasm";
 import { ScenarioCursor } from "../src/core/scenarioCursor";
 import { all } from "../src/scenarios";
+import { scenario as shell } from "../src/scenarios/shell";
 
 // Steps titled "Expect: ..." are the scenario's deliberate failure demonstrations; each
 // one names the error code its action must throw.
@@ -68,4 +69,56 @@ describe("scenario scripts", () => {
       }
     });
   }
+
+  // The shell scenario's step text shows a terminal command and its action performs the
+  // equivalent Volume call. Pin the outcomes the commands would leave behind.
+  describe("work from the shell", () => {
+    it("is the eighth scenario and registered last", () => {
+      expect(all.length).toBe(8);
+      expect(all[all.length - 1]).toBe(shell);
+      expect(shell.id).toBe("shell");
+      expect(shell.steps.length).toBe(8);
+      // Every step's text names the command it stands for.
+      for (const step of shell.steps) expect(step.text).toMatch(/`[a-z]+[^`]*`/);
+    });
+
+    it("leaves the volume the way the equivalent commands would", () => {
+      const vol = Volume.formatFat16(undefined);
+      const run = (i: number) => {
+        const step = shell.steps[i];
+        expect(step.action, `step ${i} "${step.title}" has no action`).toBeDefined();
+        return step.action!(vol);
+      };
+      const text = (b: Uint8Array) => new TextDecoder().decode(b);
+
+      // echo 'Hello from the shell' | write /mnt/HELLO.TXT
+      expect(run(1).op).toBe("create_file /HELLO.TXT");
+      expect(text(vol.readFile("/HELLO.TXT"))).toBe("Hello from the shell");
+      expect(vol.clusterOwners().find((o) => o.path === "/HELLO.TXT")?.firstCluster).toBe(2);
+
+      // mkdir /mnt/DOCS
+      expect(run(3).op).toBe("create_dir /DOCS");
+      expect(vol.stat("/DOCS").isDir).toBe(true);
+
+      // cp /mnt/HELLO.TXT /mnt/DOCS/COPY.TXT
+      run(4);
+      expect(vol.readFile("/DOCS/COPY.TXT")).toEqual(vol.readFile("/HELLO.TXT"));
+      expect(vol.clusterOwners().find((o) => o.path === "/DOCS/COPY.TXT")?.firstCluster).toBe(4);
+
+      // echo 'SHELLDISK  ' | dd --of=/dev/hda --bs=1 --seek=43
+      // The BootSector DTO trims trailing spaces from the 11-byte label (dto.rs `text`).
+      const patch = run(6);
+      expect(patch.op).toBe("write_raw 0x2b +11");
+      expect(patch.changes).toHaveLength(1);
+      expect(patch.changes[0].offset).toBe(43);
+      expect(patch.changes[0].after).toEqual(new TextEncoder().encode("SHELLDISK  "));
+      expect(vol.bootSector().volumeLabel).toBe("SHELLDISK");
+      expect(vol.corruption()).toBeNull();
+
+      // rm /mnt/HELLO.TXT: the entry is marked deleted, DOCS (slot 1) is all that lists.
+      expect(run(7).op).toBe("delete_file /HELLO.TXT");
+      expect(vol.listDir("/").map((e) => e.name)).toEqual(["DOCS"]);
+      expect(text(vol.readFile("/DOCS/COPY.TXT"))).toBe("Hello from the shell");
+    });
+  });
 });

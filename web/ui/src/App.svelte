@@ -9,17 +9,27 @@
   import StatusLine from "./components/StatusLine.svelte";
   import StepPanel from "./components/StepPanel.svelte";
   import StringsPanel from "./components/StringsPanel.svelte";
+  import TerminalPanel from "./components/TerminalPanel.svelte";
   import Timeline from "./components/Timeline.svelte";
+  import { inTextEntry } from "./core/keys";
+  import { terminal } from "./state/terminal.svelte";
   import { volume } from "./state/volume.svelte";
 
   // `[` / `]` scrub the timeline and `/` jumps to the path field, all from anywhere
-  // except a text field, so typing a path or file content in the Actions panel isn't
+  // except text entry, so typing a path or file content in the Actions panel isn't
   // hijacked. `n` / `p` (scenario step) are handled by ScenarioPanel itself, since
-  // they only apply while a scenario is running.
+  // they only apply while a scenario is running. The terminal drawer counts as text
+  // entry too (see core/keys.ts for the Ctrl-B chord case).
   function onKeydown(e: KeyboardEvent) {
-    const tag = (e.target as HTMLElement | null)?.tagName;
-    if (tag === "INPUT" || tag === "TEXTAREA") return;
-    if (e.key === "[") volume.seek(Math.max(0, volume.cursor - 1));
+    // A modifier means the chord belongs to the browser or the OS (Cmd-` cycles windows on
+    // macOS, Ctrl-[ is Escape in some setups), so none of these are ours to swallow.
+    if (e.metaKey || e.ctrlKey || e.altKey || inTextEntry(e)) return;
+    if (e.key === "`") {
+      // Toggle the terminal from anywhere outside text entry. Inside the terminal the
+      // key is typed (xterm cancels it), so closing is exit / Close / Escape on the bar.
+      e.preventDefault();
+      terminal.toggle();
+    } else if (e.key === "[") volume.seek(Math.max(0, volume.cursor - 1));
     else if (e.key === "]") volume.seek(volume.cursor + 1);
     else if (e.key === "/") {
       e.preventDefault();
@@ -28,9 +38,17 @@
   }
 </script>
 <svelte:window onkeydown={onKeydown} />
-<div class="app">
+<div class="app" style:--term-h="{terminal.height}px">
   <header class="topbar">
     <h1>FAT explorer</h1>
+    <button
+      id="terminal-toggle"
+      type="button"
+      aria-pressed={terminal.open}
+      aria-controls="terminal-drawer"
+      title="Toggle the terminal (`)"
+      onclick={() => terminal.toggle()}
+    >Terminal</button>
     <div id="scenario-slot"><ScenarioPanel /></div>
     <StatusLine />
   </header>
@@ -49,4 +67,5 @@
     </aside>
   </div>
   <footer id="timeline-slot"><Timeline /></footer>
+  <TerminalPanel />
 </div>
