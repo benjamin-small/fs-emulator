@@ -30,10 +30,11 @@ crates/fs-core           Disk, byte journal (incl. raw writes), regions, annotat
 
 Each layer only depends on the one below it. The UI programs against the
 `FileSystem` trait and the region and annotation types in `fs-core`, plus a
-small set of filesystem-specific inspection calls it uses only when
-`fsType()` says they apply. Adding a filesystem means a new crate, a new
-variant in the wasm `Volume`, and new panels and scenarios in the UI; nothing
-above `fs-core` needs to change shape.
+small set of filesystem-specific inspection calls that only the family's
+adapter under `web/ui/src/fs/<family>/` makes, chosen from `fsType()`. Adding
+a filesystem means a new crate, a new variant in the wasm `Volume`, and an
+adapter, panels, and scenarios in the UI; nothing above `fs-core` needs to
+change shape.
 
 ## Status
 
@@ -116,8 +117,10 @@ on every pull request.
   the binding description of how each piece works:
   `2026-09-21-fat16-emulator-design.md` (core and FAT16, including the FAT32
   seams), `2026-09-21-wasm-wrapper-design.md`,
-  `2026-09-21-fat-explorer-ui-design.md`, and
-  `2026-09-22-terminal-access-design.md` (raw writes and the terminal drawer).
+  `2026-09-21-fat-explorer-ui-design.md`,
+  `2026-09-22-terminal-access-design.md` (raw writes and the terminal drawer),
+  and `2026-09-23-fs-adapter-design.md` (the "fs explorer" rename and the
+  per-family `FsAdapter` seam in the UI).
 - `docs/superpowers/plans/`: the task-by-task implementation plans each spec
   was built from. They record how the code came to be, not how it must stay;
   the specs and the code win where they differ.

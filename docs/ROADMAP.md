@@ -58,8 +58,9 @@ with `Unsupported`. Still to do:
 - The wasm `Volume` gains `formatFat32`; `fromImage` detects the variant from
   the boot sector.
 - UI: the FAT map and chain tracing work unchanged; the Format panel needs a
-  FAT32 option, and its JavaScript copy of the cluster-count formula must
-  follow the Rust one (or be replaced by a wasm call).
+  FAT32 option, and `clusterCountFor` in `web/ui/src/fs/fat16/format.ts`, the
+  JavaScript copy of the cluster-count formula, must follow the Rust one (or
+  be replaced by a wasm call).
 
 ## Then: `crates/ext`
 
@@ -97,9 +98,9 @@ memory is uncapped; the FAT map chain has no arrowheads; `[` and `]` are not
 scenario-aware; canvas captions are not live regions; the `prompt()` used for
 jump-to-offset should be guarded in browsers that block it; the ribbon has no
 minimum region width, so tiny regions can vanish at narrow widths;
-`src/core/direntry.ts` and `src/core/remnants.ts` keep their pre-existing
-blanket `catch` around `rawDirEntries` on purpose, so a corrupt volume falls
-back to "no range" or "skip this entry" instead of throwing.
+`src/fs/fat16/direntry.ts` and `src/fs/fat16/remnants.ts` keep their
+pre-existing blanket `catch` around `rawDirEntries` on purpose, so a corrupt
+volume falls back to "no range" or "skip this entry" instead of throwing.
 
 **`web/ui` terminal** (decided 2026-09-22): the working directory is one
 value per page, not per shell session, because `setPrompt` is engine-wide and

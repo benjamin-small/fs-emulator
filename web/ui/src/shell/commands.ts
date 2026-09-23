@@ -539,7 +539,7 @@ function mutationCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
       const info = statIfExists(host.vol, path, display);
       if (info?.isDir) throw new ShellError(`${display}: Is a directory`);
       if (info) {
-        ctx.log(`${display} exists; FAT explorer has no timestamp-only update, nothing written`);
+        ctx.log(`${display} exists; fs explorer has no timestamp-only update, nothing written`);
       } else {
         fsCall(display, () => host.run((v) => v.createFile(path, new Uint8Array(0))));
         ctx.log(`created empty ${display}`);
