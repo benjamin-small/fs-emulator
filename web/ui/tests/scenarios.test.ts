@@ -87,8 +87,8 @@ describe("scenario scripts", () => {
   // The shell scenario's step text shows a terminal command and its action performs the
   // equivalent Volume call. Pin the outcomes the commands would leave behind.
   describe("work from the shell", () => {
-    it("is the eighth scenario and registered last", () => {
-      expect(all.length).toBe(8);
+    it("is registered last, after the eight explorer-driven scenarios", () => {
+      expect(all.length).toBe(9);
       expect(all[all.length - 1]).toBe(shell);
       expect(shell.id).toBe("shell");
       expect(shell.steps.length).toBe(8);

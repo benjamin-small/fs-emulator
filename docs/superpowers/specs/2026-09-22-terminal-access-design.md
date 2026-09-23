@@ -336,7 +336,7 @@ more than 10% of bytes are non-text. `ls` keeps on-disk order.
 
 ### 6. Scenario and docs
 
-- Eighth scenario "Work from the shell" (`src/scenarios/shell.ts`): step
+- Eighth scenario "Work from the shell" (`src/scenarios/shell.ts`; *the ninth and still last since 2026-09-23, when "The fundamentals" was added first*): step
   text shows the command; `action` performs the equivalent op (no engine
   change). Steps: open the terminal and `ls /mnt`; `echo 'Hello from the
   shell' | write /mnt/HELLO.TXT`; `cat`, `stat`, `seek c:2`; `mkdir
