@@ -42,8 +42,12 @@ export class TestHost implements ShellHost {
   }
 
   format(family: FsFamilyId, options?: unknown): void {
-    this.vol = FAMILIES[family].format(options);
-    this.adapter = adapterFor(this.vol);
+    const def = FAMILIES[family];
+    if (!def) throw new Error(`no filesystem family "${family}"`);
+    const vol = def.format(options);
+    const adapter = adapterFor(vol);
+    this.vol = vol;
+    this.adapter = adapter;
     this.history = [];
     this.cursor = -1;
     this.formats.push({ family, options });

@@ -34,10 +34,13 @@ export class VolumeStore {
 
   constructor() { this.adopt(this.vol); }
 
-  /** Take over a fresh Volume: bind its adapter, full image copy, full scans, empty history. */
+  /** Take over a fresh Volume: bind its adapter, full image copy, full scans, empty history.
+   *  The adapter is resolved into a local before any field is assigned, so a `fsType()` with
+   *  no registered adapter throws before the store is half-switched to the new volume. */
   private adopt(vol: Volume) {
+    const adapter = adapterFor(vol);
     this.vol = vol;
-    this.adapter = adapterFor(vol);
+    this.adapter = adapter;
     this.image = vol.image();
     this.layout = vol.layout();
     this.sectorSize = vol.sectorSize();
