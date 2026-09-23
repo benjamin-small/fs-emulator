@@ -4,3 +4,4 @@ web/demo/node_modules/
 web/demo/dist/
 web/ui/node_modules/
 web/ui/dist/
+web/ui/.vite/

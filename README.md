@@ -1,20 +1,61 @@
 # fs-emulator
 
+[![CI](https://github.com/benjamin-small/fs-emulator/actions/workflows/ci.yml/badge.svg)](https://github.com/benjamin-small/fs-emulator/actions/workflows/ci.yml)
+[![Explorer](https://img.shields.io/badge/explorer-live-378add)](https://benjamin-small.github.io/fs-emulator/)
+
 Filesystem emulators on an in-memory virtual disk, written in Rust as a
-learning tool. FAT16 is implemented today, byte-accurately; FAT32 and ext2/ext3
-are planned on the same filesystem-agnostic core. Every operation records exactly which bytes changed and
-why, so a UI can show how the disk evolves. Exported images mount on macOS and
-Linux.
+learning tool. Every byte of the disk is a genuine on-disk layout, so exported
+images mount on macOS and Linux, and every operation records exactly which
+bytes changed and why. A browser UI built on those records lets you watch a
+filesystem lay itself out one operation at a time.
+
+FAT16 is implemented today. FAT32 comes next in the same crate, then ext2 and
+ext3 in a new one, all on the same filesystem-agnostic core and the same UI.
+See [docs/ROADMAP.md](docs/ROADMAP.md).
+
+Try it: https://benjamin-small.github.io/fs-emulator/
+
+## How it fits together
+
+```
+web/ui  (Svelte)         the explorer: hex dump, ribbon, timeline, scenarios
+web/demo (TypeScript)    smoke test for the wasm package
+        │
+crates/wasm              one `Volume` class over the FileSystem trait
+        │
+crates/fat   crates/ext (planned)      one crate per filesystem family
+        │
+crates/fs-core           Disk, byte journal, regions, annotations, FileSystem trait
+```
+
+Each layer only depends on the one below it. The UI programs against the
+`FileSystem` trait and the region and annotation types in `fs-core`, plus a
+small set of filesystem-specific inspection calls it uses only when
+`fsType()` says they apply. Adding a filesystem means a new crate, a new
+variant in the wasm `Volume`, and new panels and scenarios in the UI; nothing
+above `fs-core` needs to change shape.
+
+## Status
+
+| Area | State |
+|---|---|
+| FAT16 (`crates/fat`) | Complete: format, create, overwrite, delete, directories, LFN, mountable images, per-sector annotations |
+| FAT32 (`crates/fat`) | Planned. Cluster width, FAT entry codec, and `FatVariant` are already dispatched; see the roadmap for what is not |
+| ext2, ext3 (`crates/ext`) | Planned |
+| `crates/wasm` | Complete for FAT16; FAT-only methods throw `NotFat` on other volumes |
+| `web/ui` | Complete for FAT16; the dump, ribbon, timeline, and strings are region-driven and carry over |
 
 ## Crates
 
 - `fs-core`: filesystem-agnostic core. The `Disk`, the change journal
-  (`OpRecord`, `ByteChange`, `Event`), shared types, and the `FileSystem`
-  trait. FAT32 and ext2/ext3 will plug in here later.
-- `fat`: the FAT16 implementation (`FatFs`) plus FAT-specific inspection:
-  `fat_entries`, `cluster_chain`, `raw_dir_entries`, `annotate_sector`.
-- `wasm` (`fs-emulator-wasm`): the wasm-bindgen `Volume` class and
-  TypeScript types for browsers.
+  (`OpRecord`, `ByteChange`, `Event`), `Region` and `Annotation`, shared types,
+  and the `FileSystem` trait. Zero external dependencies, no I/O or clock, so
+  it compiles unchanged for `wasm32-unknown-unknown`.
+- `fat`: the FAT family. FAT16 today (`FatFs`) with FAT32's seams designed in,
+  plus FAT-specific inspection: `fat_entries`, `cluster_chain`,
+  `raw_dir_entries`, `cluster_owners`, `annotate_sector`.
+- `wasm` (`fs-emulator-wasm`): the wasm-bindgen `Volume` class and TypeScript
+  types for browsers. See `crates/wasm/README.md`.
 
 ## Example
 
@@ -31,29 +72,48 @@ for event in &record.events {
 let image: &[u8] = fs.disk().as_bytes();
 ```
 
+## Web
+
+`web/ui` is the explorer: a whole-disk hex dump with an ASCII gutter and
+strings overlay, a disk ribbon and FAT cluster map showing where files land, an
+operation timeline that rewinds the disk byte for byte, and guided scenarios.
+The build from `main` is published to GitHub Pages by
+`.github/workflows/pages.yml`. See `web/ui/README.md` for panes, shortcuts,
+and what in it is FAT-specific.
+
+`web/demo` is a plain TypeScript page that exercises the wasm package; it
+exists as a smoke test for the package, not as a UI.
+
+Both need the wasm package built first:
+
+```
+wasm-pack build crates/wasm --target bundler
+cd web/ui && pnpm install && pnpm dev       # or web/demo
+```
+
 ## Development
 
 ```
 cargo test --workspace
 cargo test -p fat --test mount_macos -- --ignored   # mounts the image with hdiutil
 cargo build --workspace --target wasm32-unknown-unknown
+wasm-pack test --node crates/wasm
+cd web/ui && pnpm test && pnpm build
 ```
 
-Design: `docs/superpowers/specs/2026-09-21-fat16-emulator-design.md`.
+CI (`.github/workflows/ci.yml`) runs fmt, clippy with warnings denied, the
+Rust tests, the wasm32 build, the wasm-pack tests, and the demo and UI builds
+on every pull request.
 
-## Demo
+## Documentation
 
-`web/demo` is a Vite + TypeScript page that exercises the `wasm` crate in a
-browser. Build the wasm package first with
-`wasm-pack build crates/wasm --target bundler`, then `cd web/demo && pnpm install && pnpm dev`.
-
-## Explorer UI
-
-Live at https://benjamin-small.github.io/fs-emulator/ (built from `main` by the Pages workflow).
-
-`web/ui` is the learning UI (Svelte 5) for exploring FAT volumes: a
-whole-disk hex dump, a disk ribbon and FAT cluster map, an operation
-timeline with byte-diff replay, and guided scenarios. Build the wasm
-package first with `wasm-pack build crates/wasm --target bundler`, then
-`cd web/ui && pnpm install && pnpm dev`. See `web/ui/README.md` for the
-panes, keyboard shortcuts, and other commands.
+- [docs/ROADMAP.md](docs/ROADMAP.md): what comes next, what was deliberately
+  deferred, and the conventions for adding a filesystem.
+- `docs/superpowers/specs/`: the design documents, one per feature. They are
+  the binding description of how each piece works:
+  `2026-09-21-fat16-emulator-design.md` (core and FAT16, including the FAT32
+  seams), `2026-09-21-wasm-wrapper-design.md`, and
+  `2026-09-21-fat-explorer-ui-design.md`.
+- `docs/superpowers/plans/`: the task-by-task implementation plans each spec
+  was built from. They record how the code came to be, not how it must stay;
+  the specs and the code win where they differ.

@@ -1,4 +1,6 @@
-//! Byte-accurate FAT16 filesystem on an in-memory disk.
+//! Byte-accurate FAT filesystems on an in-memory disk. FAT16 is implemented;
+//! FAT32's seams (`FatVariant`, `u32` clusters, the entry codec) are in place,
+//! and `docs/ROADMAP.md` lists what remains.
 
 pub mod boot_sector;
 pub mod dir;
