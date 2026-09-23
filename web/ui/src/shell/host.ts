@@ -20,9 +20,8 @@ export interface ShellHost {
   jumpTo(offset: number): void;
   /**
    * Set the prefix the terminal renders before its `❯`, so the prompt shows the working
-   * directory. A no-op until the terminal supports it: browser-terminal grows `setPrompt`
-   * in 0.3.0 (issue #12) and the explorer pins 0.2.0, where the app's implementation
-   * calls nothing. Commands call it whenever `vfs.cwd` changes.
+   * directory. The app hands this straight to browser-terminal's `setPrompt` (0.3.0+),
+   * which applies it to every pane. Commands call it whenever `vfs.cwd` changes.
    */
   setPrompt(prefix: string): void;
   closeTerminal(): void;

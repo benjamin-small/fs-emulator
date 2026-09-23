@@ -162,16 +162,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, [tabindex]:fo
 .actions .using-bytes { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 12px; }
 
 /* Terminal drawer */
-/* browser-terminal renders into .terminal-mount with no shadow DOM and no stylesheet of
-   its own (TerminalPanel imports xterm's), and it hard-codes a dark theme: an inline
-   background on each pane div, xterm's injected `.xterm-dom-renderer-owner-N` rules for
-   text color and font, and an inline background on the scrollable viewport. The
-   token-driven `!important` rules below win over all of those, and because the tokens
-   swap under `prefers-color-scheme: dark`, the terminal follows the OS theme with no JS.
-   Font: xterm measures the cell width on an offscreen canvas in its own option font and
-   then letter-spaces `.xterm-rows` so every glyph fills exactly one cell, so overriding
-   the rendered font (and the `.xterm-char-measure-element` it uses for glyph widths)
-   keeps text, cursor, selection, and mouse position aligned. */
+/* Only layout here: since browser-terminal 0.3.0 the panes' colours and font come from
+   `CreateOptions.terminal` and `setTheme`, which TerminalPanel fills from the same tokens
+   (src/core/terminalTheme.ts) and re-pushes when `prefers-color-scheme` flips. */
 .terminal-drawer { display: flex; flex-direction: column; min-height: 0; padding: 0; overflow: hidden; }
 .terminal-drawer[hidden] { display: none; }
 .terminal-drawer:focus-within { border-color: var(--focus); }
@@ -180,20 +173,6 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, [tabindex]:fo
 .term-note { margin: 4px 10px; font-size: 12px; }
 .terminal-drawer .err { color: var(--diff-ink); }
 .terminal-mount { flex: 1; min-height: 0; position: relative; }
-.terminal-mount > div { background: var(--panel) !important; }
-.terminal-mount .xterm,
-.terminal-mount .xterm .xterm-viewport,
-.terminal-mount .xterm .xterm-scrollable-element,
-.terminal-mount .xterm .xterm-screen { background-color: var(--panel) !important; }
-.terminal-mount .xterm .xterm-rows { color: var(--ink) !important; }
-/* Cursor: 5 classes outrank xterm's injected 4-class rule without `!important`, which
-   would also freeze the blink animation (important declarations beat keyframes). */
-.terminal-mount .xterm .xterm-rows .xterm-cursor.xterm-cursor-block { background-color: var(--focus); color: var(--panel); }
-.terminal-mount .xterm .xterm-rows .xterm-cursor.xterm-cursor-outline { outline-color: var(--focus); }
-.terminal-mount .xterm .xterm-rows .xterm-cursor.xterm-cursor-bar { box-shadow: 1px 0 0 var(--focus) inset; }
-.terminal-mount .xterm .xterm-rows .xterm-cursor.xterm-cursor-underline { border-bottom-color: var(--focus); }
-.terminal-mount .xterm, .terminal-mount .xterm * { font-family: var(--font-mono) !important; }
-.terminal-mount .xterm .xterm-rows, .terminal-mount .xterm .xterm-char-measure-element { font-size: 12px !important; }
-/* app.css gives every focused textarea/[tabindex] an outline; xterm's helper textarea
-   sits off-screen and the .xterm box would otherwise get a ring inside the drawer. */
-.terminal-mount .xterm:focus-visible, .terminal-mount .xterm-helper-textarea:focus-visible { outline: none; }
+/* app.css gives every focused textarea/[tabindex] an outline; xterm's hidden input sits
+   off-screen and the .xterm box would otherwise get a ring inside the drawer. */
+.terminal-mount .xterm:focus-visible, .terminal-mount .xterm textarea:focus-visible { outline: none; }

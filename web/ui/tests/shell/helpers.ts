@@ -101,7 +101,9 @@ export async function call(defs: CommandDef[], name: string, args: CallArgs = []
   const log: string[] = [];
   const err: string[] = [];
   const controller = new AbortController();
-  const ctx: CommandCtx = { signal: controller.signal, log: writer(log), err: writer(err), emit: writer(log) };
+  // `session`/`pane` are the ids browser-terminal 0.3.0 puts on every ctx. No command reads
+  // them yet (the working directory is one per page), so any stable pair will do.
+  const ctx: CommandCtx = { session: 1, pane: 1, signal: controller.signal, log: writer(log), err: writer(err), emit: writer(log) };
   const value = await def.fn(bindArgs(args), input, ctx);
   return { value, log, err };
 }

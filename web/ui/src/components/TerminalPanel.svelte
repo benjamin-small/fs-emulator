@@ -8,6 +8,7 @@
   // library's wasm loads only when someone opens the drawer.
   import type { BrowserTerminal } from "@benjamin-small/browser-terminal";
   import type { Volume } from "../lib/wasm";
+  import { themeFromTokens } from "../core/terminalTheme";
   import { createCommands } from "../shell/commands";
   import type { ShellHost } from "../shell/host";
   import { createStoreHost } from "../shell/storeHost.svelte";
@@ -26,15 +27,29 @@
   let host: ShellHost | null = null;
 
   /** Close the drawer and hand focus to the topbar button, since the element that had
-   *  focus (xterm's helper textarea) is about to be hidden. `exit`, the Close button,
-   *  and Escape on the bar all come through here. */
+   *  focus (the active pane's terminal input) is about to be hidden. `exit`, the Close
+   *  button, and Escape on the bar all come through here. */
   function close() {
     terminal.close();
     document.getElementById("terminal-toggle")?.focus();
   }
 
   function focusShell() {
-    mountEl?.querySelector<HTMLTextAreaElement>(".xterm-helper-textarea")?.focus();
+    bt?.focus();
+  }
+
+  /** The app's tokens as xterm settings. Read off the document each time, so the values
+   *  are whatever `prefers-color-scheme` currently resolves them to. */
+  function currentTheme() {
+    return themeFromTokens(getComputedStyle(document.documentElement));
+  }
+
+  // The tokens swap under `prefers-color-scheme: dark`, but xterm holds its theme in JS
+  // rather than reading CSS, so the swap has to be pushed in. Registered with the instance
+  // and removed in disposeTerminal.
+  const darkQuery = window.matchMedia("(prefers-color-scheme: dark)");
+  function onSchemeChange() {
+    bt?.setTheme(currentTheme().theme);
   }
 
   /**
@@ -52,16 +67,14 @@
     terminal.error = null;
     creating = (async () => {
       const { BrowserTerminal } = await import("@benjamin-small/browser-terminal");
-      const term = await BrowserTerminal.create({ mount });
+      const { theme, fontFamily } = currentTheme();
+      // 12px matches the dump's `--dump-size` neighbourhood and keeps a usable number of
+      // columns in a 220px drawer; the library's own default is 13.
+      const term = await BrowserTerminal.create({ mount, terminal: { theme, fontFamily, fontSize: 12 } });
       try {
-        // `setPrompt` lands in browser-terminal 0.3.0
-        // (https://github.com/benjamin-small/browser-terminal/issues/12); the pinned 0.2.0
-        // has no such method, so this optional call is a no-op until the pin moves and the
-        // prompt starts showing the working directory before the `❯`.
-        const applyPrompt = (prefix: string) => (term as { setPrompt?: (p: string) => void }).setPrompt?.(prefix);
         // Commands read live store fields through the host on every call, so registering
         // once is enough (same pattern as browser-terminal's Svelte demo).
-        const created = createStoreHost(close, applyPrompt);
+        const created = createStoreHost(close, (prefix) => term.setPrompt(prefix));
         for (const { spec, fn } of createCommands(created, vfs)) term.registerCommand(spec, fn);
         // Seed the prompt with the directory the shell starts in; `cd`, `mkfs`, and the
         // volume watcher below keep it in step from there.
@@ -75,6 +88,7 @@
         throw e;
       }
       bt = term;
+      darkQuery.addEventListener("change", onSchemeChange);
       terminal.ready = "ready";
     })()
       .catch((e: unknown) => {
@@ -115,6 +129,7 @@
   });
 
   function disposeTerminal() {
+    darkQuery.removeEventListener("change", onSchemeChange);
     bt?.dispose();
     bt = null;
     host = null;
