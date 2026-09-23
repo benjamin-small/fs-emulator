@@ -86,8 +86,10 @@ operation timeline along the bottom.
   **Lesson** card floats over the page, at the top right to begin with. Drag
   it by its bar to wherever it is out of the way of the bytes it talks about,
   or focus the ⋮⋮ handle and use the arrow keys (Shift for bigger steps); it
-  remembers where you left it, and `Escape` inside it closes it. Under 760px
-  it docks to the bottom of the screen instead. The
+  remembers where you left it, and `Escape` inside it closes it. The − / +
+  button in its bar minimizes it to just the bar and the Prev / Next / Close
+  row (still floating and movable) and expands it again; that is remembered
+  too. Under 760px it docks to the bottom of the screen instead. The
   card holds the scenario title, the step number, the step's title and text,
   a "Look at:" line naming what the step pointed the UI at (a file, a
   cluster, a sector, an offset and its region, the remnant hatching, the

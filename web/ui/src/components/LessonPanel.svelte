@@ -26,9 +26,12 @@
   // Move focus to the card's title on every step, not just when the lesson opens: the
   // step text is what changed, and a keyboard or screen-reader user needs to land on it
   // rather than hunt for it. `tick()` waits for the new step to be in the DOM first.
+  // Minimized, the title is hidden, so the dialog itself takes focus: its name is the
+  // scenario title and its description the step's title and text, which aria still reads
+  // from the hidden elements, so the new step is announced either way.
   $effect(() => {
     void scenarios.index;
-    void tick().then(() => titleEl?.focus());
+    void tick().then(() => (lessonWindow.minimized ? cardEl : titleEl)?.focus());
   });
 
   /** Finish and Close remove this card while focus is on the button that removed it, which
@@ -95,12 +98,24 @@
 
   const placed = $derived(lessonWindow.pos ?? fallback);
 
+  // Expanding a card parked near the bottom edge can push it off screen: re-clamp once the
+  // new size is in the DOM. (Minimizing only shrinks it, which never needs a move.)
+  $effect(() => {
+    void lessonWindow.minimized;
+    void tick().then(() => {
+      if (lessonWindow.pos) lessonWindow.setPos(clampPosition(lessonWindow.pos, cardSize(), viewport));
+    });
+  });
+
   // --- Dragging by the bar ------------------------------------------------------------
   let drag: { pointerId: number; startX: number; startY: number; origin: Point } | null = null;
   let dragging = $state(false);
 
   function onBarDown(e: PointerEvent) {
     if (docked || e.button !== 0) return;
+    // The bar's other buttons (minimize) click rather than drag; the handle does both.
+    const target = e.target as HTMLElement;
+    if (target.closest("button") && !target.closest(".handle")) return;
     const origin = placed ?? clampPosition({ x: 0, y: 0 }, cardSize(), viewport);
     drag = { pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, origin };
     dragging = true;
@@ -171,20 +186,33 @@
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="lesson-bar" onpointerdown={onBarDown} onpointermove={onBarMove} onpointerup={onBarUp} onpointercancel={onBarUp}>
     <p class="eyebrow">Lesson · step {scenarios.index + 1} of {scenarios.current?.steps.length ?? 0}</p>
+    <!-- Minimized, the card is its bar and its buttons: enough to step through a lesson
+         while the text stays out of the way of the bytes it points at. -->
+    <button
+      type="button"
+      class="minimize"
+      aria-expanded={!lessonWindow.minimized}
+      aria-controls="lesson-body"
+      aria-label={lessonWindow.minimized ? "Show the step text" : "Hide the step text"}
+      title={lessonWindow.minimized ? "Show the step text" : "Hide the step text"}
+      onclick={() => lessonWindow.toggleMinimized()}
+    >{lessonWindow.minimized ? "+" : "−"}</button>
     {#if !docked}
       <button type="button" class="handle" aria-label="Move the lesson card (arrow keys; Shift for bigger steps)" title="Drag to move, or use the arrow keys" onkeydown={onHandleKeydown}>⋮⋮</button>
     {/if}
   </div>
-  <!-- The title names the scenario, not the step, so it carries the step's own title and
-       text as its description: the focus move below then announces the new step in one
-       go. A polite live region on the text would race that announcement. -->
-  <h2 id="lesson-title" tabindex="-1" aria-describedby="lesson-step-title lesson-step-text" bind:this={titleEl}>{scenarios.current?.title ?? ""}</h2>
-  <h3 class="lesson-step-title" id="lesson-step-title">{scenarios.step?.title ?? ""}</h3>
-  <p id="lesson-step-text">{scenarios.step?.text ?? ""}</p>
-  {#if lookAt}
-    <p class="look-at muted">Look at: {lookAt}</p>
-  {/if}
-  <div class="btn-row">
+  <div id="lesson-body" hidden={lessonWindow.minimized}>
+    <!-- The title names the scenario, not the step, so it carries the step's own title and
+         text as its description: the focus move above then announces the new step in one
+         go. A polite live region on the text would race that announcement. -->
+    <h2 id="lesson-title" tabindex="-1" aria-describedby="lesson-step-title lesson-step-text" bind:this={titleEl}>{scenarios.current?.title ?? ""}</h2>
+    <h3 class="lesson-step-title" id="lesson-step-title">{scenarios.step?.title ?? ""}</h3>
+    <p id="lesson-step-text">{scenarios.step?.text ?? ""}</p>
+    {#if lookAt}
+      <p class="look-at muted">Look at: {lookAt}</p>
+    {/if}
+  </div>
+  <div class="btn-row" class:compact={lessonWindow.minimized}>
     <button onclick={() => scenarios.prev()} disabled={scenarios.index <= 0}>Prev</button>
     <button onclick={advance}>{isLast ? "Finish" : "Next"}</button>
     <button onclick={closeLesson}>Close</button>

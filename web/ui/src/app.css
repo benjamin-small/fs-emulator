@@ -179,8 +179,11 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .lesson.dragging .lesson-bar { cursor: grabbing; }
 .lesson.docked .lesson-bar { cursor: default; }
 .lesson-bar .eyebrow { flex: 1; margin: 0; }
-.lesson-bar .handle { padding: 0 5px; font: 12px/1 var(--font-mono); letter-spacing: -2px; color: var(--ink-muted); background: none; border: 1px solid transparent; cursor: grab; }
-.lesson-bar .handle:hover { border-color: var(--hairline); color: var(--ink); }
+.lesson-bar .handle, .lesson-bar .minimize { padding: 0 5px; font: 12px/1 var(--font-mono); color: var(--ink-muted); background: none; border: 1px solid transparent; }
+.lesson-bar .handle { letter-spacing: -2px; cursor: grab; }
+.lesson-bar .minimize { min-width: 20px; cursor: pointer; }
+.lesson-bar .handle:hover, .lesson-bar .minimize:hover { border-color: var(--hairline); color: var(--ink); }
+.lesson .btn-row.compact { margin-top: 2px; }
 .lesson .eyebrow { margin: 0 0 2px; font: 500 11px var(--font-display); text-transform: uppercase; letter-spacing: 0.04em; color: var(--ink-muted); }
 .lesson h2 { margin: 0 0 6px; font: 500 16px/1.2 var(--font-display); }
 .lesson h2:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
