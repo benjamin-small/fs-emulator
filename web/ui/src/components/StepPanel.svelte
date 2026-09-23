@@ -7,13 +7,15 @@
   const sectors = $derived(rec ? changedSectors(rec.changes, volume.sectorSize) : []);
 </script>
 
-<section class="panel step">
-  <h2>Step</h2>
+<!-- A strip under the top bar: heading, counter, op, sector buttons, and events flow left
+     to right and wrap, so the current step reads as one line on a wide window. -->
+<section class="panel step" aria-labelledby="step-heading">
+  <h2 id="step-heading">Step</h2>
   {#if !rec}
     <p class="muted">Run an action to see what it changes.</p>
   {:else}
-    <p>Step {volume.cursor + 1} of {volume.history.length}</p>
-    <p class="mono">{rec.op}</p>
+    <p class="counter">{volume.cursor + 1} of {volume.history.length}</p>
+    <p class="mono op">{rec.op}</p>
     {#if sectors.length}
       <div class="btn-row">
         {#each sectors as sector (sector)}

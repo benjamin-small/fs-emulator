@@ -16,6 +16,7 @@
   import { focusHistoryStep } from "./state/navigate.svelte";
   import { scenarios } from "./state/scenarios.svelte";
   import { terminal } from "./state/terminal.svelte";
+  import { theme } from "./state/theme.svelte";
   import { volume } from "./state/volume.svelte";
 
   /** Scrub to `n` and recenter the dump on what that step changed, like the Timeline's
@@ -49,7 +50,7 @@
   }
 </script>
 <svelte:window onkeydown={onKeydown} />
-<div class="app" style:--term-h="{terminal.height}px">
+<div class="app" class:term-side={terminal.placement === "side"} style:--term-h="{terminal.height}px" style:--term-w="{terminal.width}px">
   <header class="topbar">
     <h1>FAT explorer</h1>
     <button
@@ -62,7 +63,22 @@
     >Terminal</button>
     <div id="scenario-slot"><ScenarioPanel /></div>
     <StatusLine />
+    <button
+      id="theme-toggle"
+      type="button"
+      role="switch"
+      class="switch"
+      aria-checked={theme.isDark}
+      title="Switch between dark and light"
+      onclick={() => theme.toggle()}
+    >
+      <span>Dark mode</span>
+      <span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span>
+    </button>
   </header>
+  <!-- The current step sits with the other controls, under the picker and the Terminal
+       button, so the right column is left to state and data (Lesson, Strings, Inspector). -->
+  <div id="step-slot" class="step-slot"><StepPanel /></div>
   <div id="ribbon-slot" class="ribbon-slot"><Ribbon /></div>
   <div class="grid">
     <aside class="col left">
@@ -72,12 +88,13 @@
     </aside>
     <main class="col center"><HexView /></main>
     <aside class="col right">
-      {#if scenarios.current}<LessonPanel />{/if}
-      <StepPanel />
       <StringsPanel />
       <Inspector />
     </aside>
   </div>
   <footer id="timeline-slot"><Timeline /></footer>
   <TerminalPanel />
+  <!-- Floating (position: fixed), so its place in the DOM is only reading order: after
+       everything it talks about. -->
+  {#if scenarios.current}<LessonPanel />{/if}
 </div>

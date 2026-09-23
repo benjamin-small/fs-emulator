@@ -15,6 +15,7 @@
   import { createStoreHost } from "../shell/storeHost.svelte";
   import { MOUNT, Vfs, promptFor } from "../shell/vfs";
   import { terminal } from "../state/terminal.svelte";
+  import { theme } from "../state/theme.svelte";
   import { volume } from "../state/volume.svelte";
 
   let mountEl = $state<HTMLDivElement>();
@@ -40,18 +41,18 @@
   }
 
   /** The app's tokens as xterm settings. Read off the document each time, so the values
-   *  are whatever `prefers-color-scheme` currently resolves them to. */
+   *  are whatever `data-theme` on the root currently resolves them to. */
   function currentTheme() {
     return themeFromTokens(getComputedStyle(document.documentElement));
   }
 
-  // The tokens swap under `prefers-color-scheme: dark`, but xterm holds its theme in JS
-  // rather than reading CSS, so the swap has to be pushed in. Registered with the instance
-  // and removed in disposeTerminal.
-  const darkQuery = window.matchMedia("(prefers-color-scheme: dark)");
-  function onSchemeChange() {
-    bt?.setTheme(currentTheme().theme);
-  }
+  // The tokens swap when the switch sets `data-theme`, but xterm holds its theme in JS
+  // rather than reading CSS, so the swap has to be pushed in. The store puts the attribute
+  // on the root before this effect runs, so the computed tokens are already the new ones.
+  $effect(() => {
+    void theme.current;
+    untrack(() => bt?.setTheme(currentTheme().theme));
+  });
 
   /**
    * Create the terminal on first use. Called after the drawer is visible so the
@@ -68,10 +69,10 @@
     terminal.error = null;
     creating = (async () => {
       const { BrowserTerminal } = await import("@benjamin-small/browser-terminal");
-      const { theme, fontFamily } = currentTheme();
+      const { theme: xtermTheme, fontFamily } = currentTheme();
       // 12px matches the dump's `--dump-size` neighbourhood and keeps a usable number of
       // columns in a 220px drawer; the library's own default is 13.
-      const term = await BrowserTerminal.create({ mount, terminal: { theme, fontFamily, fontSize: 12 } });
+      const term = await BrowserTerminal.create({ mount, terminal: { theme: xtermTheme, fontFamily, fontSize: 12 } });
       try {
         // Commands read live store fields through the host on every call, so registering
         // once is enough (same pattern as browser-terminal's Svelte demo).
@@ -92,7 +93,6 @@
         throw e;
       }
       bt = term;
-      darkQuery.addEventListener("change", onSchemeChange);
       terminal.ready = "ready";
     })()
       .catch((e: unknown) => {
@@ -133,7 +133,6 @@
   });
 
   function disposeTerminal() {
-    darkQuery.removeEventListener("change", onSchemeChange);
     bt?.dispose();
     bt = null;
     host = null;
@@ -148,8 +147,9 @@
   let drag: { pointerId: number; startY: number; startH: number } | null = null;
   function onBarDown(e: PointerEvent) {
     if ((e.target as HTMLElement).closest("button")) return;
+    if (terminal.placement === "side") return; // the bar resizes the bottom drawer only
     drag = { pointerId: e.pointerId, startY: e.clientY, startH: terminal.height };
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    capture(e);
     e.preventDefault();
   }
   function onBarMove(e: PointerEvent) {
@@ -159,10 +159,51 @@
   function onBarUp(e: PointerEvent) {
     if (!drag || e.pointerId !== drag.pointerId) return;
     drag = null;
-    (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
     // Also on pointercancel: the drawer keeps the size it was dragged to, so that is the
-    // height to remember.
+    // height to remember. Committed before the capture is released, which can throw when
+    // the browser already dropped the pointer (a cancelled touch, a window blur).
     terminal.commitHeight();
+    release(e);
+  }
+
+  /** Pointer capture keeps a drag alive when the pointer leaves the handle. Best effort:
+   *  a pointer the browser no longer tracks (or a synthetic event) throws, and the drag
+   *  still works while the pointer stays over the handle. */
+  function capture(e: PointerEvent) {
+    try {
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    } catch {
+      // No active pointer with that id: nothing to capture.
+    }
+  }
+  function release(e: PointerEvent) {
+    try {
+      (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+    } catch {
+      // Already released by the browser.
+    }
+  }
+
+  // In the side column the left edge is the handle and dragging it left widens the column.
+  // Same commit-on-pointer-up rule as the bar, into the column's own stored width.
+  let gripDrag: { pointerId: number; startX: number; startW: number } | null = null;
+  let gripping = $state(false);
+  function onGripDown(e: PointerEvent) {
+    gripDrag = { pointerId: e.pointerId, startX: e.clientX, startW: terminal.width };
+    gripping = true;
+    capture(e);
+    e.preventDefault();
+  }
+  function onGripMove(e: PointerEvent) {
+    if (!gripDrag || e.pointerId !== gripDrag.pointerId) return;
+    terminal.setWidth(gripDrag.startW + (gripDrag.startX - e.clientX));
+  }
+  function onGripUp(e: PointerEvent) {
+    if (!gripDrag || e.pointerId !== gripDrag.pointerId) return;
+    gripDrag = null;
+    gripping = false;
+    terminal.commitWidth();
+    release(e);
   }
 
   // Escape closes from the bar or the Close button. Inside the terminal xterm cancels
@@ -183,10 +224,23 @@
 <section
   id="terminal-drawer"
   class="terminal-drawer panel"
+  class:side={terminal.placement === "side"}
   hidden={!terminal.open}
   aria-label="Terminal"
   onkeydown={onKeydown}
 >
+  {#if terminal.placement === "side"}
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div
+      class="term-grip"
+      class:dragging={gripping}
+      title="Drag to resize"
+      onpointerdown={onGripDown}
+      onpointermove={onGripMove}
+      onpointerup={onGripUp}
+      onpointercancel={onGripUp}
+    ></div>
+  {/if}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="term-bar" onpointerdown={onBarDown} onpointermove={onBarMove} onpointerup={onBarUp} onpointercancel={onBarUp}>
     <span class="term-title">Terminal <span class="muted">— /mnt is the volume, /dev/hda the raw disk. Type help.</span></span>

@@ -31,10 +31,11 @@ pnpm preview   # serve the production build
 
 ## Panes
 
-Layout: a disk ribbon runs full width above a three-column grid — files,
-FAT map, and actions on the left; the hex dump in the center; byte
-inspector, strings, and the current step on the right — with an operation
-timeline along the bottom.
+Layout: the current step runs as a strip under the top bar, next to the
+other controls; a disk ribbon runs full width above a three-column grid —
+files, FAT map, and actions on the left; the hex dump in the center; the
+lesson card, strings, and the byte inspector on the right — with an
+operation timeline along the bottom.
 
 - **Ribbon** — the entire disk as one strip, one column per pixel of its
   width, colored by owning file or region (or a hairline for free space),
@@ -61,12 +62,14 @@ timeline along the bottom.
 - **Inspector** — facts about the byte under the cursor (offset, sector,
   cluster, owner) plus the sector's decoded annotations — directory
   entries, FAT chain, boot sector fields — with the byte's range
-  highlighted.
+  highlighted. Offsets and integer fields are in hex to match the dump;
+  hover one for the decimal.
 - **Strings** — printable runs (4+ bytes) in the visible window, or the
   whole disk on request, each with its offset and owner; click one to jump
   to it.
-- **Step / Timeline** — the current operation's plain-language events and
-  changed sectors, with Prev/Next/Play scrubbing through history. Replay
+- **Step** (strip under the top bar) **/ Timeline** (bottom) — the current
+  operation's plain-language events and changed sectors, with Prev/Next/Play
+  scrubbing through history. Replay
   reconstructs the disk as it was after any step and highlights what that
   step changed, in amber, in both the dump and the ribbon. Running a command
   never moves the dump: it highlights the changed bytes and leaves the view
@@ -80,14 +83,20 @@ timeline along the bottom.
   disk, make a directory, and work from the shell (the same operations typed
   as commands, plus a raw-sector read and a raw patch of the volume label).
   Pick one in the top bar and press **Start**; it formats a fresh disk and a
-  **Lesson** card appears at the top of the right column, above Step. The
+  **Lesson** card floats over the page, at the top right to begin with. Drag
+  it by its bar to wherever it is out of the way of the bytes it talks about,
+  or focus the ⋮⋮ handle and use the arrow keys (Shift for bigger steps); it
+  remembers where you left it, and `Escape` inside it closes it. The − / +
+  button in its bar minimizes it to just the bar and the Prev / Next / Close
+  row (still floating and movable) and expands it again; that is remembered
+  too. Under 760px it docks to the bottom of the screen instead. The
   card holds the scenario title, the step number, the step's title and text,
   a "Look at:" line naming what the step pointed the UI at (a file, a
   cluster, a sector, an offset and its region, the remnant hatching, the
   strings overlay), and **Prev** / **Next** (**Finish** on the last step) /
   **Close**; `n` and `p` do Next and Prev from anywhere outside a text
-  field. It is an ordinary panel: nothing is covered or dimmed, every other
-  pane stays live while a lesson runs, and the card's title takes focus on
+  field. It is a non-modal dialog: nothing is dimmed or made inert, every
+  other pane stays live while a lesson runs, and the card's title takes focus on
   each step so a keyboard or screen-reader user lands on the new text. Each
   step runs
   at most once: **Next** runs a step the first time you reach it, but once
@@ -100,14 +109,16 @@ timeline along the bottom.
 ## Terminal
 
 The **Terminal** button in the top bar (or the backtick key, from anywhere
-that is not a text field) opens a drawer along the bottom running a shell
+that is not a text field) opens the terminal, running a shell
 from `@benjamin-small/browser-terminal`, pinned at 0.3.0. The volume is
 mounted at `/mnt` and the raw disk is `/dev/hda`; `/dev/zero` and `/dev/null`
 exist too. Every write is an ordinary journaled operation, so it lands in
 the timeline, the dump, the ribbon, and the tree exactly like a form action,
-and it rewinds the same way. The drawer bar can be dragged to resize
-(120px to 60% of the window; the height persists), `Escape` on the bar,
-the Close button, or `exit` close it, and `help` or `<command> --help`
+and it rewinds the same way. On viewports 1600px and wider the terminal is
+a column down the right side, resized by dragging its left edge (320px to
+half the window); narrower viewports get a drawer along the bottom, resized
+by dragging its bar (120px to 60% of the window). Both sizes persist.
+`Escape` on the bar, the Close button, or `exit` close it, and `help` or `<command> --help`
 describe every command.
 
 The prompt shows the working directory: the shell hands it to the terminal on
@@ -226,13 +237,14 @@ it. `docs/ROADMAP.md` has the checklist.
 |---|---|
 | `[` / `]` | Step the timeline back / forward |
 | `n` / `p` | Next / previous step on the Lesson card (while a lesson is running) |
+| `Escape` (inside the Lesson card) | Close the lesson |
 | `/` | Focus the path field in Actions |
 | Arrow keys | Move the dump's byte cursor, or seek one ribbon column (ribbon focused) |
 | `Page Up` / `Page Down` | Scroll the dump by a page |
 | `Home` / `End` | Jump to the start / end of the disk |
 | `g` | Jump to an offset, sector, or cluster (dump focused) |
 | `s` | Toggle string highlighting (dump focused) |
-| `` ` `` | Toggle the terminal drawer |
+| `` ` `` | Toggle the terminal |
 
 All shortcuts except the dump's own (which need the dump focused) work from
 anywhere that isn't a text field, so typing a path or file content in
@@ -241,6 +253,7 @@ into it, including `[`, `]`, `/`, `n`, `p`, and the backtick, never reach the
 app's shortcuts, so close the drawer with `exit`, the Close button, or
 `Escape` on its bar.
 
-Respects `prefers-color-scheme` for light/dark and `prefers-reduced-motion`
-(the diff fade, the ribbon's flash, and the timeline's Play speed all back
-off).
+Dark by default, whatever the OS prefers: the **Dark mode** switch at the
+right of the top bar flips to light, remembers the choice across reloads, and
+the terminal follows. Respects `prefers-reduced-motion` (the diff fade, the
+ribbon's flash, and the timeline's Play speed all back off).

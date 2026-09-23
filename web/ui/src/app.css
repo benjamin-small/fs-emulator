@@ -16,10 +16,30 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 /* The terminal drawer is the implicit fifth row: `grid-auto-rows` sizes it from `--term-h`
    (set on .app by App.svelte), and a hidden drawer generates no grid item, so it adds
    neither a track nor a gap. */
-.app { display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; grid-auto-rows: var(--term-h, 220px); height: 100vh; gap: 8px; padding: 8px; }
+/* The single column is `minmax(0, 1fr)`, never the implicit `auto`: an auto track grows to
+   the max-content of its children, and two of them carry pixel widths measured from their
+   last layout (the ribbon's canvas, xterm's screen layers). With `auto`, narrowing the window
+   left the column at the old width, the page scrolled sideways, and the resize observers that
+   would refit those children never saw a smaller box. */
+.app { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto auto minmax(0, 1fr) auto; grid-auto-rows: var(--term-h, 220px); height: 100vh; gap: 8px; padding: 8px; }
+/* Wide viewports (placementFor in src/core/terminalPlacement.ts, mirrored by App.svelte as
+   `.term-side`): the terminal is a column down the right side spanning every row, sized by
+   `--term-w`. It is placed explicitly in column 2, so the implicit column exists only while
+   the drawer is rendered; hidden, it adds neither a track nor a gap. */
+.app.term-side { grid-auto-columns: var(--term-w, 500px); }
+.app.term-side > .terminal-drawer { grid-column: 2; grid-row: 1 / -1; position: relative; }
 .topbar { display: flex; align-items: center; gap: 16px; }
 .topbar h1 { font: 500 18px var(--font-display); margin: 0; }
-.grid { display: grid; grid-template-columns: 220px minmax(0, 1fr) 260px; gap: 8px; min-height: 0; }
+/* Theme switch: a button with role="switch"; the track colour is the checked (dark) state. */
+.switch { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; background: none; border: 0; padding: 2px 4px; font: 500 12px var(--font-display); color: var(--ink-muted); }
+.switch:hover { color: var(--ink); }
+.switch-track { position: relative; width: 28px; height: 16px; border-radius: 8px; background: var(--hairline); border: 1px solid var(--ink-muted); transition: background 0.15s, border-color 0.15s; }
+.switch-knob { position: absolute; top: 1px; left: 1px; width: 12px; height: 12px; border-radius: 50%; background: var(--ink); transition: left 0.15s, background 0.15s; }
+.switch[aria-checked="true"] .switch-track { background: var(--focus); border-color: var(--focus); }
+.switch[aria-checked="true"] .switch-knob { left: 13px; background: var(--canvas); }
+/* The right column (Lesson, Strings, Inspector) is wide enough for an Inspector annotation
+   line (`0x013..0x015 total sectors (16-bit): 0x8000`) to stay on one line. */
+.grid { display: grid; grid-template-columns: 220px minmax(0, 1fr) 340px; gap: 8px; min-height: 0; }
 .col { display: flex; flex-direction: column; gap: 8px; min-height: 0; overflow: auto; }
 /* Side panels keep their natural height and the column scrolls; only the Files tree and
    the Inspector's annotation list scroll on their own, and Files never collapses. */
@@ -89,7 +109,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .selected-file .path { margin: 0 0 4px; overflow-wrap: anywhere; }
 .selected-file .trace { list-style: none; padding: 0; margin: 0 0 8px; display: flex; flex-direction: column; gap: 2px; font-size: 12px; }
 .selected-file .trace .link { text-align: left; }
-.annotations { list-style: none; padding: 0; margin: 8px 0 0; max-height: 40vh; overflow: auto; font-size: 12px; }
+.annotations { list-style: none; padding: 0; margin: 8px 0 0; max-height: 40vh; overflow: auto; font: 11px/1.5 var(--font-mono); }
+.annotations li { overflow-wrap: anywhere; padding-left: 1.5em; text-indent: -1.5em; }
 .annotations li.hit { background: color-mix(in srgb, var(--focus) 15%, transparent); }
 .link { border: 0; padding: 0; background: none; color: var(--focus); cursor: pointer; }
 
@@ -116,7 +137,15 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .fatmap-caption { margin: 6px 0 0; font-size: 11px; min-height: 14px; }
 
 /* Step panel */
-.step .events { list-style: none; padding: 0; margin: 8px 0 0; display: flex; flex-direction: column; gap: 2px; font-size: 12px; }
+/* Step strip (under the top bar): one wrapping row of heading, counter, op, sector buttons,
+   and events. */
+.step { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; padding: 5px 10px; }
+.step > h2 { margin: 0; font: 500 13px var(--font-display); }
+.step p { margin: 0; }
+.step .counter { color: var(--ink-muted); }
+.step .btn-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.step .events { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 2px 14px; font-size: 12px; }
+.step .events .link { text-align: left; }
 
 /* Timeline */
 .timeline { padding: 4px 2px; }
@@ -141,7 +170,20 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 
 /* Lesson card: an ordinary panel at the top of the right column, marked out by its border
    alone — nothing is covered, dimmed, or made inert while a lesson runs. */
-.lesson { border: 2px solid var(--focus); }
+/* The Lesson card floats over the page and is dragged by its bar (LessonPanel.svelte
+   clamps it to the viewport and remembers the spot); under 760px it docks to the bottom
+   as a sheet instead. */
+.lesson { position: fixed; z-index: 30; width: 340px; max-width: calc(100vw - 16px); max-height: calc(100vh - 16px); overflow: auto; border: 2px solid var(--focus); box-shadow: 0 10px 30px color-mix(in srgb, black 35%, transparent); }
+.lesson.docked { left: 8px; right: 8px; bottom: 8px; width: auto; max-height: 50vh; }
+.lesson-bar { display: flex; align-items: center; gap: 8px; margin: -8px -10px 6px; padding: 5px 10px; border-bottom: 1px solid var(--hairline); cursor: grab; touch-action: none; user-select: none; }
+.lesson.dragging .lesson-bar { cursor: grabbing; }
+.lesson.docked .lesson-bar { cursor: default; }
+.lesson-bar .eyebrow { flex: 1; margin: 0; }
+.lesson-bar .handle, .lesson-bar .minimize { padding: 0 5px; font: 12px/1 var(--font-mono); color: var(--ink-muted); background: none; border: 1px solid transparent; }
+.lesson-bar .handle { letter-spacing: -2px; cursor: grab; }
+.lesson-bar .minimize { min-width: 20px; cursor: pointer; }
+.lesson-bar .handle:hover, .lesson-bar .minimize:hover { border-color: var(--hairline); color: var(--ink); }
+.lesson .btn-row.compact { margin-top: 2px; }
 .lesson .eyebrow { margin: 0 0 2px; font: 500 11px var(--font-display); text-transform: uppercase; letter-spacing: 0.04em; color: var(--ink-muted); }
 .lesson h2 { margin: 0 0 6px; font: 500 16px/1.2 var(--font-display); }
 .lesson h2:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
@@ -165,12 +207,17 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 /* Terminal drawer */
 /* Only layout here: since browser-terminal 0.3.0 the panes' colours and font come from
    `CreateOptions.terminal` and `setTheme`, which TerminalPanel fills from the same tokens
-   (src/core/terminalTheme.ts) and re-pushes when `prefers-color-scheme` flips. */
+   (src/core/terminalTheme.ts) and re-pushes when the theme switch flips. */
 .terminal-drawer { display: flex; flex-direction: column; min-height: 0; padding: 0; overflow: hidden; }
 .terminal-drawer[hidden] { display: none; }
 .terminal-drawer:focus-within { border-color: var(--focus); }
 .term-bar { display: flex; align-items: center; gap: 8px; padding: 4px 10px; border-bottom: 1px solid var(--hairline); cursor: row-resize; user-select: none; touch-action: none; font: 500 12px var(--font-display); }
 .term-bar button { margin-left: auto; cursor: pointer; }
+/* In the side column the bar is just a bar; the left edge is the handle. The grip sits
+   inside the border because the drawer clips overflow. */
+.terminal-drawer.side .term-bar { cursor: default; }
+.term-grip { position: absolute; top: 0; bottom: 0; left: 0; width: 6px; cursor: col-resize; touch-action: none; z-index: 1; }
+.term-grip:hover, .term-grip.dragging { background: color-mix(in srgb, var(--focus) 40%, transparent); }
 .term-note { margin: 4px 10px; font-size: 12px; }
 .terminal-drawer .err { color: var(--diff-ink); }
 .terminal-mount { flex: 1; min-height: 0; position: relative; }

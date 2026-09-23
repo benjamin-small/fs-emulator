@@ -154,7 +154,7 @@ explorer adopted them on 2026-09-22. Each workaround they replaced is gone:
    replacing the `!important` CSS overrides:
    https://github.com/benjamin-small/browser-terminal/issues/17.
    `src/core/terminalTheme.ts` maps the design tokens onto an `ITheme`, and
-   the panel re-pushes it when `prefers-color-scheme` flips.
+   the panel re-pushes it when the theme switch flips.
 7. A public `focus()`, replacing the `.xterm-helper-textarea` query:
    https://github.com/benjamin-small/browser-terminal/issues/18.
 
