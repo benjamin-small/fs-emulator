@@ -4,6 +4,7 @@
   import { layers } from "../state/layers.svelte";
   import { attrAtOffset, clusterByteRange } from "../core/attribution";
   import type { Annotation, FatEntry } from "../lib/wasm";
+  import { describeRange, formatRange, formatValue } from "../core/annotationFormat";
 
   const offset = $derived(selection.hoverOffset ?? selection.cursorOffset);
   const attr = $derived(offset === null ? null : attrAtOffset(volume.attribution, offset));
@@ -49,8 +50,13 @@
     </dl>
     {#if !volume.atLatest}<p class="muted">Annotations describe the latest state, not the step you are viewing.</p>{/if}
     <ul class="annotations">
+      <!-- Offsets and integer values in hex, like the dump; the decimal is the tooltip. -->
       {#each annotations as a}
-        <li class:hit={inSector >= a.range.start && inSector < a.range.end}><span class="mono muted">{a.range.start}..{a.range.end}</span> {a.label}: <span class="mono">{a.value}</span></li>
+        {@const v = formatValue(a.value)}
+        <li class:hit={inSector >= a.range.start && inSector < a.range.end}>
+          <span class="muted" title={describeRange(a.range)}>{formatRange(a.range, volume.sectorSize)}</span>
+          {a.label}: <span title={v.title}>{v.text}</span>
+        </li>
       {/each}
     </ul>
   {/if}

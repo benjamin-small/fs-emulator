@@ -107,7 +107,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .selected-file .path { margin: 0 0 4px; overflow-wrap: anywhere; }
 .selected-file .trace { list-style: none; padding: 0; margin: 0 0 8px; display: flex; flex-direction: column; gap: 2px; font-size: 12px; }
 .selected-file .trace .link { text-align: left; }
-.annotations { list-style: none; padding: 0; margin: 8px 0 0; max-height: 40vh; overflow: auto; font-size: 12px; }
+.annotations { list-style: none; padding: 0; margin: 8px 0 0; max-height: 40vh; overflow: auto; font: 11px/1.5 var(--font-mono); }
+.annotations li { overflow-wrap: anywhere; padding-left: 1.5em; text-indent: -1.5em; }
 .annotations li.hit { background: color-mix(in srgb, var(--focus) 15%, transparent); }
 .link { border: 0; padding: 0; background: none; color: var(--focus); cursor: pointer; }
 

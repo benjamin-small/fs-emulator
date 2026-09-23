@@ -61,7 +61,8 @@ timeline along the bottom.
 - **Inspector** — facts about the byte under the cursor (offset, sector,
   cluster, owner) plus the sector's decoded annotations — directory
   entries, FAT chain, boot sector fields — with the byte's range
-  highlighted.
+  highlighted. Offsets and integer fields are in hex to match the dump;
+  hover one for the decimal.
 - **Strings** — printable runs (4+ bytes) in the visible window, or the
   whole disk on request, each with its offset and owner; click one to jump
   to it.
