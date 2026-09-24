@@ -102,9 +102,10 @@ optional part of the adapter that exposes the ext3 journal.
   and blocks"`. `describeFocus` prints `Files: ${path}, ${fileParts}`; for
   FAT that is the string it prints today. The unit clause keeps "in the data
   region".
-- `UnitOwner` gains `role?: "data" | "directory" | "indirect"`; FAT rows leave
-  it undefined. `buildAttribution` colours an indirect row with its path's
-  hue like a data row; `Attr` gains `role?` copied from the owner.
+- `UnitOwner` gains `role?: "data" | "directory" | "indirect"` and `color?:
+  ColorIndex`; FAT rows leave both undefined. `buildAttribution` colours an
+  indirect row with its path's hue like a data row, and uses `color` verbatim
+  when a row carries it; `Attr` gains `role?` copied from the owner.
 - `FsAdapter` gains `readonly needsRecovery: boolean` (FAT and ext2: always
   false) and `readonly journal?: JournalCapability`:
 
@@ -183,10 +184,13 @@ phase mapping), `metadata.ts` (`CORRUPT_NOTE`, `NOTES`, `touchesMetadata`),
   `blockOwners()`, and on ext3 `journalInfo()` and `needsRecovery()`, into
   plain fields. `owners` are the non-journal rows mapped to `UnitOwner {
   unit: block, path, isDir: role === "directory", firstUnit, role }` where
-  `firstUnit` is the path's first `data` (or `directory`) block; journal
-  rows are kept in a separate `journalBlocks: number[]` field and never
-  become units (journal blocks lie in `journal` regions, which attribution
-  does not treat as units).
+  `firstUnit` is the path's first `data` (or `directory`) block. Journal
+  rows inside `journal` regions never become units (attribution does not
+  treat those regions as units) and are kept in a separate `journalBlocks:
+  number[]` field; the journal's pointer blocks, which lie in a data region,
+  stay in `owners` as `{ path: "<journal>", isDir: false, role: "indirect",
+  color: COLOR_JOURNAL }` so the map, dump, and Inspector show them owned by
+  the journal rather than free.
 - `chain(path)`: `fileBlocks(path).data` (memoised per refresh by path).
   `entrySlots(path)`: the inode's 128-byte slot. `dataStart("/")`: the root
   directory's first block; a file: its first data block; a directory: its
