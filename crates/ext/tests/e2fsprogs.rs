@@ -256,15 +256,51 @@ mod scripted_sequence {
         );
     }
 
+    /// The `Size:` and `Links:` values of a `debugfs -R "stat PATH"` dump.
+    ///
+    /// debugfs's `dump_inode` (`debugfs/debugfs.c`) prints the size on the
+    /// `User: ... Group: ... Size: N` line and the link count on the
+    /// `Links: N   Blockcount: M` line; a later `Fragment: ... Size: 0`
+    /// line repeats the `Size:` label, so the first occurrence of each
+    /// label is the one read.
+    fn parse_stat(dump: &str) -> (Option<u64>, Option<u32>) {
+        let tokens: Vec<&str> = dump.split_whitespace().collect();
+        let after = |label: &str| {
+            tokens
+                .windows(2)
+                .find(|w| w[0] == label)
+                .map(|w| w[1].to_string())
+        };
+        (
+            after("Size:").and_then(|v| v.parse().ok()),
+            after("Links:").and_then(|v| v.parse().ok()),
+        )
+    }
+
+    #[test]
+    fn parse_stat_reads_the_first_size_and_links() {
+        let dump = "Inode: 14   Type: regular    Mode:  0644   Flags: 0x0\n\
+                    Generation: 0    Version: 0x00000000\n\
+                    User:     0   Group:     0   Size: 100\n\
+                    File ACL: 0\n\
+                    Links: 1   Blockcount: 2\n\
+                    Fragment:  Address: 0    Number: 0    Size: 0\n";
+        assert_eq!(parse_stat(dump), (Some(100), Some(1)));
+    }
+
+    /// Names of 9 bytes (20-byte records, 51 to a block): 700 of them
+    /// need 14 directory blocks, past the 12 direct pointers.
+    const WIDE_ENTRIES: usize = 700;
+
     #[test]
     fn e2fsck_is_clean_and_debugfs_agrees_after_a_scripted_sequence() {
-        let (Some(e2fsck), Some(debugfs)) = (super::tool("e2fsck"), super::tool("debugfs")) else {
-            return;
-        };
         let mut fs = ExtFs::format(ExtFormatOptions::default()).unwrap();
         fs.create_file("/small.txt", &pattern(100)).unwrap();
         fs.create_file("/mid.bin", &pattern(20 * 1024)).unwrap();
         fs.create_file("/big.bin", &pattern(300 * 1024)).unwrap();
+        fs.create_file("/indirect.bin", &pattern(20 * 1024))
+            .unwrap();
+        fs.create_file("/grow.bin", &pattern(1024)).unwrap();
         fs.create_dir("/many").unwrap();
         for i in 0..60 {
             fs.create_file(
@@ -277,15 +313,33 @@ mod scripted_sequence {
         // bytes shifted so every kept block changes.
         fs.write_file("/mid.bin", &pattern(5 * 1024 + 7)[7..])
             .unwrap();
+        // Growth from one direct block into the double-indirect range.
+        fs.write_file("/grow.bin", &pattern(300 * 1024 + 3)[3..])
+            .unwrap();
+        // A shrink from the double-indirect range to part of one block.
+        fs.write_file("/big.bin", &pattern(100)).unwrap();
+        // A delete that frees a single-indirect block (20 KiB = 20 data blocks).
+        fs.delete_file("/indirect.bin").unwrap();
         // Deletes: the first entry of /many's second block, and one merged into its predecessor.
         fs.delete_file("/many/entry-50.txt").unwrap();
         fs.delete_file("/many/entry-07.txt").unwrap();
         fs.create_dir("/scratch").unwrap();
         fs.remove_dir("/scratch").unwrap();
+        // A directory that grows past its 12 direct blocks.
+        fs.create_dir("/wide").unwrap();
+        for i in 0..WIDE_ENTRIES {
+            fs.create_file(&format!("/wide/entry-{i:03}"), b"").unwrap();
+        }
+        assert!(fs.stat("/wide").unwrap().size > 12 * 1024);
+        assert_eq!(fs.stat("/grow.bin").unwrap().size, 300 * 1024);
+        assert_eq!(fs.stat("/big.bin").unwrap().size, 100);
 
+        let (Some(e2fsck), Some(debugfs)) = (super::tool("e2fsck"), super::tool("debugfs")) else {
+            return;
+        };
         let image = super::image_file(&fs, "sequence");
         let fsck = super::run(&e2fsck, &["-fn"], &image);
-        let listings: Vec<(&str, std::process::Output)> = ["/", "/many"]
+        let listings: Vec<(&str, std::process::Output)> = ["/", "/many", "/wide"]
             .into_iter()
             .map(|dir| {
                 let request = format!("ls -l {dir}");
@@ -294,6 +348,8 @@ mod scripted_sequence {
             .collect();
         let big = super::run(&debugfs, &["-R", "cat /big.bin"], &image);
         let mid = super::run(&debugfs, &["-R", "cat /mid.bin"], &image);
+        let grow = super::run(&debugfs, &["-R", "cat /grow.bin"], &image);
+        let big_stat = super::run(&debugfs, &["-R", "stat /big.bin"], &image);
         std::fs::remove_file(&image).unwrap();
 
         let report = super::both_streams(&fsck);
@@ -324,6 +380,16 @@ mod scripted_sequence {
         assert!(
             mid.stdout == fs.read_file("/mid.bin").unwrap(),
             "debugfs cat /mid.bin"
+        );
+        assert!(
+            grow.stdout == fs.read_file("/grow.bin").unwrap(),
+            "debugfs cat /grow.bin"
+        );
+        assert_eq!(
+            parse_stat(&String::from_utf8_lossy(&big_stat.stdout)),
+            (Some(fs.stat("/big.bin").unwrap().size), Some(1)),
+            "debugfs stat /big.bin:\n{}",
+            super::both_streams(&big_stat)
         );
     }
 }
