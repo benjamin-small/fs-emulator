@@ -608,3 +608,341 @@ fn format_ext2_options_reach_the_superblock_and_bad_ones_throw() {
         "InvalidGeometry"
     );
 }
+
+fn fresh_ext3() -> Volume {
+    Volume::format_ext3(JsValue::UNDEFINED).unwrap()
+}
+
+/// The little-endian `u32` at a byte offset (the ext superblock's order).
+fn le32(v: &Volume, offset: u32) -> u32 {
+    let b = v.read_raw(offset, 4).unwrap();
+    u32::from_le_bytes([b[0], b[1], b[2], b[3]])
+}
+
+/// The big-endian `u32` at a byte offset (the journal's order).
+fn be32(v: &Volume, offset: u32) -> u32 {
+    let b = v.read_raw(offset, 4).unwrap();
+    u32::from_be_bytes([b[0], b[1], b[2], b[3]])
+}
+
+#[wasm_bindgen_test]
+fn format_ext3_defaults_and_options_reach_the_disk() {
+    let v = fresh_ext3();
+    assert_eq!(v.fs_type(), "ext3");
+    assert_eq!(v.sector_count(), 16384);
+    assert_eq!(v.history_length(), 0);
+    assert_eq!(names(&v.list_dir("/").unwrap()), vec!["lost+found"]);
+    assert_eq!(le32(&v, 1024 + 0x5C), 0x0004); // s_feature_compat: has_journal
+    assert_eq!(le32(&v, 1024 + 0xE0), 8); // s_journal_inum
+    assert_eq!(le32(&v, 1024 + 0x100), 0x0040); // s_default_mount_opts: ordered
+    assert_eq!(be32(&v, 82 * 1024), 0xC03B_3998); // the journal superblock's magic
+    assert_eq!(be32(&v, 82 * 1024 + 0x10), 1024); // s_maxlen
+    assert_eq!(
+        Volume::format_ext3(JsValue::NULL).unwrap().fs_type(),
+        "ext3"
+    );
+
+    let custom = obj(&[
+        ("totalBlocks", JsValue::from(8192u32)),
+        ("label", JsValue::from_str("journal")),
+        ("journalBlocks", JsValue::from(2048u32)),
+        ("journalMode", JsValue::from_str("data")),
+    ]);
+    let d = Volume::format_ext3(custom).unwrap();
+    assert_eq!(d.fs_type(), "ext3");
+    assert_eq!(d.sector_count(), 8192);
+    assert_eq!(d.read_raw(1024 + 120, 7).unwrap(), b"journal".to_vec());
+    assert_eq!(le32(&d, 1024 + 0x100), 0x0020); // data mode
+    assert_eq!(be32(&d, 82 * 1024 + 0x10), 2048);
+    let ordered = obj(&[("journalMode", JsValue::from_str("ordered"))]);
+    assert_eq!(
+        le32(&Volume::format_ext3(ordered).unwrap(), 1024 + 0x100),
+        0x0040
+    );
+    let again = Volume::from_image(d.image()).unwrap();
+    assert_eq!(again.fs_type(), "ext3");
+    assert_eq!(le32(&again, 1024 + 0x100), 0x0020);
+}
+
+#[wasm_bindgen_test]
+fn format_ext3_bad_options_throw_and_format_ext2_refuses_the_journal_keys() {
+    let fails = |key: &str, value: JsValue| Volume::format_ext3(obj(&[(key, value)])).unwrap_err();
+    for (key, value) in [
+        ("journalBlocks", JsValue::from(1024.5)),
+        ("journalBlocks", JsValue::from(-1)),
+        ("journalBlocks", JsValue::from_str("1024")),
+        ("journalMode", JsValue::from(1)),
+        ("uuid", JsValue::from_str("not-a-uuid")),
+        ("label", JsValue::from_str("seventeen-bytes!!")),
+    ] {
+        assert_eq!(
+            code(fails(key, value.clone())),
+            "BadArgument",
+            "{key}: {value:?}"
+        );
+    }
+    let err = fails("journalMode", JsValue::from_str("writeback"));
+    assert_eq!(code(err.clone()), "BadArgument");
+    assert_eq!(
+        message(&err),
+        "journal mode \"writeback\" is not \"ordered\" or \"data\""
+    );
+    let err = fails("journal", JsValue::TRUE);
+    assert_eq!(code(err.clone()), "BadArgument");
+    assert_eq!(message(&err), "unknown option \"journal\"");
+    let err = fails("totalBlocks", JsValue::from(262_145u32));
+    assert_eq!(
+        message(&err),
+        "volume of 268436480 bytes exceeds the 268435456-byte limit"
+    );
+    // Sizes the format itself refuses.
+    let err = fails("journalBlocks", JsValue::from(1000u32));
+    assert_eq!(code(err.clone()), "InvalidGeometry");
+    assert_eq!(
+        message(&err),
+        "invalid geometry: journal size must be at least 1024 blocks"
+    );
+    let err = fails("totalBlocks", JsValue::from(2047u32));
+    assert_eq!(code(err.clone()), "InvalidGeometry");
+    assert_eq!(
+        message(&err),
+        "invalid geometry: a journal needs at least 2048 blocks"
+    );
+    // formatExt2 knows no journal keys.
+    for (key, value) in [
+        ("journalBlocks", JsValue::from(1024u32)),
+        ("journalMode", JsValue::from_str("ordered")),
+    ] {
+        let err = Volume::format_ext2(obj(&[(key, value)])).unwrap_err();
+        assert_eq!(code(err.clone()), "BadArgument");
+        assert_eq!(message(&err), format!("unknown option \"{key}\""));
+    }
+}
+
+fn num(v: &JsValue, key: &str) -> f64 {
+    get(v, key)
+        .as_f64()
+        .unwrap_or_else(|| panic!("{key} is a number"))
+}
+
+fn text_of(v: &JsValue, key: &str) -> String {
+    get(v, key)
+        .as_string()
+        .unwrap_or_else(|| panic!("{key} is a string"))
+}
+
+fn event_kinds(record: &JsValue) -> Vec<String> {
+    Array::from(&get(record, "events"))
+        .iter()
+        .map(|e| text_of(&e, "kind"))
+        .collect()
+}
+
+#[wasm_bindgen_test]
+fn journal_info_blocks_and_layout_describe_the_formatted_journal() {
+    let v = fresh_ext3();
+    let info = v.journal_info().unwrap();
+    for (key, want) in [
+        ("inode", 8.0),
+        ("maxlen", 1024.0),
+        ("firstBlock", 82.0),
+        ("sequence", 1.0),
+        ("start", 0.0),
+        ("head", 1.0),
+        ("maxTransaction", 256.0),
+    ] {
+        assert_eq!(num(&info, key), want, "{key}");
+    }
+    assert_eq!(text_of(&info, "mode"), "ordered");
+    assert_eq!(get(&info, "needsRecovery").as_bool(), Some(false));
+    assert!(!v.needs_recovery().unwrap());
+
+    let data = Volume::format_ext3(obj(&[
+        ("journalMode", JsValue::from_str("data")),
+        ("journalBlocks", JsValue::from(2048u32)),
+    ]))
+    .unwrap();
+    let info = data.journal_info().unwrap();
+    assert_eq!(text_of(&info, "mode"), "data");
+    assert_eq!(num(&info, "maxlen"), 2048.0);
+    assert_eq!(num(&info, "maxTransaction"), 512.0);
+
+    let journal: Vec<JsValue> = Array::from(&v.layout().unwrap())
+        .iter()
+        .filter(|r| text_of(r, "kind") == "journal")
+        .collect();
+    assert_eq!(journal.len(), 1);
+    assert_eq!(text_of(&journal[0], "name"), "journal");
+    let sectors = get(&journal[0], "sectors");
+    assert_eq!(
+        (num(&sectors, "start"), num(&sectors, "end")),
+        (82.0, 1106.0)
+    );
+
+    let blocks = Array::from(&v.journal_blocks().unwrap());
+    assert_eq!(blocks.length(), 1024);
+    let first = blocks.get(0);
+    assert_eq!(text_of(&first, "kind"), "superblock");
+    assert_eq!((num(&first, "index"), num(&first, "block")), (0.0, 82.0));
+    let unused = blocks.get(1023);
+    assert_eq!(text_of(&unused, "kind"), "unused");
+    assert_eq!(num(&unused, "block"), 1105.0);
+    for key in ["tid", "home", "escaped"] {
+        assert!(get(&unused, key).is_null(), "{key} is null");
+    }
+    assert_eq!(get(&unused, "stale").as_bool(), Some(false));
+
+    // ext2 has no journal.
+    let e = fresh_ext();
+    assert!(e.journal_info().unwrap().is_undefined());
+    assert_eq!(Array::from(&e.journal_blocks().unwrap()).length(), 0);
+    assert!(!e.needs_recovery().unwrap());
+    assert!(!names(&e.layout().unwrap()).contains(&"journal".to_string()));
+}
+
+#[wasm_bindgen_test]
+fn a_crash_after_commit_needs_recovery_and_recover_replays_it() {
+    let mut v = fresh_ext3();
+    v.arm_crash("after_commit").unwrap();
+    let rec = v.create_file("/a.txt", b"hello").unwrap();
+    assert_eq!(
+        text_of(&rec, "op"),
+        "create_file /a.txt (crashed after commit)"
+    );
+    let kinds = event_kinds(&rec);
+    assert_eq!(kinds.last().unwrap(), "crashed");
+    assert!(kinds.contains(&"journal_block_written".to_string()));
+    assert!(!kinds.contains(&"checkpointed".to_string()));
+    let events = Array::from(&get(&rec, "events"));
+    assert_eq!(
+        text_of(&events.get(events.length() - 1), "text"),
+        "crashed after commit"
+    );
+    assert!(v.needs_recovery().unwrap());
+    assert_eq!(v.crash_phase().unwrap(), None);
+    let info = v.journal_info().unwrap();
+    assert_eq!(get(&info, "needsRecovery").as_bool(), Some(true));
+    assert_eq!(num(&info, "start"), 1.0);
+
+    let err = v.create_file("/b.txt", b"x").unwrap_err();
+    assert_eq!(code(err.clone()), "NeedsRecovery");
+    assert_eq!(message(&err), "needs recovery");
+    assert_eq!(v.history_length(), 1);
+
+    let rec = v.recover().unwrap();
+    assert_eq!(text_of(&rec, "op"), "recover");
+    let kinds = event_kinds(&rec);
+    let replayed = kinds.iter().filter(|k| *k == "replayed").count();
+    assert_eq!(replayed, 7);
+    let mut want = vec!["recovery_scanned".to_string()];
+    want.extend(std::iter::repeat_n("replayed".to_string(), replayed));
+    want.extend([
+        "journal_emptied".to_string(),
+        "recovery_flag_cleared".to_string(),
+    ]);
+    assert_eq!(kinds, want);
+    assert!(!v.needs_recovery().unwrap());
+    assert_eq!(v.read_file("/a.txt").unwrap(), b"hello");
+    let info = v.journal_info().unwrap();
+    assert_eq!((num(&info, "sequence"), num(&info, "start")), (3.0, 0.0));
+    assert_eq!(v.history_length(), 2);
+
+    // The recovered journal still holds transaction 1, now stale.
+    let blocks = Array::from(&v.journal_blocks().unwrap());
+    let kinds: Vec<String> = blocks.iter().map(|b| text_of(&b, "kind")).collect();
+    let mut want = vec!["superblock".to_string(), "descriptor".to_string()];
+    want.extend(std::iter::repeat_n("copy".to_string(), replayed));
+    want.push("commit".to_string());
+    want.extend(std::iter::repeat_n(
+        "unused".to_string(),
+        1024 - 3 - replayed,
+    ));
+    assert_eq!(kinds, want);
+    let homes: Vec<f64> = (2..2 + replayed as u32)
+        .map(|i| num(&blocks.get(i), "home"))
+        .collect();
+    assert_eq!(homes, vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 69.0]);
+    let copy = blocks.get(2);
+    assert_eq!(get(&copy, "escaped").as_bool(), Some(false));
+    assert_eq!(num(&copy, "tid"), 1.0);
+    let descriptor = blocks.get(1);
+    assert_eq!(num(&descriptor, "tid"), 1.0);
+    assert_eq!(get(&descriptor, "stale").as_bool(), Some(true));
+    assert!(get(&descriptor, "home").is_null());
+    assert!(get(&descriptor, "escaped").is_null());
+
+    // Mutations work again.
+    let rec = v.create_file("/b.txt", b"x").unwrap();
+    assert_eq!(text_of(&rec, "op"), "create_file /b.txt");
+    assert_eq!(
+        names(&v.list_dir("/").unwrap()),
+        vec!["lost+found", "a.txt", "b.txt"]
+    );
+}
+
+#[wasm_bindgen_test]
+fn crash_phase_round_trips_and_ext2_refuses_to_arm() {
+    let mut v = fresh_ext3();
+    assert_eq!(v.crash_phase().unwrap(), None);
+    for phase in ["before_commit", "after_commit", "during_checkpoint"] {
+        v.arm_crash(phase).unwrap();
+        assert_eq!(v.crash_phase().unwrap().as_deref(), Some(phase));
+    }
+    v.disarm_crash().unwrap();
+    assert_eq!(v.crash_phase().unwrap(), None);
+    let rec = v.create_file("/a", b"a").unwrap();
+    assert_eq!(text_of(&rec, "op"), "create_file /a");
+    assert_eq!(event_kinds(&rec).last().unwrap(), "recovery_flag_cleared");
+
+    let err = v.arm_crash("after commit").unwrap_err();
+    assert_eq!(code(err.clone()), "BadArgument");
+    assert_eq!(
+        message(&err),
+        "crash phase \"after commit\" is not \"before_commit\", \"after_commit\", or \"during_checkpoint\""
+    );
+    assert_eq!(v.crash_phase().unwrap(), None);
+
+    // recover() on a clean journal records one event and changes nothing.
+    let rec = v.recover().unwrap();
+    assert_eq!(text_of(&rec, "op"), "recover");
+    assert_eq!(Array::from(&get(&rec, "changes")).length(), 0);
+    let events = Array::from(&get(&rec, "events"));
+    assert_eq!(events.length(), 1);
+    let scanned = events.get(0);
+    assert_eq!(text_of(&scanned, "kind"), "recovery_scanned");
+    assert_eq!(
+        text_of(&scanned, "text"),
+        "journal is clean; nothing to replay"
+    );
+    let region = get(&scanned, "region");
+    assert_eq!((num(&region, "start"), num(&region, "end")), (0.0, 0.0));
+
+    let mut e = fresh_ext();
+    let err = e.arm_crash("after_commit").unwrap_err();
+    assert_eq!(code(err.clone()), "Unsupported");
+    assert_eq!(message(&err), "unsupported: this volume has no journal");
+    e.disarm_crash().unwrap();
+    assert_eq!(e.crash_phase().unwrap(), None);
+    let rec = e.recover().unwrap();
+    assert_eq!(event_kinds(&rec), vec!["recovery_scanned"]);
+}
+
+#[wasm_bindgen_test]
+fn journal_methods_throw_not_ext_on_fat() {
+    let mut f = fresh();
+    let errors = [
+        f.arm_crash("after_commit").unwrap_err(),
+        f.arm_crash("bogus").unwrap_err(),
+        f.disarm_crash().unwrap_err(),
+        f.crash_phase().unwrap_err(),
+        f.needs_recovery().unwrap_err(),
+        f.recover().unwrap_err(),
+        f.journal_info().unwrap_err(),
+        f.journal_blocks().unwrap_err(),
+    ];
+    for err in errors {
+        assert_eq!(code(err.clone()), "NotExt");
+        assert_eq!(message(&err), "not an ext volume");
+    }
+    assert_eq!(f.history_length(), 0);
+}

@@ -1,5 +1,8 @@
-//! Semantic events an ext2 volume reports while it works, for the change log.
+//! Semantic events an ext2 or ext3 volume reports while it works, for the
+//! change log. The journal events follow the transaction sequence of the
+//! ext3 spec (section 5.2) and the recovery steps of section 6.
 
+use crate::journal::CrashPhase;
 use fs_core::Event;
 use std::fmt;
 use std::ops::Range;
@@ -9,6 +12,19 @@ use std::ops::Range;
 pub enum BitmapKind {
     Blocks,
     Inodes,
+}
+
+/// What a `JournalBlockWritten` wrote into the log.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JournalWriteKind {
+    Descriptor,
+    /// The after-image of home block `home`; `escaped` when its first four
+    /// bytes were the journal magic and are zeroed in the copy.
+    Copy {
+        home: u32,
+        escaped: bool,
+    },
+    Commit,
 }
 
 /// Every variant carries the absolute byte range it concerns so the UI can
@@ -74,6 +90,76 @@ pub enum ExtEvent {
     CountersUpdated {
         free_blocks: u32,
         free_inodes: u32,
+        range: Range<usize>,
+    },
+    /// `needs_recovery` set in the primary superblock (transaction step 1).
+    RecoveryFlagSet {
+        range: Range<usize>,
+    },
+    /// `needs_recovery` cleared in the primary superblock (the last step).
+    RecoveryFlagCleared {
+        range: Range<usize>,
+    },
+    /// The journal superblock names the transaction: `s_sequence = tid`,
+    /// `s_start = journal_block`; `tagged` home blocks follow.
+    TransactionStarted {
+        tid: u32,
+        journal_block: u32,
+        tagged: u32,
+        range: Range<usize>,
+    },
+    /// One block written into the log at journal index `index`, physical
+    /// block `block`.
+    JournalBlockWritten {
+        tid: u32,
+        kind: JournalWriteKind,
+        index: u32,
+        block: u32,
+        range: Range<usize>,
+    },
+    /// A tagged block written home from its copy at `from_index`.
+    Checkpointed {
+        tid: u32,
+        home: u32,
+        from_index: u32,
+        range: Range<usize>,
+    },
+    /// The journal superblock back at rest: `s_start = 0`, `s_sequence =
+    /// next_sequence`.
+    JournalEmptied {
+        next_sequence: u32,
+        range: Range<usize>,
+    },
+    /// An armed crash stopped the transaction; `range` is the last change's.
+    Crashed {
+        phase: CrashPhase,
+        range: Range<usize>,
+    },
+    /// Recovery's scan: from journal index `start` (0 with an empty
+    /// `range`: `needs_recovery` was already clear and the journal is
+    /// clean; 0 with a non-empty `range`: `needs_recovery` was set but the
+    /// journal superblock's own `s_start` is 0, so it holds no
+    /// transactions), expecting `sequence`, found `committed` transactions
+    /// tagging `tagged` blocks.
+    RecoveryScanned {
+        start: u32,
+        sequence: u32,
+        committed: u32,
+        tagged: u32,
+        range: Range<usize>,
+    },
+    /// Recovery wrote home block `home` from its copy at `from_index`.
+    Replayed {
+        tid: u32,
+        home: u32,
+        from_index: u32,
+        range: Range<usize>,
+    },
+    /// Recovery skipped a transaction that never reached its commit block;
+    /// `range` is its descriptor block.
+    TransactionDiscarded {
+        tid: u32,
+        tagged: u32,
         range: Range<usize>,
     },
 }
@@ -154,6 +240,90 @@ impl fmt::Display for ExtEvent {
                 f,
                 "free counts now {free_blocks} blocks and {free_inodes} inodes"
             ),
+            ExtEvent::RecoveryFlagSet { .. } => {
+                write!(f, "set needs_recovery in the superblock")
+            }
+            ExtEvent::RecoveryFlagCleared { .. } => {
+                write!(f, "cleared needs_recovery in the superblock")
+            }
+            ExtEvent::TransactionStarted {
+                tid,
+                journal_block,
+                tagged,
+                ..
+            } => write!(
+                f,
+                "started transaction {tid} at journal block {journal_block} ({tagged} tagged block{})",
+                plural(*tagged)
+            ),
+            ExtEvent::JournalBlockWritten {
+                tid,
+                kind,
+                index,
+                block,
+                ..
+            } => match kind {
+                JournalWriteKind::Descriptor => write!(
+                    f,
+                    "wrote descriptor for transaction {tid} at journal block {index} (block {block})"
+                ),
+                JournalWriteKind::Copy { home, escaped } => {
+                    write!(
+                        f,
+                        "copied block {home} into journal block {index} (block {block})"
+                    )?;
+                    if *escaped {
+                        write!(f, " (escaped)")?;
+                    }
+                    Ok(())
+                }
+                JournalWriteKind::Commit => write!(
+                    f,
+                    "committed transaction {tid} at journal block {index} (block {block})"
+                ),
+            },
+            ExtEvent::Checkpointed {
+                home, from_index, ..
+            } => write!(f, "checkpointed block {home} from journal block {from_index}"),
+            ExtEvent::JournalEmptied { next_sequence, .. } => {
+                write!(f, "journal emptied; next transaction {next_sequence}")
+            }
+            ExtEvent::Crashed { phase, .. } => write!(f, "crashed {phase}"),
+            ExtEvent::RecoveryScanned {
+                start,
+                sequence,
+                committed,
+                tagged,
+                range,
+            } => {
+                if range.start == range.end {
+                    write!(f, "journal is clean; nothing to replay")
+                } else if *start == 0 {
+                    write!(f, "journal holds no transactions; nothing to replay")
+                } else {
+                    write!(
+                        f,
+                        "scanned the journal from block {start}, sequence {sequence}: \
+                         {committed} committed transaction{}, {tagged} tagged block{}",
+                        plural(*committed),
+                        plural(*tagged)
+                    )
+                }
+            }
+            ExtEvent::Replayed {
+                tid,
+                home,
+                from_index,
+                ..
+            } => write!(
+                f,
+                "replayed block {home} from journal block {from_index} (transaction {tid})"
+            ),
+            ExtEvent::TransactionDiscarded { tid, tagged, .. } => write!(
+                f,
+                "discarded uncommitted transaction {tid} ({tagged} tagged block{})",
+                plural(*tagged)
+            ),
         }
     }
 }
@@ -172,6 +342,16 @@ impl Event for ExtEvent {
             ExtEvent::IndirectWritten { .. } => "indirect_written",
             ExtEvent::BitmapUpdated { .. } => "bitmap_updated",
             ExtEvent::CountersUpdated { .. } => "counters_updated",
+            ExtEvent::RecoveryFlagSet { .. } => "recovery_flag_set",
+            ExtEvent::RecoveryFlagCleared { .. } => "recovery_flag_cleared",
+            ExtEvent::TransactionStarted { .. } => "transaction_started",
+            ExtEvent::JournalBlockWritten { .. } => "journal_block_written",
+            ExtEvent::Checkpointed { .. } => "checkpointed",
+            ExtEvent::JournalEmptied { .. } => "journal_emptied",
+            ExtEvent::Crashed { .. } => "crashed",
+            ExtEvent::RecoveryScanned { .. } => "recovery_scanned",
+            ExtEvent::Replayed { .. } => "replayed",
+            ExtEvent::TransactionDiscarded { .. } => "transaction_discarded",
         }
     }
 
@@ -187,7 +367,17 @@ impl Event for ExtEvent {
             | ExtEvent::DataWritten { range, .. }
             | ExtEvent::IndirectWritten { range, .. }
             | ExtEvent::BitmapUpdated { range, .. }
-            | ExtEvent::CountersUpdated { range, .. } => range,
+            | ExtEvent::CountersUpdated { range, .. }
+            | ExtEvent::RecoveryFlagSet { range }
+            | ExtEvent::RecoveryFlagCleared { range }
+            | ExtEvent::TransactionStarted { range, .. }
+            | ExtEvent::JournalBlockWritten { range, .. }
+            | ExtEvent::Checkpointed { range, .. }
+            | ExtEvent::JournalEmptied { range, .. }
+            | ExtEvent::Crashed { range, .. }
+            | ExtEvent::RecoveryScanned { range, .. }
+            | ExtEvent::Replayed { range, .. }
+            | ExtEvent::TransactionDiscarded { range, .. } => range,
         };
         Some(r.clone())
     }
@@ -353,5 +543,203 @@ mod tests {
             range: 5248..5376,
         };
         assert_eq!(e.region(), Some(5248..5376));
+    }
+
+    #[test]
+    fn journal_events_have_their_kind_region_and_text() {
+        let copy = |home, escaped| JournalWriteKind::Copy { home, escaped };
+        let cases: Vec<(ExtEvent, &str, &str)> = vec![
+            (
+                ExtEvent::RecoveryFlagSet {
+                    range: 1120..1124,
+                },
+                "recovery_flag_set",
+                "set needs_recovery in the superblock",
+            ),
+            (
+                ExtEvent::RecoveryFlagCleared {
+                    range: 1120..1124,
+                },
+                "recovery_flag_cleared",
+                "cleared needs_recovery in the superblock",
+            ),
+            (
+                ExtEvent::TransactionStarted {
+                    tid: 3,
+                    journal_block: 17,
+                    tagged: 5,
+                    range: 84_016..84_024,
+                },
+                "transaction_started",
+                "started transaction 3 at journal block 17 (5 tagged blocks)",
+            ),
+            (
+                ExtEvent::TransactionStarted {
+                    tid: 1,
+                    journal_block: 1,
+                    tagged: 1,
+                    range: 84_016..84_024,
+                },
+                "transaction_started",
+                "started transaction 1 at journal block 1 (1 tagged block)",
+            ),
+            (
+                ExtEvent::JournalBlockWritten {
+                    tid: 3,
+                    kind: JournalWriteKind::Descriptor,
+                    index: 17,
+                    block: 98,
+                    range: 100_352..101_376,
+                },
+                "journal_block_written",
+                "wrote descriptor for transaction 3 at journal block 17 (block 98)",
+            ),
+            (
+                ExtEvent::JournalBlockWritten {
+                    tid: 3,
+                    kind: copy(5, false),
+                    index: 18,
+                    block: 99,
+                    range: 101_376..102_400,
+                },
+                "journal_block_written",
+                "copied block 5 into journal block 18 (block 99)",
+            ),
+            (
+                ExtEvent::JournalBlockWritten {
+                    tid: 3,
+                    kind: copy(1111, true),
+                    index: 19,
+                    block: 100,
+                    range: 102_400..103_424,
+                },
+                "journal_block_written",
+                "copied block 1111 into journal block 19 (block 100) (escaped)",
+            ),
+            (
+                ExtEvent::JournalBlockWritten {
+                    tid: 3,
+                    kind: JournalWriteKind::Commit,
+                    index: 21,
+                    block: 102,
+                    range: 104_448..105_472,
+                },
+                "journal_block_written",
+                "committed transaction 3 at journal block 21 (block 102)",
+            ),
+            (
+                ExtEvent::Checkpointed {
+                    tid: 3,
+                    home: 5,
+                    from_index: 18,
+                    range: 5120..6144,
+                },
+                "checkpointed",
+                "checkpointed block 5 from journal block 18",
+            ),
+            (
+                ExtEvent::JournalEmptied {
+                    next_sequence: 4,
+                    range: 84_016..84_024,
+                },
+                "journal_emptied",
+                "journal emptied; next transaction 4",
+            ),
+            (
+                ExtEvent::Crashed {
+                    phase: CrashPhase::BeforeCommit,
+                    range: 101_376..102_400,
+                },
+                "crashed",
+                "crashed before commit",
+            ),
+            (
+                ExtEvent::Crashed {
+                    phase: CrashPhase::AfterCommit,
+                    range: 104_448..105_472,
+                },
+                "crashed",
+                "crashed after commit",
+            ),
+            (
+                ExtEvent::Crashed {
+                    phase: CrashPhase::DuringCheckpoint,
+                    range: 1024..2048,
+                },
+                "crashed",
+                "crashed during checkpoint",
+            ),
+            (
+                ExtEvent::RecoveryScanned {
+                    start: 0,
+                    sequence: 4,
+                    committed: 0,
+                    tagged: 0,
+                    range: 84_016..84_024,
+                },
+                "recovery_scanned",
+                "journal holds no transactions; nothing to replay",
+            ),
+            (
+                ExtEvent::RecoveryScanned {
+                    start: 17,
+                    sequence: 3,
+                    committed: 1,
+                    tagged: 5,
+                    range: 84_016..84_024,
+                },
+                "recovery_scanned",
+                "scanned the journal from block 17, sequence 3: 1 committed transaction, 5 tagged blocks",
+            ),
+            (
+                ExtEvent::RecoveryScanned {
+                    start: 1,
+                    sequence: 7,
+                    committed: 2,
+                    tagged: 1,
+                    range: 84_016..84_024,
+                },
+                "recovery_scanned",
+                "scanned the journal from block 1, sequence 7: 2 committed transactions, 1 tagged block",
+            ),
+            (
+                ExtEvent::Replayed {
+                    tid: 3,
+                    home: 5,
+                    from_index: 18,
+                    range: 5120..6144,
+                },
+                "replayed",
+                "replayed block 5 from journal block 18 (transaction 3)",
+            ),
+            (
+                ExtEvent::TransactionDiscarded {
+                    tid: 3,
+                    tagged: 5,
+                    range: 100_352..101_376,
+                },
+                "transaction_discarded",
+                "discarded uncommitted transaction 3 (5 tagged blocks)",
+            ),
+            (
+                ExtEvent::TransactionDiscarded {
+                    tid: 9,
+                    tagged: 1,
+                    range: 100_352..101_376,
+                },
+                "transaction_discarded",
+                "discarded uncommitted transaction 9 (1 tagged block)",
+            ),
+        ];
+        for (event, kind, text) in cases {
+            assert_eq!(event.kind(), kind);
+            assert_eq!(event.to_string(), text);
+            let region = event.region().expect("every ext event has a region");
+            assert!(region.start < region.end, "{event:?}");
+            let boxed: Box<dyn Event> = Box::new(event.clone());
+            let copy = boxed.clone();
+            assert_eq!(copy.kind(), kind);
+            assert_eq!(copy.region(), Some(region));
+        }
     }
 }

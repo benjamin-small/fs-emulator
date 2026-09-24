@@ -639,6 +639,9 @@ fn annotations_describe_superblocks_descriptors_bitmaps_and_inodes() {
     has(1, "UUID", "e2f5ee00-2026-4923-8000-000000000001");
     has(1, "last write time", "315532800 (1980-01-01 00:00:00)");
     has(1, "block group number", "0");
+    has(1, "journal inode", "0");
+    has(1, "journal backup type", "0");
+    has(1, "default mount options", "0x00000000");
     has(8_193, "block group number", "1");
     let magic = fs
         .annotate_sector(1)

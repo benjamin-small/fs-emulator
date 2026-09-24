@@ -3,6 +3,7 @@
 //! decide which superblocks this crate can mount.
 
 use crate::group::Geometry;
+use crate::journal::{JournalOptions, FEATURE_COMPAT_HAS_JOURNAL, FEATURE_INCOMPAT_RECOVER};
 use fs_core::{Error, Result};
 
 pub const EXT2_MAGIC: u16 = 0xEF53;
@@ -98,6 +99,8 @@ pub struct ExtFormatOptions {
     /// The volume name, NUL-padded.
     pub label: [u8; 16],
     pub uuid: [u8; 16],
+    /// `None` formats ext2; `Some` adds the ext3 journal on inode 8.
+    pub journal: Option<JournalOptions>,
 }
 
 impl Default for ExtFormatOptions {
@@ -107,6 +110,17 @@ impl Default for ExtFormatOptions {
             inodes_per_group: None,
             label: [0; 16],
             uuid: DEFAULT_UUID,
+            journal: None,
+        }
+    }
+}
+
+impl ExtFormatOptions {
+    /// The default disk as ext3: an ordered-mode journal of mke2fs's size.
+    pub fn ext3() -> Self {
+        Self {
+            journal: Some(JournalOptions::default()),
+            ..Self::default()
         }
     }
 }
@@ -146,6 +160,23 @@ pub struct Superblock {
     pub feature_ro_compat: u32,
     pub uuid: [u8; 16],
     pub volume_name: [u8; 16],
+    /// `s_journal_uuid` (0xD0): an external journal's uuid; zero for an
+    /// internal journal and for ext2.
+    pub journal_uuid: [u8; 16],
+    /// `s_journal_inum` (0xE0): the journal inode, 8 on ext3, 0 on ext2.
+    pub journal_inum: u32,
+    /// `s_journal_dev` (0xE4): an external journal's device; always 0 here.
+    pub journal_dev: u32,
+    /// `s_last_orphan` (0xE8): head of the orphan list; always 0 here.
+    pub last_orphan: u32,
+    /// `s_default_mount_opts` (0x100): the journal mode bits on ext3.
+    pub default_mount_opts: u32,
+    /// `s_jnl_backup_type` (0xFD): 1 when `jnl_blocks` holds a backup of
+    /// the journal inode's block map.
+    pub jnl_backup_type: u8,
+    /// `s_jnl_blocks` (0x10C..0x150): the journal inode's `i_block[0..15]`,
+    /// then `i_size_high`, then `i_size`.
+    pub jnl_blocks: [u32; 17],
 }
 
 fn u16_at(b: &[u8], i: usize) -> u16 {
@@ -175,6 +206,9 @@ impl Superblock {
         uuid.copy_from_slice(&b[104..120]);
         let mut volume_name = [0u8; 16];
         volume_name.copy_from_slice(&b[120..136]);
+        let mut journal_uuid = [0u8; 16];
+        journal_uuid.copy_from_slice(&b[0xD0..0xE0]);
+        let jnl_blocks = std::array::from_fn(|i| u32_at(b, 0x10C + 4 * i));
         Superblock {
             inodes_count: u32_at(b, 0),
             blocks_count: u32_at(b, 4),
@@ -209,12 +243,20 @@ impl Superblock {
             feature_ro_compat: u32_at(b, 100),
             uuid,
             volume_name,
+            journal_uuid,
+            journal_inum: u32_at(b, 0xE0),
+            journal_dev: u32_at(b, 0xE4),
+            last_orphan: u32_at(b, 0xE8),
+            default_mount_opts: u32_at(b, 0x100),
+            jnl_backup_type: b[0xFD],
+            jnl_blocks,
         }
     }
 
-    /// Write every field into the first `LEN` bytes of `out`; the fields
-    /// this crate does not model (`s_last_mounted` onwards, bytes 136..1024)
-    /// are zeroed. Panics if `out` is shorter than `LEN`.
+    /// Write every field into the first `LEN` bytes of `out`; the bytes of
+    /// fields this crate does not model (`s_last_mounted` and the rest of
+    /// 136..1024 outside the journal fields) are zeroed. Panics if `out` is
+    /// shorter than `LEN`.
     pub fn encode(&self, out: &mut [u8]) {
         let b = &mut out[..Self::LEN];
         b.fill(0);
@@ -251,6 +293,15 @@ impl Superblock {
         put_u32(b, 100, self.feature_ro_compat);
         b[104..120].copy_from_slice(&self.uuid);
         b[120..136].copy_from_slice(&self.volume_name);
+        b[0xD0..0xE0].copy_from_slice(&self.journal_uuid);
+        put_u32(b, 0xE0, self.journal_inum);
+        put_u32(b, 0xE4, self.journal_dev);
+        put_u32(b, 0xE8, self.last_orphan);
+        b[0xFD] = self.jnl_backup_type;
+        put_u32(b, 0x100, self.default_mount_opts);
+        for (i, &v) in self.jnl_blocks.iter().enumerate() {
+            put_u32(b, 0x10C + 4 * i, v);
+        }
     }
 
     /// The primary superblock of a fresh volume. The free counts are the
@@ -295,13 +346,23 @@ impl Superblock {
             feature_ro_compat: FEATURE_RO_COMPAT_SPARSE_SUPER,
             uuid: options.uuid,
             volume_name: options.label,
+            journal_uuid: [0; 16],
+            journal_inum: 0,
+            journal_dev: 0,
+            last_orphan: 0,
+            default_mount_opts: 0,
+            jnl_backup_type: 0,
+            jnl_blocks: [0; 17],
         }
     }
 
     /// Check that this crate can mount the superblock of a disk holding
     /// `disk_blocks` 1 KiB blocks. The magic is checked first, then the
     /// revision, block size, inode size, and features (`Unsupported`), then
-    /// the geometry (`CorruptImage`).
+    /// the geometry (`CorruptImage`). The features are ext2's (`filetype`,
+    /// `sparse_super`), plus `has_journal` on ext3 and `needs_recovery`
+    /// while a transaction is in flight; `needs_recovery` without
+    /// `has_journal` is `CorruptImage`.
     pub fn validate(&self, disk_blocks: u64) -> Result<()> {
         if self.magic != EXT2_MAGIC {
             return Err(Error::CorruptImage(format!(
@@ -327,20 +388,29 @@ impl Superblock {
                 self.inode_size
             )));
         }
-        if self.feature_compat != 0 {
+        let compat = self.feature_compat & !FEATURE_COMPAT_HAS_JOURNAL;
+        if compat != 0 {
             return Err(Error::Unsupported(format!(
                 "compat features are not supported: {}",
-                feature_names(self.feature_compat, &COMPAT_NAMES)
+                feature_names(compat, &COMPAT_NAMES)
             )));
         }
-        let incompat = self.feature_incompat & !FEATURE_INCOMPAT_FILETYPE;
+        let incompat =
+            self.feature_incompat & !(FEATURE_INCOMPAT_FILETYPE | FEATURE_INCOMPAT_RECOVER);
         if incompat != 0 {
             return Err(Error::Unsupported(format!(
                 "incompatible feature {}",
                 feature_names(incompat, &INCOMPAT_NAMES)
             )));
         }
-        if self.feature_incompat != FEATURE_INCOMPAT_FILETYPE {
+        if self.feature_incompat & FEATURE_INCOMPAT_RECOVER != 0
+            && self.feature_compat & FEATURE_COMPAT_HAS_JOURNAL == 0
+        {
+            return Err(Error::CorruptImage(
+                "needs_recovery is set but the volume has no journal".into(),
+            ));
+        }
+        if self.feature_incompat & FEATURE_INCOMPAT_FILETYPE == 0 {
             return Err(Error::Unsupported(
                 "the filetype feature is required".into(),
             ));
@@ -421,6 +491,7 @@ pub fn default_inodes_per_group(total_blocks: u32, groups: u32) -> u32 {
 mod tests {
     use super::*;
     use crate::group::Geometry;
+    use crate::journal::JournalMode;
     use fs_core::Error;
 
     fn default_superblock() -> Superblock {
@@ -461,6 +532,10 @@ mod tests {
         assert_eq!(sb.uuid, DEFAULT_UUID);
         assert_eq!(sb.volume_name, [0; 16]);
         assert_eq!(sb.label(), "");
+        assert_eq!(sb.journal_uuid, [0; 16]);
+        assert_eq!((sb.journal_inum, sb.journal_dev, sb.last_orphan), (0, 0, 0));
+        assert_eq!((sb.default_mount_opts, sb.jnl_backup_type), (0, 0));
+        assert_eq!(sb.jnl_blocks, [0; 17]);
         assert_eq!(sb.validate(16_384), Ok(()));
     }
 
@@ -485,10 +560,43 @@ mod tests {
         assert_eq!(&bytes[100..104], &1u32.to_le_bytes());
         assert_eq!(&bytes[104..108], &[0xe2, 0xf5, 0xee, 0x00]);
         assert_eq!(&bytes[120..125], b"hello");
+        // ext2 has no journal: every byte past the volume name is zero,
+        // the journal fields at 0xD0..0x150 included.
         assert!(bytes[136..].iter().all(|&b| b == 0));
         let back = Superblock::decode(&bytes);
         assert_eq!(back, sb);
         assert_eq!(back.label(), "hello");
+    }
+
+    #[test]
+    fn journal_fields_encode_at_their_offsets_and_round_trip() {
+        let mut sb = default_superblock();
+        sb.journal_uuid = std::array::from_fn(|i| 0x10 + i as u8);
+        sb.journal_inum = 8;
+        sb.journal_dev = 0x0102_0304;
+        sb.last_orphan = 0x0506_0708;
+        sb.default_mount_opts = 0x40;
+        sb.jnl_backup_type = 1;
+        sb.jnl_blocks = std::array::from_fn(|i| 0x100 + i as u32);
+        sb.jnl_blocks[16] = 0x10_0000;
+        let mut bytes = [0xAAu8; 1024];
+        sb.encode(&mut bytes);
+        assert_eq!(&bytes[0xD0..0xE0], &sb.journal_uuid);
+        assert_eq!((bytes[0xD0], bytes[0xDF]), (0x10, 0x1F));
+        assert_eq!(&bytes[0xE0..0xE4], &8u32.to_le_bytes());
+        assert_eq!(&bytes[0xE4..0xE8], &0x0102_0304u32.to_le_bytes());
+        assert_eq!(&bytes[0xE8..0xEC], &0x0506_0708u32.to_le_bytes());
+        assert_eq!(bytes[0xFD], 1);
+        assert_eq!(&bytes[0x100..0x104], &0x40u32.to_le_bytes());
+        assert_eq!(&bytes[0x10C..0x110], &0x100u32.to_le_bytes());
+        assert_eq!(&bytes[0x148..0x14C], &0x10Fu32.to_le_bytes());
+        assert_eq!(&bytes[0x14C..0x150], &0x10_0000u32.to_le_bytes());
+        // Every other byte past the volume name stays zero.
+        let journal = [0xD0..0xEC, 0xFD..0xFE, 0x100..0x104, 0x10C..0x150];
+        assert!((136..1024)
+            .filter(|i| !journal.iter().any(|r| r.contains(i)))
+            .all(|i| bytes[i] == 0));
+        assert_eq!(Superblock::decode(&bytes), sb);
     }
 
     #[test]
@@ -630,6 +738,62 @@ mod tests {
             ..good
         });
         assert_eq!(msg, "compat features are not supported: 0x40000000");
+    }
+
+    #[test]
+    fn validate_accepts_the_ext3_feature_variants() {
+        let good = default_superblock();
+        let ext3 = Superblock {
+            feature_compat: 0x0004,
+            ..good.clone()
+        };
+        assert_eq!(ext3.validate(16_384), Ok(()));
+        let recovering = Superblock {
+            feature_incompat: 0x0002 | 0x0004,
+            ..ext3.clone()
+        };
+        assert_eq!(recovering.validate(16_384), Ok(()));
+        let msg = unsupported_message(&Superblock {
+            feature_compat: 0x0004 | 0x0010,
+            ..good
+        });
+        assert_eq!(msg, "compat features are not supported: resize_inode");
+        let msg = unsupported_message(&Superblock {
+            feature_incompat: 0x0004,
+            ..ext3
+        });
+        assert_eq!(msg, "the filetype feature is required");
+    }
+
+    #[test]
+    fn validate_calls_needs_recovery_without_a_journal_corrupt() {
+        let sb = Superblock {
+            feature_incompat: 0x0002 | 0x0004,
+            ..default_superblock()
+        };
+        assert_eq!(
+            sb.validate(16_384),
+            Err(Error::CorruptImage(
+                "needs_recovery is set but the volume has no journal".into()
+            ))
+        );
+    }
+
+    #[test]
+    fn options_ext3_is_the_default_disk_with_an_ordered_journal() {
+        assert_eq!(ExtFormatOptions::default().journal, None);
+        let o = ExtFormatOptions::ext3();
+        assert_eq!(
+            o.journal,
+            Some(JournalOptions {
+                blocks: None,
+                mode: JournalMode::Ordered
+            })
+        );
+        assert_eq!(
+            ExtFormatOptions { journal: None, ..o },
+            ExtFormatOptions::default()
+        );
     }
 
     #[test]

@@ -23,7 +23,7 @@ web/demo (TypeScript)    smoke test for the wasm package
         │
 crates/wasm              one `Volume` class over the FileSystem trait
         │
-crates/fat   crates/ext (planned)      one crate per filesystem family
+crates/fat   crates/ext                one crate per filesystem family
         │
 crates/fs-core           Disk, byte journal (incl. raw writes), regions, annotations, FileSystem trait
 ```
@@ -43,8 +43,8 @@ change shape.
 | FAT16 (`crates/fat`) | Complete: format, create, overwrite, delete, directories, LFN, mountable images, per-sector annotations |
 | FAT32 (`crates/fat`) | Planned. Cluster width, FAT entry codec, and `FatVariant` are already dispatched; see the roadmap for what is not |
 | ext2 (`crates/ext`) | Complete: revision 1, 1 KiB blocks, direct/single/double-indirect allocation, directories, mounting and e2fsprogs validation |
-| ext3 (`crates/ext`) | Planned; the journal layout is designed but not implemented |
-| `crates/wasm` | Complete for FAT16 and ext2; family-specific methods reject the wrong filesystem |
+| ext3 (`crates/ext`) | Complete: JBD2 journal on inode 8, ordered and full-data modes, armed crash points, and recovery that matches e2fsck; the explorer does not load ext volumes yet |
+| `crates/wasm` | Complete for FAT16, ext2, and ext3; family-specific methods reject the wrong filesystem |
 | `web/ui` | Complete for FAT16; the dump, ribbon, timeline, strings, and the terminal drawer (`/mnt`, `/dev/hda`) are region-driven and carry over |
 
 ## Crates

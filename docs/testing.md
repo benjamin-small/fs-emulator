@@ -37,8 +37,12 @@ types, FAT16 boot sectors, allocation tables, directories and long names,
 format/create/write/delete operations, corruption handling, ext2 superblocks,
 block groups, bitmaps, inodes, direct and indirect block mapping, directory
 growth, image import/export, annotations, and filesystem-family detection.
-External ext2 tests validate generated images with `e2fsck`, `dumpe2fs`, and
-`debugfs`. The ignored macOS and Linux mount tests provide explicit manual
+The ext3 suite checks the journal transaction sequence byte by byte in both
+journaling modes, the ring, the transaction size limit, escaped copies, every
+crash phase for every mutation, recovery, journal block classification, and
+journal annotations. External ext2 and ext3 tests validate generated images
+with `e2fsck`, `dumpe2fs`, and `debugfs`; the recovery oracle requires
+`recover()` to produce the same bytes as `e2fsck -fy` on a crashed copy. The ignored macOS and Linux mount tests provide explicit manual
 checks against the host kernels.
 
 `wasm-pack test --node crates/wasm` exercises the JavaScript-facing `Volume`

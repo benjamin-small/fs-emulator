@@ -12,8 +12,8 @@ use serde_wasm_bindgen::Serializer;
 use wasm_bindgen::prelude::*;
 
 enum Inner {
-    Fat(FatFs),
-    Ext(ExtFs),
+    Fat(Box<FatFs>),
+    Ext(Box<ExtFs>),
 }
 
 /// The family an image's signature names; `from_image` picks the parser from it.
@@ -58,11 +58,11 @@ fn has_fat_signature(bytes: &[u8]) -> bool {
 fn load(bytes: Vec<u8>) -> fs_core::Result<Inner> {
     match detect(&bytes) {
         Detected::Ext if has_fat_signature(&bytes) => match ExtFs::from_image(bytes.clone()) {
-            Ok(fs) => Ok(Inner::Ext(fs)),
-            Err(_) => FatFs::from_image(bytes).map(Inner::Fat),
+            Ok(fs) => Ok(Inner::Ext(Box::new(fs))),
+            Err(_) => FatFs::from_image(bytes).map(|fs| Inner::Fat(Box::new(fs))),
         },
-        Detected::Ext => ExtFs::from_image(bytes).map(Inner::Ext),
-        Detected::Fat => FatFs::from_image(bytes).map(Inner::Fat),
+        Detected::Ext => ExtFs::from_image(bytes).map(|fs| Inner::Ext(Box::new(fs))),
+        Detected::Fat => FatFs::from_image(bytes).map(|fs| Inner::Fat(Box::new(fs))),
         Detected::Unknown => Err(fs_core::Error::Unsupported(
             "no recognisable filesystem signature".into(),
         )),
@@ -81,6 +81,16 @@ fn check_volume_size(bytes: u64) -> Result<(), JsValue> {
         ));
     }
     Ok(())
+}
+
+/// The ext volume `formatExt2` and `formatExt3` return: the size check,
+/// then `ExtFs::format` with the converted options.
+fn ext_volume(opts: ext::ExtFormatOptions) -> Result<Volume, JsValue> {
+    check_volume_size(u64::from(opts.total_blocks) * u64::from(ext::BLOCK_SIZE))?;
+    let fs = ExtFs::format(opts).map_err(to_js)?;
+    Ok(Volume {
+        inner: Inner::Ext(Box::new(fs)),
+    })
 }
 
 #[wasm_bindgen]
@@ -130,22 +140,22 @@ fn reject_unknown_keys(value: &JsValue, allowed: &[&str]) -> Result<(), JsValue>
 impl Volume {
     fn fs(&self) -> &dyn FileSystem {
         match &self.inner {
-            Inner::Fat(f) => f,
-            Inner::Ext(e) => e,
+            Inner::Fat(f) => f.as_ref(),
+            Inner::Ext(e) => e.as_ref(),
         }
     }
 
     fn fs_mut(&mut self) -> &mut dyn FileSystem {
         match &mut self.inner {
-            Inner::Fat(f) => f,
-            Inner::Ext(e) => e,
+            Inner::Fat(f) => f.as_mut(),
+            Inner::Ext(e) => e.as_mut(),
         }
     }
 
     /// The FAT volume, or `NotFat` on any other family.
     fn fat(&self) -> Result<&FatFs, JsValue> {
         match &self.inner {
-            Inner::Fat(f) => Ok(f),
+            Inner::Fat(f) => Ok(f.as_ref()),
             Inner::Ext(_) => Err(js_error(NOT_FAT, "not a FAT volume")),
         }
     }
@@ -153,6 +163,14 @@ impl Volume {
     /// The ext volume, or `NotExt` on any other family.
     fn ext(&self) -> Result<&ExtFs, JsValue> {
         match &self.inner {
+            Inner::Ext(e) => Ok(e),
+            Inner::Fat(_) => Err(js_error(NOT_EXT, "not an ext volume")),
+        }
+    }
+
+    /// The ext volume for a mutation, or `NotExt` on any other family.
+    fn ext_mut(&mut self) -> Result<&mut ExtFs, JsValue> {
+        match &mut self.inner {
             Inner::Ext(e) => Ok(e),
             Inner::Fat(_) => Err(js_error(NOT_EXT, "not an ext volume")),
         }
@@ -181,7 +199,7 @@ impl Volume {
         check_volume_size(opts.total_sectors as u64 * opts.bytes_per_sector as u64)?;
         let fs = FatFs::format(opts).map_err(to_js)?;
         Ok(Volume {
-            inner: Inner::Fat(fs),
+            inner: Inner::Fat(Box::new(fs)),
         })
     }
 
@@ -198,11 +216,24 @@ impl Volume {
         };
         let opts =
             ext::ExtFormatOptions::try_from(opts).map_err(|msg| js_error(BAD_ARGUMENT, &msg))?;
-        check_volume_size(u64::from(opts.total_blocks) * u64::from(ext::BLOCK_SIZE))?;
-        let fs = ExtFs::format(opts).map_err(to_js)?;
-        Ok(Volume {
-            inner: Inner::Ext(fs),
-        })
+        ext_volume(opts)
+    }
+
+    /// Format a fresh ext3 volume: the ext2 layout plus a journal on inode 8.
+    /// `options` may be `undefined`.
+    #[wasm_bindgen(js_name = formatExt3)]
+    pub fn format_ext3(
+        #[wasm_bindgen(unchecked_param_type = "Ext3FormatOptions | undefined")] options: JsValue,
+    ) -> Result<Volume, JsValue> {
+        let opts: dto::Ext3FormatOptions = if options.is_undefined() || options.is_null() {
+            dto::Ext3FormatOptions::default()
+        } else {
+            reject_unknown_keys(&options, dto::Ext3FormatOptions::FIELDS)?;
+            from_value(options)?
+        };
+        let opts =
+            ext::ExtFormatOptions::try_from(opts).map_err(|msg| js_error(BAD_ARGUMENT, &msg))?;
+        ext_volume(opts)
     }
 
     /// Load an image of any family `detect` recognises; `Unsupported` otherwise.
@@ -453,16 +484,85 @@ impl Volume {
     }
 }
 
-/// ext-specific inspection. Each throws `code === "NotExt"` on a non-ext volume.
+/// ext-specific methods. Each throws `code === "NotExt"` on a non-ext volume.
 /// The superblock, inode, and block-ownership DTOs arrive with the explorer's
-/// ext panels; the group count is the one method the spec names as ext-only
-/// for this slice (decision 3, section 8).
+/// ext panels; for now there are the group count (slice 2) and the ext3
+/// journal's crash, recovery, and inspection methods (slice 3, section 8).
+/// The journal methods answer on ext2 too: no journal, no armed crash,
+/// nothing to recover.
 #[wasm_bindgen]
 impl Volume {
     /// How many block groups the volume has (2 on the default 16 MiB disk).
     #[wasm_bindgen(js_name = blockGroupCount)]
     pub fn block_group_count(&self) -> Result<u32, JsValue> {
         Ok(self.ext()?.geometry().groups)
+    }
+
+    /// Arm a crash for the next journaled mutation: `"before_commit"`,
+    /// `"after_commit"`, or `"during_checkpoint"` (`BadArgument` otherwise).
+    /// Throws `Unsupported` on ext2, which has no journal.
+    #[wasm_bindgen(js_name = armCrash)]
+    pub fn arm_crash(&mut self, phase: &str) -> Result<(), JsValue> {
+        let fs = self.ext_mut()?;
+        let parsed = ext::CrashPhase::parse(phase).ok_or_else(|| {
+            js_error(
+                BAD_ARGUMENT,
+                &format!(
+                    "crash phase \"{phase}\" is not \"before_commit\", \"after_commit\", or \"during_checkpoint\""
+                ),
+            )
+        })?;
+        fs.arm_crash(parsed).map_err(to_js)
+    }
+
+    /// Clear an armed crash; a no-op when none is armed.
+    #[wasm_bindgen(js_name = disarmCrash)]
+    pub fn disarm_crash(&mut self) -> Result<(), JsValue> {
+        self.ext_mut()?.disarm_crash();
+        Ok(())
+    }
+
+    /// The armed phase, as `armCrash` takes it, or `undefined`.
+    #[wasm_bindgen(js_name = crashPhase)]
+    pub fn crash_phase(&self) -> Result<Option<String>, JsValue> {
+        Ok(self.ext()?.crash_phase().map(|p| p.as_str().to_string()))
+    }
+
+    /// Whether a crash left a transaction for `recover()`; path mutations
+    /// throw `NeedsRecovery` until then. Always `false` on ext2.
+    #[wasm_bindgen(js_name = needsRecovery)]
+    pub fn needs_recovery(&self) -> Result<bool, JsValue> {
+        Ok(self.ext()?.needs_recovery())
+    }
+
+    /// Replay or discard what the journal holds, as a mount does, recorded
+    /// as the operation `recover`. On a clean journal (and on ext2) the
+    /// record has no changes and one `recovery_scanned` event.
+    #[wasm_bindgen(unchecked_return_type = "OpRecord")]
+    pub fn recover(&mut self) -> Result<JsValue, JsValue> {
+        let r = self.ext_mut()?.recover();
+        self.op(r)
+    }
+
+    /// The journal's shape and state, or `undefined` on ext2.
+    #[wasm_bindgen(js_name = journalInfo, unchecked_return_type = "JournalInfo | undefined")]
+    pub fn journal_info(&self) -> Result<JsValue, JsValue> {
+        match self.ext()?.journal_info() {
+            Some(info) => to_value(&dto::JournalInfo::from(info)),
+            None => Ok(JsValue::UNDEFINED),
+        }
+    }
+
+    /// Every journal block in index order with what it holds; empty on ext2.
+    #[wasm_bindgen(js_name = journalBlocks, unchecked_return_type = "JournalBlock[]")]
+    pub fn journal_blocks(&self) -> Result<JsValue, JsValue> {
+        let list: Vec<dto::JournalBlock> = self
+            .ext()?
+            .journal_blocks()
+            .into_iter()
+            .map(Into::into)
+            .collect();
+        to_value(&list)
     }
 }
 

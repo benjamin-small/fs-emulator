@@ -11,11 +11,16 @@ export interface Range { start: number; end: number; }
 export interface ByteChange { offset: number; before: Uint8Array; after: Uint8Array; }
 export interface EventRecord { kind: string; text: string; region: Range | null; }
 export interface OpRecord { op: string; changes: ByteChange[]; events: EventRecord[]; }
-export type RegionKind = "boot" | "metadata" | "allocationTable" | "directory" | "data" | "reserved" | "other";
+export type RegionKind = "boot" | "metadata" | "allocationTable" | "directory" | "data" | "journal" | "reserved" | "other";
 export interface Region { name: string; sectors: Range; kind: RegionKind; }
 export interface Annotation { range: Range; label: string; value: string; }
 export interface FormatOptions { bytesPerSector?: number; sectorsPerCluster?: number; totalSectors?: number; fatCount?: number; rootEntries?: number; reservedSectors?: number; volumeLabel?: string; volumeId?: number; enforceFat16Range?: boolean; }
 export interface ExtFormatOptions { totalBlocks?: number; inodesPerGroup?: number; label?: string; uuid?: string; }
+export type JournalMode = "ordered" | "data";
+export interface Ext3FormatOptions extends ExtFormatOptions { journalBlocks?: number; journalMode?: JournalMode; }
+export interface JournalInfo { inode: number; maxlen: number; firstBlock: number; sequence: number; start: number; head: number; mode: JournalMode; needsRecovery: boolean; maxTransaction: number; }
+export type JournalBlockKind = "superblock" | "descriptor" | "copy" | "commit" | "revoke" | "unused";
+export interface JournalBlock { index: number; block: number; kind: JournalBlockKind; tid: number | null; home: number | null; escaped: boolean | null; stale: boolean; }
 export interface BootSector { oemName: string; bytesPerSector: number; sectorsPerCluster: number; reservedSectors: number; fatCount: number; rootEntries: number; totalSectors: number; media: number; sectorsPerFat: number; sectorsPerTrack: number; heads: number; hiddenSectors: number; driveNumber: number; bootSignature: number; volumeId: number; volumeLabel: string; fsType: string; }
 export interface Geometry { variant: "fat16"; bytesPerSector: number; sectorsPerCluster: number; reservedSectors: number; fatCount: number; sectorsPerFat: number; rootEntries: number; rootDirSectors: number; firstRootDirSector: number; firstDataSector: number; totalSectors: number; clusterCount: number; }
 export type FatEntry = { kind: "free" } | { kind: "next"; cluster: number } | { kind: "endOfChain" } | { kind: "bad" } | { kind: "reserved" };

@@ -10,6 +10,8 @@ pub enum RegionKind {
     AllocationTable,
     Directory,
     Data,
+    /// An ext3 journal's blocks.
+    Journal,
     Reserved,
     Other,
 }

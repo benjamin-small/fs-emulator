@@ -65,8 +65,7 @@ with `Unsupported`. Still to do:
 ## In progress: `crates/ext`
 
 Decided 2026-09-23, in four slices, each with its spec under
-`docs/superpowers/specs/`. Slice 1 has landed; slice 2 is in review on
-`feat/ext2`:
+`docs/superpowers/specs/`. Slices 1 to 3 have landed:
 
 - **Slice 1, the adapter seam** (`2026-09-23-fs-adapter-design.md`): every
   FAT assumption in `web/ui` sits behind `FsAdapter`; see "What stays
@@ -87,20 +86,45 @@ Decided 2026-09-23, in four slices, each with its spec under
   `"ext2"`, and the `NotFat` / `NotExt` codes (`blockGroupCount`, the one
   ext-only method the spec names for this slice: decision 3, section 8). The
   explorer refuses an ext image with the status `no adapter for ext2`.
+- **Slice 3, the ext3 journal** (`2026-09-24-ext3-journal-design.md`, plan
+  `docs/superpowers/plans/2026-09-24-ext3-journal.md`): a JBD2 version-2
+  journal on the reserved inode 8 (`crates/ext/src/journal/`), in ordered or
+  full-data mode chosen at format and kept in `s_default_mount_opts`. Every
+  path mutation on an ext3 volume is one transaction whose `OpRecord` shows
+  the real write order (needs-recovery flag, data home in ordered mode,
+  journal superblock, descriptor, copies, commit, checkpoint, journal
+  emptied, flag cleared), so the timeline replays it byte by byte; after
+  every operation the image is a cleanly unmounted volume. A crash armed at
+  a phase stops the next mutation there as a successful truncated record;
+  mutations then throw `NeedsRecovery` until `recover()`, whose result equals
+  `e2fsck -fy`'s replay byte for byte outside the superblock copies.
+  `layout()` carries a `journal` region, `block_owners` lists the journal as
+  `<journal>` on inode 8, and `annotate_sector` explains journal blocks.
+  `e2fsck`, `dumpe2fs`, and `debugfs logdump` check the images in CI.
+- **Slice 3, wasm:** `Volume.formatExt3` with `Ext3FormatOptions` (the ext2
+  keys plus `journalBlocks` and `journalMode`), `fsType()` of `"ext3"`,
+  `armCrash`, `disarmCrash`, `crashPhase`, `needsRecovery`, `recover`,
+  `journalInfo` (`JournalInfo`), and `journalBlocks` (`JournalBlock[]`), all
+  ext-only (`NotExt` elsewhere); the `NeedsRecovery` error code; the
+  `journal` region kind in the `RegionKind` union. `fromImage` detection is
+  unchanged, with the FAT fallback for an image that carries the ext magic
+  but only parses as FAT. The explorer refuses an ext3 image with `no
+  adapter for ext3`.
 
 Still to do:
 
-- **Slice 3, the ext3 journal:** `has_journal` on the reserved inode 8,
-  `formatExt3`, and journaled operations the timeline can replay.
 - **Slice 4, the explorer:** an ext adapter under `web/ui/src/fs/`, ext-only
   wasm DTOs (superblock, inodes, block owners), a block-group map that
   replaces the FAT map through `PANELS`, an inode inspector, the terminal's
   ext vocabulary, and scenarios that show indirect blocks and, for ext3, a
-  journaled write replaying. It inherits the `web/ui` seams listed under
-  "Deferred, by area", decides whether an ext volume's labels say "block"
-  instead of "sector", and gives `Unsupported` from `fromImage` its own
-  status text (an unrecognised image now shows the generic "That isn't
-  supported yet.").
+  journaled write replaying. For ext3 it adds a journal panel over
+  `journalInfo()` and `journalBlocks()`, the `journal` layout region, the
+  `<journal>` owner of the journal's blocks, and the crash and recovery
+  methods (`armCrash`, `disarmCrash`, `crashPhase`, `needsRecovery`,
+  `recover`). It inherits the `web/ui` seams listed under "Deferred, by
+  area", decides whether an ext volume's labels say "block" instead of
+  "sector", and gives `Unsupported` from `fromImage` its own status text (an
+  unrecognised image now shows the generic "That isn't supported yet.").
 
 ## Core API additions
 
@@ -124,6 +148,38 @@ small for its metadata throws `InvalidGeometry` from `formatExt2` and
 inodes per group); `crates/wasm/README.md` gives the range and the intended
 `mke2fs -t ext2 -b 1024 -I 128 -O none,filetype,sparse_super` recipe for a
 loadable image, which has not yet been run against the loader.
+
+**`crates/ext`, the journal** (slice 3): `annotate_sector` on a journal
+block classifies the whole journal on every call (about a thousand header
+reads on the default disk), so slice 4's panel should call `journalBlocks()`
+once and reuse it rather than annotating block by block. One mutation is
+one transaction and is never split: a transaction that would tag more than
+`maxlen / 4` blocks (256 on the default 1,024-block journal) throws
+`Unsupported`, so in data mode a single write above roughly 250 KiB fails on
+the default disk (ordered mode tags only metadata). The journal head is not
+persisted: a loaded image starts its next transaction at journal block 1, as
+a kernel without `journal_cycle_record` does. Revoke records, journal
+checksums, 64-bit tags, and writeback mode are `Unsupported`; fast commit,
+async commit, and an external journal device are not implemented either.
+One transaction is in the journal at a time and there is no lazy
+checkpointing: every operation checkpoints immediately and leaves a cleanly
+unmounted volume, the largest departure from a kernel, which a slice-4
+lesson has to explain. Mounts are not modelled (mount count, orphan list,
+`s_state`). Event fields reach JS only inside `text`: the wasm
+`EventRecord` is `{ kind, text, region }`, and the clean `recovery_scanned`
+event has the empty region `{ start: 0, end: 0 }`, so slice 4 either parses
+`text` or adds the event fields to `EventRecord`. `crates/wasm/README.md`
+gives the `mke2fs -t ext3 -b 1024 -I 128 -O
+none,has_journal,filetype,sparse_super -J size=1` recipe for a loadable ext3
+image, checked by hand against the loader; the leading `none,` matters,
+since without it mke2fs adds `ext_attr`, `resize_inode`, `dir_index`, and
+`large_file`, which the loader refuses. `JournalState::open` does not yet
+reject a journal that overlaps group metadata or maps a block twice; a
+crafted foreign image would then have transactions write over metadata;
+slice 4, which loads foreign images, should add the check (`CorruptImage`,
+as e2fsck reports). The ignored ext3 mount test in
+`crates/ext/tests/mount_linux.rs`
+(`linux_replays_a_crashed_ext3_image_like_recover`) has not been run.
 
 **`crates/wasm`**: `init` is exported by wasm-bindgen despite being private.
 `vite-plugin-top-level-await` and its `@swc/core` pin may be removable from
