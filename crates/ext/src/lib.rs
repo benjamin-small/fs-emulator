@@ -1,6 +1,8 @@
-//! Byte-accurate ext2 (revision 1, 1 KiB blocks) on an in-memory disk. The
-//! on-disk codecs live here; `ExtFs`, the filesystem itself, joins them in
-//! `fs.rs`.
+//! Byte-accurate ext2 (revision 1, 1 KiB blocks) on an in-memory disk, and
+//! ext3: the same volume with a JBD2 journal on inode 8. The on-disk codecs
+//! live here; `ExtFs`, the filesystem itself, joins them in `fs.rs`, and
+//! `journal` holds the journal: its codecs, format and load, the transaction
+//! every mutation runs as, crash recovery, and inspection.
 
 mod alloc;
 pub mod bitmap;

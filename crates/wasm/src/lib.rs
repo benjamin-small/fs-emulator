@@ -1,6 +1,7 @@
 //! Browser bindings for the emulator: one `Volume` class over the
-//! `FileSystem` trait (FAT16 and ext2 today) plus family-specific
-//! inspection, with plain JS objects crossing the boundary.
+//! `FileSystem` trait (FAT16, ext2, and ext3 today) plus family-specific
+//! inspection and the ext3 journal's crash and recovery methods, with plain
+//! JS objects crossing the boundary.
 
 pub mod dto;
 pub mod error;

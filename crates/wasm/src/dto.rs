@@ -330,8 +330,131 @@ impl TryFrom<ExtFormatOptions> for ext::ExtFormatOptions {
                 Some(u) => parse_uuid(&u)?,
                 None => d.uuid,
             },
-            journal: d.journal,
+            journal: None,
         })
+    }
+}
+
+/// `formatExt3`'s options: `ExtFormatOptions`' four keys plus the
+/// journal's. Absent fields take `ext::ExtFormatOptions::ext3()` (mke2fs's
+/// journal size for the volume, ordered mode).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
+pub struct Ext3FormatOptions {
+    pub total_blocks: Option<u32>,
+    pub inodes_per_group: Option<u32>,
+    pub label: Option<String>,
+    pub uuid: Option<String>,
+    pub journal_blocks: Option<u32>,
+    pub journal_mode: Option<String>,
+}
+
+impl Ext3FormatOptions {
+    /// The camelCase keys a JS caller may pass; see `FormatOptions::FIELDS`
+    /// for why the boundary checks them by hand.
+    pub const FIELDS: &'static [&'static str] = &[
+        "totalBlocks",
+        "inodesPerGroup",
+        "label",
+        "uuid",
+        "journalBlocks",
+        "journalMode",
+    ];
+}
+
+impl TryFrom<Ext3FormatOptions> for ext::ExtFormatOptions {
+    type Error = String;
+
+    fn try_from(o: Ext3FormatOptions) -> Result<Self, String> {
+        let mode = match o.journal_mode {
+            Some(m) => ext::JournalMode::parse(&m)
+                .ok_or_else(|| format!("journal mode \"{m}\" is not \"ordered\" or \"data\""))?,
+            None => ext::JournalMode::default(),
+        };
+        let ext2 = ext::ExtFormatOptions::try_from(ExtFormatOptions {
+            total_blocks: o.total_blocks,
+            inodes_per_group: o.inodes_per_group,
+            label: o.label,
+            uuid: o.uuid,
+        })?;
+        Ok(ext::ExtFormatOptions {
+            journal: Some(ext::JournalOptions {
+                blocks: o.journal_blocks,
+                mode,
+            }),
+            ..ext2
+        })
+    }
+}
+
+/// `journalInfo()`: the journal's shape and state (spec section 7).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JournalInfo {
+    pub inode: u32,
+    pub maxlen: u32,
+    pub first_block: u32,
+    pub sequence: u32,
+    pub start: u32,
+    pub head: u32,
+    /// `"ordered"` or `"data"`.
+    pub mode: String,
+    pub needs_recovery: bool,
+    pub max_transaction: u32,
+}
+
+impl From<ext::JournalInfo> for JournalInfo {
+    fn from(i: ext::JournalInfo) -> Self {
+        JournalInfo {
+            inode: i.inode,
+            maxlen: i.maxlen,
+            first_block: i.first_block,
+            sequence: i.sequence,
+            start: i.start,
+            head: i.head,
+            mode: i.mode.as_str().to_string(),
+            needs_recovery: i.needs_recovery,
+            max_transaction: i.max_transaction,
+        }
+    }
+}
+
+/// One entry of `journalBlocks()`. `kind` is `superblock`, `descriptor`,
+/// `copy`, `commit`, `revoke`, or `unused`; `home` and `escaped` are set
+/// only for a `copy` and are `null` otherwise, like `tid` on a block that
+/// belongs to no transaction.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JournalBlock {
+    pub index: u32,
+    pub block: u32,
+    pub kind: String,
+    pub tid: Option<u32>,
+    pub home: Option<u32>,
+    pub escaped: Option<bool>,
+    pub stale: bool,
+}
+
+impl From<ext::JournalBlock> for JournalBlock {
+    fn from(b: ext::JournalBlock) -> Self {
+        use ext::JournalBlockKind as K;
+        let (kind, home, escaped) = match b.kind {
+            K::Superblock => ("superblock", None, None),
+            K::Descriptor => ("descriptor", None, None),
+            K::Copy { home, escaped } => ("copy", Some(home), Some(escaped)),
+            K::Commit => ("commit", None, None),
+            K::Revoke => ("revoke", None, None),
+            K::Unused => ("unused", None, None),
+        };
+        JournalBlock {
+            index: b.index,
+            block: b.block,
+            kind: kind.to_string(),
+            tid: b.tid,
+            home,
+            escaped,
+            stale: b.stale,
+        }
     }
 }
 
@@ -855,6 +978,160 @@ mod tests {
             ExtFormatOptions::FIELDS,
             &["totalBlocks", "inodesPerGroup", "label", "uuid"]
         );
+    }
+
+    #[test]
+    fn ext3_format_options_add_the_journal_to_the_ext2_keys() {
+        let core = ext::ExtFormatOptions::try_from(Ext3FormatOptions::default()).unwrap();
+        assert_eq!(core, ext::ExtFormatOptions::ext3());
+        let dto = Ext3FormatOptions {
+            total_blocks: Some(8192),
+            inodes_per_group: Some(64),
+            label: Some("journal".into()),
+            uuid: Some("0123456789abcdef0123456789abcdef".into()),
+            journal_blocks: Some(2048),
+            journal_mode: Some("data".into()),
+        };
+        let core = ext::ExtFormatOptions::try_from(dto).unwrap();
+        assert_eq!(core.total_blocks, 8192);
+        assert_eq!(core.inodes_per_group, Some(64));
+        assert_eq!(&core.label, b"journal\0\0\0\0\0\0\0\0\0");
+        assert_eq!(core.uuid[..2], [0x01, 0x23]);
+        assert_eq!(
+            core.journal,
+            Some(ext::JournalOptions {
+                blocks: Some(2048),
+                mode: ext::JournalMode::Data
+            })
+        );
+        let ordered = Ext3FormatOptions {
+            journal_mode: Some("ordered".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            ext::ExtFormatOptions::try_from(ordered).unwrap().journal,
+            Some(ext::JournalOptions::default())
+        );
+        assert_eq!(
+            Ext3FormatOptions::FIELDS,
+            &[
+                "totalBlocks",
+                "inodesPerGroup",
+                "label",
+                "uuid",
+                "journalBlocks",
+                "journalMode"
+            ]
+        );
+        // The ext2 options never carry a journal.
+        let ext2 = ext::ExtFormatOptions::try_from(ExtFormatOptions::default()).unwrap();
+        assert_eq!(ext2.journal, None);
+    }
+
+    #[test]
+    fn ext3_format_options_refuse_another_mode_and_keep_the_ext2_checks() {
+        for mode in ["writeback", "Ordered", "journal_data", ""] {
+            let err = ext::ExtFormatOptions::try_from(Ext3FormatOptions {
+                journal_mode: Some(mode.into()),
+                ..Default::default()
+            })
+            .unwrap_err();
+            assert_eq!(
+                err,
+                format!("journal mode \"{mode}\" is not \"ordered\" or \"data\"")
+            );
+        }
+        let err = ext::ExtFormatOptions::try_from(Ext3FormatOptions {
+            uuid: Some("xyz".into()),
+            ..Default::default()
+        })
+        .unwrap_err();
+        assert_eq!(
+            err,
+            "uuid \"xyz\" is not 32 hex digits (optionally hyphenated 8-4-4-4-12)"
+        );
+        assert!(ext::ExtFormatOptions::try_from(Ext3FormatOptions {
+            label: Some("x".repeat(17)),
+            ..Default::default()
+        })
+        .is_err());
+    }
+
+    #[test]
+    fn journal_info_and_blocks_map_a_formatted_journal() {
+        let fs = ext::ExtFs::format(ext::ExtFormatOptions::ext3()).unwrap();
+        assert_eq!(
+            JournalInfo::from(fs.journal_info().unwrap()),
+            JournalInfo {
+                inode: 8,
+                maxlen: 1024,
+                first_block: 82,
+                sequence: 1,
+                start: 0,
+                head: 1,
+                mode: "ordered".into(),
+                needs_recovery: false,
+                max_transaction: 256,
+            }
+        );
+        let blocks: Vec<JournalBlock> = fs.journal_blocks().into_iter().map(Into::into).collect();
+        assert_eq!(blocks.len(), 1024);
+        assert_eq!(
+            blocks[0],
+            JournalBlock {
+                index: 0,
+                block: 82,
+                kind: "superblock".into(),
+                tid: None,
+                home: None,
+                escaped: None,
+                stale: false,
+            }
+        );
+        assert!(blocks[1..].iter().all(|b| b.kind == "unused"));
+        assert_eq!(blocks[1023].block, 1105);
+    }
+
+    #[test]
+    fn journal_block_kinds_are_strings_and_only_a_copy_carries_home() {
+        use ext::JournalBlockKind as K;
+        let core = |kind, tid| ext::JournalBlock {
+            index: 3,
+            block: 85,
+            kind,
+            tid,
+            stale: true,
+        };
+        assert_eq!(
+            JournalBlock::from(core(
+                K::Copy {
+                    home: 69,
+                    escaped: true
+                },
+                Some(2)
+            )),
+            JournalBlock {
+                index: 3,
+                block: 85,
+                kind: "copy".into(),
+                tid: Some(2),
+                home: Some(69),
+                escaped: Some(true),
+                stale: true,
+            }
+        );
+        for (kind, name) in [
+            (K::Superblock, "superblock"),
+            (K::Descriptor, "descriptor"),
+            (K::Commit, "commit"),
+            (K::Revoke, "revoke"),
+            (K::Unused, "unused"),
+        ] {
+            let dto = JournalBlock::from(core(kind, Some(7)));
+            assert_eq!(dto.kind, name);
+            assert_eq!(dto.tid, Some(7));
+            assert_eq!((dto.home, dto.escaped), (None, None));
+        }
     }
 
     #[test]
