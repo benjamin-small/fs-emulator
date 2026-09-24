@@ -493,8 +493,10 @@ before any write).
 - `crates/wasm/README.md`: the ext3 constructor, the crash and recovery
   methods, the journal DTOs, the `NeedsRecovery` code, and a "Loading an
   ext3 image" paragraph with the `mke2fs` recipe
-  (`mke2fs -t ext3 -b 1024 -I 128 -O has_journal,filetype,sparse_super -J
-  size=1`) and the note that images from other tools must not carry journal
+  (`mke2fs -t ext3 -b 1024 -I 128 -O none,has_journal,filetype,sparse_super
+  -J size=1`; the leading `none` matters, since mke2fs otherwise adds
+  `ext_attr`, `resize_inode`, `dir_index`, and `large_file`, which the
+  loader rejects) and the note that images from other tools must not carry journal
   checksums or 64-bit tags.
 
 ## 9. What the web layer sees
