@@ -2189,4 +2189,30 @@ mod write_delete_remove {
         assert!(fs.disk().as_bytes() == &before[..], "nothing was written");
         assert_eq!(fs.history().len(), history);
     }
+
+    #[test]
+    fn a_clock_before_1970_still_writes_a_nonzero_dtime() {
+        let mut fs = default_fs();
+        fs.create_file("/old.txt", b"old").unwrap();
+        let ino = ino_of(&fs, "/old.txt");
+        fs.set_now(DateTime::new(1969, 12, 31, 23, 59, 59));
+        fs.delete_file("/old.txt").unwrap();
+        assert_eq!(fs.inode(ino).unwrap().dtime, 1);
+    }
+
+    #[test]
+    fn frees_saturate_counters_a_raw_write_left_at_the_maximum() {
+        let mut fs = default_fs();
+        fs.create_file("/f.bin", &pattern(3 * BS, 1)).unwrap();
+        // Group 0's descriptor: free blocks at 12, free inodes at 14.
+        fs.write_raw(2 * BS as u64 + 12, &[0xFF, 0xFF, 0xFF, 0xFF])
+            .unwrap();
+        assert!(fs.corruption().is_none());
+        fs.delete_file("/f.bin").unwrap();
+        let gd = &fs.group_descriptors()[0];
+        assert_eq!(
+            (gd.free_blocks_count, gd.free_inodes_count),
+            (0xFFFF, 0xFFFF)
+        );
+    }
 }

@@ -265,8 +265,9 @@ pub fn free_blocks(ctx: &mut AllocCtx, blocks: &[u32]) {
             lo = lo.min(bit / 8);
             hi = hi.max(bit / 8 + 1);
             freed.push(b);
-            ctx.gds[g as usize].free_blocks_count += 1;
-            ctx.sb.free_blocks_count += 1;
+            ctx.gds[g as usize].free_blocks_count =
+                ctx.gds[g as usize].free_blocks_count.saturating_add(1);
+            ctx.sb.free_blocks_count = ctx.sb.free_blocks_count.saturating_add(1);
         }
         if lo < hi {
             ctx.disk.write(base + lo, &bits[lo..hi]);
@@ -321,11 +322,11 @@ pub fn free_inode(ctx: &mut AllocCtx, ino: u32, is_dir: bool) {
         range: at..at + Inode::SIZE,
     }));
     let gd = &mut ctx.gds[g as usize];
-    gd.free_inodes_count += 1;
+    gd.free_inodes_count = gd.free_inodes_count.saturating_add(1);
     if is_dir {
         gd.used_dirs_count = gd.used_dirs_count.saturating_sub(1);
     }
-    ctx.sb.free_inodes_count += 1;
+    ctx.sb.free_inodes_count = ctx.sb.free_inodes_count.saturating_add(1);
     write_counters(ctx);
 }
 

@@ -58,9 +58,11 @@ pub struct ExtFs {
     corrupt: Option<Error>,
 }
 
-/// `now` as the 32-bit seconds ext stores: saturating at both ends.
+/// `now` as the 32-bit seconds ext stores: saturating at both ends, and
+/// never below 1 second, so a delete never writes `dtime = 0` (which reads
+/// as "not deleted").
 fn stamp(now: DateTime) -> u32 {
-    now.to_unix_seconds().clamp(0, i64::from(u32::MAX)) as u32
+    now.to_unix_seconds().clamp(1, i64::from(u32::MAX)) as u32
 }
 
 /// Encode `inode` into its slot in the inode table.
