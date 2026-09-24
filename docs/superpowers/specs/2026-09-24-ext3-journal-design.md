@@ -83,10 +83,12 @@ through inode 8's block map.
 
 ## 1. Crate and core
 
-- New module `crates/ext/src/journal.rs` (public: `JournalMode`,
-  `JournalOptions`, `JournalSuperblock`, `CrashPhase`, `JournalInfo`,
-  `JournalBlock`, `JournalBlockKind`, constants; crate-private: the
-  transaction builder and recovery). `crates/ext/src/fs.rs` gains the
+- New directory module `crates/ext/src/journal/`: `mod.rs` (constants,
+  `JournalMode`, `JournalOptions`, `CrashPhase`, `JournalSuperblock`, the
+  descriptor and commit codecs, escaping, the ring), `state.rs`
+  (`JournalState`, `open`, the format-time writer, `JournalInfo`), `txn.rs`
+  (the transaction builder), `recovery.rs` (scan and replay), `inspect.rs`
+  (`JournalBlock`, `JournalBlockKind`, annotations). `crates/ext/src/fs.rs` gains the
   journal-aware `run_mutation`, `arm_crash`, `disarm_crash`,
   `crash_phase`, `needs_recovery`, `recover`, `journal_info`,
   `journal_blocks`. `events.rs` gains the journal events (section 5).
@@ -278,8 +280,10 @@ do. On an ext2 volume `run_mutation` behaves exactly as slice 2 specifies.
 
 On an ext3 volume `run_mutation` does, in order:
 
-1. If `needs_recovery`, return `Err(Error::NeedsRecovery)` before opening an
-   operation.
+1. If `needs_recovery`, return `Err(Error::NeedsRecovery)`. Each of the
+   five mutations makes this check right after the corruption gate and
+   before any path, name, existence, or space check, so a crashed volume
+   answers `NeedsRecovery` to every mutation, whatever its arguments.
 2. Snapshot `sb`, `gds`, and `journal` for rollback. Open the operation
    (`disk.begin_op(name)`), run the body, and take the **draft** record with
    `disk.end_op()` without pushing it to history. On `Err`, restore every
@@ -434,10 +438,15 @@ before any write).
   `s_start != 0`, first parse the live transaction from `s_start` as the
   scan of section 6 does and mark its blocks (`stale: false`); then walk
   indexes 1..maxlen in order, skipping live blocks, parsing any header with
-  the magic (a descriptor claims the following blocks as its copies, as far
-  as they are not live); everything claimed this way is `stale: true`;
-  blocks without a header and unclaimed are `Unused`. Index 0 is
-  `Superblock`.
+  the magic (a descriptor claims the following blocks as its copies up to
+  the first index already classified, live or stale); everything claimed
+  this way is `stale: true`; blocks without a header and unclaimed are
+  `Unused`; a superblock-type header inside the log is `Unused`. Index 0 is
+  `Superblock`. Unlike `recover`, this classification never fails: a revoke
+  block with the expected sequence is reported as a live `Revoke`, and the
+  live parse simply ends at the first block that does not fit. The live
+  parse and `recover`'s scan share one log walker; only their treatment of
+  revoke blocks differs.
 - `annotate_sector` for a sector inside a journal block (data blocks of
   inode 8): the superblock's fields by name and value (magic, block type,
   block size, maxlen, first, sequence, start, uuid, users); a descriptor's
@@ -500,7 +509,7 @@ the explorer still reports `no adapter for ext2` or `no adapter for ext3`
 
 ## 10. Tests
 
-### 10.1 Unit (`crates/ext/src/journal.rs`)
+### 10.1 Unit (`crates/ext/src/journal/`)
 
 Journal superblock encode/decode round trip and the format-time bytes of
 section 2; tag packing (uuid after the first tag, `SAME_UUID`, `LAST_TAG`,
@@ -570,9 +579,12 @@ Same skip-locally / hard-fail-under-`CI` rule and helpers as slice 2:
   journal size: 8M`; `e2fsck -fn` clean.
 - After a mixed sequence of mutations in each mode (the slice-2 scripted
   sequence): `e2fsck -fn` clean, `debugfs -R "ls -l"` and `stat` agree as in
-  slice 2, and `debugfs -R "logdump -O"` lists the last transaction's tags
-  (`FS block N logged at journal block M (flags 0x..)`) and commit in the
-  order and at the indexes our record names.
+  slice 2, and `debugfs -R "logdump -aO"` (`-a` prints the tag lines, `-O`
+  walks stale transactions from journal block 1) lists a known
+  transaction's tags (`FS block N logged at journal block M (flags 0x..)`)
+  and commit in the order and at the indexes our record names; the test
+  reloads the image first so the head restarts at block 1 and the walk
+  reaches the transaction it then makes.
 - For each crash phase and mode, on a `create_file` of 3 blocks: `debugfs
   -R logdump` on the crashed image shows the descriptor with our tags and,
   for the after-commit and during-checkpoint phases, the commit; then
