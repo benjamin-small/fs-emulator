@@ -22,6 +22,9 @@ pub enum Error {
         len: u64,
         disk_len: u64,
     },
+    /// An ext3 volume whose journal holds transactions not yet replayed:
+    /// every mutation is refused until `recover` runs.
+    NeedsRecovery,
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -50,6 +53,7 @@ impl fmt::Display for Error {
                 f,
                 "out of bounds: {len} bytes at offset {offset} run past the end of the {disk_len}-byte disk"
             ),
+            Error::NeedsRecovery => write!(f, "needs recovery"),
         }
     }
 }
@@ -76,6 +80,7 @@ mod tests {
             .to_string(),
             "out of bounds: 2 bytes at offset 3 run past the end of the 4-byte disk"
         );
+        assert_eq!(Error::NeedsRecovery.to_string(), "needs recovery");
     }
 
     #[test]

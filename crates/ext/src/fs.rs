@@ -36,6 +36,8 @@ pub enum BlockRole {
     Data,
     Directory,
     Indirect,
+    /// A data block of the ext3 journal (inode 8).
+    Journal,
 }
 
 /// The inode (and its path) a block belongs to.
@@ -1610,7 +1612,7 @@ impl ExtFs {
             return None;
         }
         match owner.role {
-            BlockRole::Data => None,
+            BlockRole::Data | BlockRole::Journal => None,
             BlockRole::Directory => Some(annotate_dir_block(self.disk.read(start, BS))),
             BlockRole::Indirect => Some(annotate_pointer_block(&blockmap::read_pointers(
                 &self.disk, block,

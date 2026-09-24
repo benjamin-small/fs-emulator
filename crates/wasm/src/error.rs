@@ -20,6 +20,7 @@ pub fn code_of(err: &fs_core::Error) -> &'static str {
         CorruptImage(_) => "CorruptImage",
         Unsupported(_) => "Unsupported",
         OutOfBounds { .. } => "OutOfBounds",
+        NeedsRecovery => "NeedsRecovery",
     }
 }
 
@@ -67,11 +68,13 @@ mod tests {
                 len: 2,
                 disk_len: 3,
             },
+            Error::NeedsRecovery,
         ];
         let codes: Vec<&str> = all.iter().map(code_of).collect();
         assert_eq!(codes[0], "NotFound");
         assert_eq!(codes[11], "CorruptImage");
         assert_eq!(codes[13], "OutOfBounds");
+        assert_eq!(codes[14], "NeedsRecovery");
         let mut unique = codes.clone();
         unique.sort_unstable();
         unique.dedup();
@@ -101,6 +104,7 @@ mod tests {
                 len: 2,
                 disk_len: 3,
             },
+            Error::NeedsRecovery,
         ];
         let core_codes: Vec<&str> = core.iter().map(code_of).collect();
         for code in wrapper {

@@ -150,6 +150,7 @@ pub fn region_kind_name(kind: RegionKind) -> &'static str {
         RegionKind::AllocationTable => "allocationTable",
         RegionKind::Directory => "directory",
         RegionKind::Data => "data",
+        RegionKind::Journal => "journal",
         RegionKind::Reserved => "reserved",
         RegionKind::Other => "other",
     }
@@ -648,6 +649,7 @@ mod tests {
         );
         assert_eq!(region_kind_name(RegionKind::Boot), "boot");
         assert_eq!(region_kind_name(RegionKind::Other), "other");
+        assert_eq!(region_kind_name(RegionKind::Journal), "journal");
         let a = Annotation::from(fs_core::Annotation {
             range: 11..13,
             label: "bytes per sector".into(),
