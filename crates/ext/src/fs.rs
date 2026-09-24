@@ -1426,17 +1426,22 @@ impl ExtFs {
                 continue;
             };
             let (off, rec_len) = (entries[k].0, entries[k].1.rec_len);
-            if k == 0 {
+            // When the entry merges into its predecessor, only the
+            // predecessor's `rec_len` bytes are written, so the event
+            // starts there too; a first-in-block entry keeps its own range.
+            let event_start = if k == 0 {
                 self.disk.write(base + off, &0u32.to_le_bytes());
+                off
             } else {
                 let (prev_off, prev) = &entries[k - 1];
                 let merged = prev.rec_len + rec_len;
                 self.disk.write(base + prev_off + 4, &merged.to_le_bytes());
-            }
+                *prev_off
+            };
             self.disk.event(Box::new(ExtEvent::DirEntryRemoved {
                 dir_inode: dir_ino,
                 name: name.to_string(),
-                range: base + off..base + off + rec_len as usize,
+                range: base + event_start..base + off + rec_len as usize,
             }));
             return Ok(());
         }

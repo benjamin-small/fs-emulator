@@ -1329,6 +1329,7 @@ mod write_delete_remove {
     use ext::dir::entries_in_block;
     use ext::{BlockOwner, BlockRole, ExtFormatOptions, ExtFs, Superblock};
     use fs_core::{Annotation, DateTime, Error, FileSystem, OpRecord, Result};
+    use std::ops::Range;
 
     const BS: usize = 1024;
 
@@ -1664,9 +1665,20 @@ mod write_delete_remove {
     }
 
     /// Delete `/many/{name}` and drop it from `names`.
-    fn delete_from_many(fs: &mut ExtFs, names: &mut Vec<String>, name: &str) {
-        fs.delete_file(&format!("/many/{name}")).unwrap();
+    fn delete_from_many(fs: &mut ExtFs, names: &mut Vec<String>, name: &str) -> OpRecord {
+        let rec = fs.delete_file(&format!("/many/{name}")).unwrap();
         names.retain(|n| n != name);
+        rec
+    }
+
+    /// The region of the first event of `kind` in `rec`.
+    fn event_region(rec: &OpRecord, kind: &str) -> Range<usize> {
+        rec.events
+            .iter()
+            .find(|e| e.kind() == kind)
+            .unwrap_or_else(|| panic!("no {kind} event in {}", rec.op))
+            .region()
+            .unwrap()
     }
 
     #[test]
@@ -1675,9 +1687,17 @@ mod write_delete_remove {
         let free_blocks = fs.superblock().free_blocks_count;
         fs.create_dir("/many").unwrap();
         let mut names: Vec<String> = (0..60).map(|i| format!("file-{i:02}.txt")).collect();
-        for name in &names {
-            fs.create_file(&format!("/many/{name}"), name.as_bytes())
+        // Entry 50 ("file-50.txt") is the first that does not fit in block
+        // 0, so it lands at offset 0 of a fresh block: captured to pin the
+        // event range of a fresh-block insert below.
+        let mut fresh_block_rec = None;
+        for (i, name) in names.iter().enumerate() {
+            let rec = fs
+                .create_file(&format!("/many/{name}"), name.as_bytes())
                 .unwrap();
+            if i == 50 {
+                fresh_block_rec = Some(rec);
+            }
         }
         let blocks = blocks_of(&fs, "/many");
         assert_eq!(
@@ -1707,6 +1727,13 @@ mod write_delete_remove {
         };
         check(&fs, &names);
         assert_eq!(entries(&fs, 1)[0].1.name, b"file-50.txt");
+        // A fresh block's first entry: the event covers only its own bytes,
+        // starting at its own (zero) offset, not some predecessor's.
+        assert_eq!(
+            event_region(&fresh_block_rec.unwrap(), "dir_entry_written"),
+            blocks[1] as usize * BS..blocks[1] as usize * BS + 20,
+            "fresh-block insert starts at the entry's own offset"
+        );
 
         // Not first in its block: ".." absorbs its 20 bytes.
         let dotdot = entries(&fs, 0)[1].1.rec_len;
@@ -1714,15 +1741,34 @@ mod write_delete_remove {
         assert_eq!(entries(&fs, 0)[1].1.rec_len, dotdot + 20);
         check(&fs, &names);
         // Last in block 0: its predecessor runs to the block end again.
-        delete_from_many(&mut fs, &mut names, "file-49.txt");
+        let file48_off = entries(&fs, 0)
+            .into_iter()
+            .find(|(_, e)| e.name == b"file-48.txt")
+            .unwrap()
+            .0;
+        let rec = delete_from_many(&mut fs, &mut names, "file-49.txt");
+        // Only the predecessor's rec_len bytes were written, so the event
+        // starts at its (unchanged) offset, not the removed entry's.
+        assert_eq!(
+            event_region(&rec, "dir_entry_removed").start,
+            blocks[0] as usize * BS + file48_off,
+            "merge starts at the shrunk predecessor's offset"
+        );
         let (off, last) = entries(&fs, 0).pop().unwrap();
         assert_eq!(last.name, b"file-48.txt");
         assert_eq!(off + last.rec_len as usize, BS);
         check(&fs, &names);
         // First in block 1: the entry stays where it is, with inode 0.
-        delete_from_many(&mut fs, &mut names, "file-50.txt");
+        let rec = delete_from_many(&mut fs, &mut names, "file-50.txt");
         let (off, first) = entries(&fs, 1)[0].clone();
         assert_eq!((off, first.inode, first.rec_len), (0, 0, 20));
+        // A first-in-block removal only zeroes its own inode field, so the
+        // event keeps the entry's own range.
+        assert_eq!(
+            event_region(&rec, "dir_entry_removed"),
+            blocks[1] as usize * BS + off..blocks[1] as usize * BS + off + first.rec_len as usize,
+            "first-in-block removal keeps its own range"
+        );
         check(&fs, &names);
         // Right after that unused entry: merged into it.
         delete_from_many(&mut fs, &mut names, "file-51.txt");
@@ -1734,7 +1780,15 @@ mod write_delete_remove {
 
         // The freed room is reused: the slack after ".." takes a new name,
         // and the directory does not grow.
-        fs.create_file("/many/new-name.txt", b"new").unwrap();
+        let dotdot_off = entries(&fs, 0)[1].0;
+        let rec = fs.create_file("/many/new-name.txt", b"new").unwrap();
+        // The insert splits the shrunk ".." entry, so the event starts at
+        // its (predecessor's) offset, not the new entry's own offset.
+        assert_eq!(
+            event_region(&rec, "dir_entry_written").start,
+            blocks[0] as usize * BS + dotdot_off,
+            "split predecessor: the event starts at .. 's offset"
+        );
         names.insert(0, "new-name.txt".to_string());
         assert_eq!(blocks_of(&fs, "/many"), blocks);
         check(&fs, &names);
