@@ -670,3 +670,617 @@ fn annotations_show_the_live_bytes_while_the_volume_is_corrupt() {
         .iter()
         .any(|a| a.label == "inode 2" && a.value.starts_with("mode 040755")));
 }
+
+/// Task 4: creating files and directories (spec sections 4 and 5).
+mod create_ops {
+    use super::default_fs;
+    use ext::{
+        DirEntry, ExtFormatOptions, ExtFs, GroupDescriptor, Superblock, LOST_FOUND_INO, ROOT_INO,
+    };
+    use fs_core::{DateTime, Error, FileSystem, OpRecord};
+
+    const MAX_FILE_BYTES: usize = (12 + 256 + 65_536) * 1024;
+
+    /// Superblock free blocks and inodes, then per group (free blocks, free
+    /// inodes, used directories).
+    type Counters = (u32, u32, Vec<(u16, u16, u16)>);
+
+    /// 64 blocks: one group, 16 inodes, 44 free blocks and 5 free inodes after format.
+    fn tiny_disk() -> ExtFs {
+        ExtFs::format(ExtFormatOptions {
+            total_blocks: 64,
+            ..Default::default()
+        })
+        .unwrap()
+    }
+
+    /// The default 16 MiB, two groups, but 16 inodes per group, so group 0
+    /// runs out of inodes after five creates.
+    fn small_groups_disk() -> ExtFs {
+        ExtFs::format(ExtFormatOptions {
+            inodes_per_group: Some(16),
+            ..Default::default()
+        })
+        .unwrap()
+    }
+
+    /// Bytes whose period (251) does not divide the block size, so a block
+    /// read from the wrong place cannot pass.
+    fn pattern(len: usize, seed: usize) -> Vec<u8> {
+        (0..len)
+            .map(|i| ((i * 7 + i / 1024 + seed) % 251) as u8)
+            .collect()
+    }
+
+    fn count(rec: &OpRecord, kind: &str) -> usize {
+        rec.event_kinds().iter().filter(|k| **k == kind).count()
+    }
+
+    /// The counters as the primary superblock and descriptor table hold
+    /// them on disk, after asserting the cached copies match those bytes.
+    fn counters(fs: &ExtFs) -> Counters {
+        let bytes = fs.disk().as_bytes();
+        let sb = Superblock::decode(&bytes[1024..2048]);
+        assert_eq!(
+            &sb,
+            fs.superblock(),
+            "cached superblock differs from block 1"
+        );
+        let table = fs.geometry().groups_layout[0].descriptors_block.unwrap() as usize * 1024;
+        let gds: Vec<GroupDescriptor> = (0..fs.geometry().groups as usize)
+            .map(|i| GroupDescriptor::decode(&bytes[table + i * 32..table + i * 32 + 32]))
+            .collect();
+        assert_eq!(
+            gds.as_slice(),
+            fs.group_descriptors(),
+            "cached descriptors differ from the table"
+        );
+        (
+            sb.free_blocks_count,
+            sb.free_inodes_count,
+            gds.iter()
+                .map(|g| (g.free_blocks_count, g.free_inodes_count, g.used_dirs_count))
+                .collect(),
+        )
+    }
+
+    /// What the explorer's timeline does: put every `before` back, last first.
+    fn rewind(image: &[u8], rec: &OpRecord) -> Vec<u8> {
+        let mut out = image.to_vec();
+        for c in rec.changes.iter().rev() {
+            out[c.offset..c.offset + c.before.len()].copy_from_slice(&c.before);
+        }
+        out
+    }
+
+    /// Everything a failed operation must leave alone.
+    fn snapshot(fs: &ExtFs) -> (Vec<u8>, usize, Counters) {
+        (
+            fs.disk().as_bytes().to_vec(),
+            fs.history().len(),
+            counters(fs),
+        )
+    }
+
+    /// Run one operation; check it joined history, rewinds byte for byte,
+    /// reports events with regions, and leaves `expected` counters.
+    fn step(
+        fs: &mut ExtFs,
+        op: impl FnOnce(&mut ExtFs) -> fs_core::Result<OpRecord>,
+        expected: Counters,
+    ) -> OpRecord {
+        let before = fs.disk().as_bytes().to_vec();
+        let history = fs.history().len();
+        let rec = op(fs).unwrap();
+        assert_eq!(fs.history().len(), history + 1);
+        assert!(!rec.events.is_empty(), "{} reported no events", rec.op);
+        for e in &rec.events {
+            assert!(
+                e.region().is_some(),
+                "{} has an event without a region",
+                rec.op
+            );
+            assert!(!e.to_string().is_empty());
+        }
+        assert!(
+            rewind(fs.disk().as_bytes(), &rec) == before,
+            "{} does not rewind",
+            rec.op
+        );
+        assert_eq!(counters(fs), expected, "counters after {}", rec.op);
+        rec
+    }
+
+    /// (name, inode, file type, rec_len) of every entry in a directory block.
+    fn dir_block(fs: &ExtFs, block: u32) -> Vec<(String, u32, u8, u16)> {
+        let start = block as usize * 1024;
+        let bytes = &fs.disk().as_bytes()[start..start + 1024];
+        let mut out = Vec::new();
+        let mut off = 0;
+        while off < 1024 {
+            let e = DirEntry::decode(&bytes[off..]).unwrap();
+            out.push((
+                String::from_utf8(e.name.clone()).unwrap(),
+                e.inode,
+                e.file_type,
+                e.rec_len,
+            ));
+            off += e.rec_len as usize;
+        }
+        assert_eq!(off, 1024, "the last entry must run to the end of the block");
+        out
+    }
+
+    fn u32s(fs: &ExtFs, block: u32) -> Vec<u32> {
+        let start = block as usize * 1024;
+        fs.disk().as_bytes()[start..start + 1024]
+            .chunks_exact(4)
+            .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .collect()
+    }
+
+    fn names(fs: &ExtFs, path: &str) -> Vec<String> {
+        fs.list_dir(path)
+            .unwrap()
+            .into_iter()
+            .map(|e| e.name)
+            .collect()
+    }
+
+    #[test]
+    fn a_small_file_round_trips_with_now_on_every_time() {
+        let mut fs = default_fs();
+        let now = DateTime::new(2026, 9, 23, 12, 0, 0);
+        let secs = now.to_unix_seconds() as u32;
+        fs.set_now(now);
+        let rec = fs.create_file("/hello.txt", b"hello, ext2\n").unwrap();
+        assert_eq!(rec.op, "create_file /hello.txt");
+        for kind in [
+            "inode_allocated",
+            "bitmap_updated",
+            "blocks_allocated",
+            "counters_updated",
+            "data_written",
+            "dir_entry_written",
+        ] {
+            assert!(count(&rec, kind) > 0, "no {kind} event");
+        }
+        assert_eq!(count(&rec, "data_written"), 1);
+        assert_eq!(
+            count(&rec, "inode_written"),
+            2,
+            "the new inode and the parent"
+        );
+        assert_eq!(count(&rec, "indirect_written"), 0);
+        fs.create_file("/b.txt", b"").unwrap();
+        assert_eq!(fs.read_file("/hello.txt").unwrap(), b"hello, ext2\n");
+        assert_eq!(fs.read_file("/b.txt").unwrap(), b"");
+        assert_eq!(names(&fs, "/"), ["lost+found", "hello.txt", "b.txt"]);
+        let info = fs.stat("/hello.txt").unwrap();
+        assert!(!info.is_dir);
+        assert_eq!(info.size, 12);
+        assert_eq!(
+            (info.created, info.modified, info.accessed),
+            (Some(now), Some(now), Some(now))
+        );
+        let inode = fs.inode(12).unwrap();
+        assert_eq!(
+            (inode.mode, inode.links_count, inode.size, inode.blocks),
+            (0x81A4, 1, 12, 2)
+        );
+        assert_eq!(
+            (inode.atime, inode.ctime, inode.mtime, inode.dtime),
+            (secs, secs, secs, 0)
+        );
+        assert_eq!(fs.geometry().group_of_block(inode.block[0]), 0);
+        assert!(inode.block[1..].iter().all(|&b| b == 0));
+        let data_at = inode.block[0] as usize * 1024;
+        let bytes = fs.disk().as_bytes();
+        assert_eq!(&bytes[data_at..data_at + 12], b"hello, ext2\n");
+        assert!(bytes[data_at + 12..data_at + 1024].iter().all(|&b| b == 0));
+        let empty = fs.inode(13).unwrap();
+        assert_eq!((empty.size, empty.blocks, empty.block), (0, 0, [0; 15]));
+        let root = fs.inode(ROOT_INO).unwrap();
+        assert_eq!((root.mtime, root.ctime), (secs, secs));
+        assert_eq!(
+            dir_block(&fs, root.block[0]),
+            vec![
+                (".".to_string(), ROOT_INO, 2, 12),
+                ("..".to_string(), ROOT_INO, 2, 12),
+                ("lost+found".to_string(), LOST_FOUND_INO, 2, 20),
+                ("hello.txt".to_string(), 12, 1, 20),
+                ("b.txt".to_string(), 13, 1, 960),
+            ]
+        );
+        assert_eq!(fs.superblock().wtime, secs);
+        assert_eq!(fs.history().len(), 2);
+    }
+
+    #[test]
+    fn counters_follow_a_hand_computation_and_every_op_rewinds() {
+        let mut fs = default_fs();
+        assert_eq!(
+            counters(&fs),
+            (16_234, 1_013, vec![(8_111, 501, 2), (8_123, 512, 0)])
+        );
+        let hello = pattern(100, 1);
+        let mid = pattern(20 * 1024, 2);
+        let big = pattern(300 * 1024, 3);
+        // 1 data block.
+        step(
+            &mut fs,
+            |fs| fs.create_file("/hello.txt", &hello),
+            (16_233, 1_012, vec![(8_110, 500, 2), (8_123, 512, 0)]),
+        );
+        // 20 data blocks + 1 single-indirect.
+        step(
+            &mut fs,
+            |fs| fs.create_file("/mid.bin", &mid),
+            (16_212, 1_011, vec![(8_089, 499, 2), (8_123, 512, 0)]),
+        );
+        // 300 data blocks + single + double + 1 second-level.
+        step(
+            &mut fs,
+            |fs| fs.create_file("/big.bin", &big),
+            (15_909, 1_010, vec![(7_786, 498, 2), (8_123, 512, 0)]),
+        );
+        // 1 directory block, one more used directory.
+        step(
+            &mut fs,
+            |fs| fs.create_dir("/dir"),
+            (15_908, 1_009, vec![(7_785, 497, 3), (8_123, 512, 0)]),
+        );
+        step(
+            &mut fs,
+            |fs| fs.create_file("/dir/inner.txt", b"inner"),
+            (15_907, 1_008, vec![(7_784, 496, 3), (8_123, 512, 0)]),
+        );
+        step(
+            &mut fs,
+            |fs| fs.create_dir("/dir/sub"),
+            (15_906, 1_007, vec![(7_783, 495, 4), (8_123, 512, 0)]),
+        );
+        // An empty file takes an inode and no block.
+        step(
+            &mut fs,
+            |fs| fs.create_file("/empty", b""),
+            (15_906, 1_006, vec![(7_783, 494, 4), (8_123, 512, 0)]),
+        );
+        let ops: Vec<&str> = fs.history().iter().map(|r| r.op.as_str()).collect();
+        assert_eq!(
+            ops,
+            [
+                "create_file /hello.txt",
+                "create_file /mid.bin",
+                "create_file /big.bin",
+                "create_dir /dir",
+                "create_file /dir/inner.txt",
+                "create_dir /dir/sub",
+                "create_file /empty",
+            ]
+        );
+        assert_eq!(fs.read_file("/hello.txt").unwrap(), hello);
+        assert_eq!(fs.read_file("/dir/inner.txt").unwrap(), b"inner");
+        // Only primary copies change; group 1's backup keeps the format counts.
+        let backup_at = fs.geometry().group(1).superblock_block.unwrap() as usize * 1024;
+        let backup = Superblock::decode(&fs.disk().as_bytes()[backup_at..backup_at + 1024]);
+        assert_eq!(
+            (backup.free_blocks_count, backup.free_inodes_count),
+            (16_234, 1_013)
+        );
+        // Rewinding the whole history returns the formatted image.
+        let mut image = fs.disk().as_bytes().to_vec();
+        for rec in fs.history().iter().rev() {
+            image = rewind(&image, rec);
+        }
+        assert!(
+            image == default_fs().disk().as_bytes(),
+            "history does not rewind to the format"
+        );
+    }
+
+    #[test]
+    fn twenty_kib_uses_a_single_indirect_block_and_300_kib_a_double() {
+        let mut fs = default_fs();
+        let mid = pattern(20 * 1024, 1);
+        let rec = fs.create_file("/mid.bin", &mid).unwrap();
+        assert_eq!(fs.read_file("/mid.bin").unwrap(), mid);
+        let inode = fs.inode(12).unwrap();
+        assert_ne!(inode.block[12], 0);
+        assert_eq!((inode.block[13], inode.block[14]), (0, 0));
+        assert_eq!(inode.blocks, (20 + 1) * 2);
+        assert_eq!(count(&rec, "indirect_written"), 1);
+        assert_eq!(
+            count(&rec, "data_written"),
+            1,
+            "a fresh disk gives one contiguous run"
+        );
+        for (i, &b) in inode.block[..12].iter().enumerate() {
+            assert_eq!(b, inode.block[0] + i as u32);
+        }
+        let single = u32s(&fs, inode.block[12]);
+        for (i, &p) in single[..8].iter().enumerate() {
+            assert_eq!(p, inode.block[0] + 12 + i as u32);
+        }
+        assert!(single[8..].iter().all(|&p| p == 0));
+        assert_eq!(fs.stat("/mid.bin").unwrap().size, 20 * 1024);
+
+        let big = pattern(300 * 1024, 2);
+        let rec = fs.create_file("/big.bin", &big).unwrap();
+        assert_eq!(fs.read_file("/big.bin").unwrap(), big);
+        let inode = fs.inode(13).unwrap();
+        assert_ne!(inode.block[12], 0);
+        assert_ne!(inode.block[13], 0);
+        assert_eq!(inode.block[14], 0);
+        assert_eq!(inode.blocks, (300 + 3) * 2);
+        assert_eq!(count(&rec, "indirect_written"), 3);
+        assert!(u32s(&fs, inode.block[12]).iter().all(|&p| p != 0));
+        let double = u32s(&fs, inode.block[13]);
+        assert_ne!(double[0], 0);
+        assert!(double[1..].iter().all(|&p| p == 0));
+        let child = u32s(&fs, double[0]);
+        assert!(child[..32].iter().all(|&p| p != 0));
+        assert!(child[32..].iter().all(|&p| p == 0));
+        assert_eq!(fs.stat("/big.bin").unwrap().size, 300 * 1024);
+    }
+
+    #[test]
+    fn file_too_large_comes_after_the_name_checks_and_before_disk_full() {
+        let mut fs = default_fs();
+        let huge = vec![0u8; MAX_FILE_BYTES + 1];
+        assert_eq!(
+            fs.create_file("/huge", &huge).unwrap_err(),
+            Error::FileTooLarge
+        );
+        assert_eq!(
+            fs.create_file("/lost+found", &huge).unwrap_err(),
+            Error::AlreadyExists
+        );
+        // Exactly the double-indirect capacity is allowed, but not on 16 MiB.
+        assert_eq!(
+            fs.create_file("/huge", &huge[..MAX_FILE_BYTES])
+                .unwrap_err(),
+            Error::DiskFull
+        );
+        assert!(fs.history().is_empty());
+        assert_eq!(names(&fs, "/"), ["lost+found"]);
+    }
+
+    #[test]
+    fn name_and_path_errors_come_in_the_spec_order_and_write_nothing() {
+        let mut fs = default_fs();
+        fs.create_file("/f", b"x").unwrap();
+        let before = snapshot(&fs);
+        let long = "a".repeat(256);
+        let cases: Vec<(String, Error)> = vec![
+            ("/f".into(), Error::AlreadyExists),
+            ("/lost+found".into(), Error::AlreadyExists),
+            ("/f/x".into(), Error::NotADirectory),
+            ("/missing/x".into(), Error::NotFound),
+            (format!("/{long}"), Error::InvalidName),
+            ("/a\0b".into(), Error::InvalidName),
+            (format!("/missing/{long}"), Error::InvalidName),
+            (format!("/f/{long}"), Error::InvalidName),
+            ("/".into(), Error::InvalidPath),
+            ("relative".into(), Error::InvalidPath),
+        ];
+        for (path, expected) in &cases {
+            assert_eq!(
+                fs.create_file(path, b"data").unwrap_err(),
+                *expected,
+                "create_file {path:?}"
+            );
+            assert_eq!(
+                fs.create_dir(path).unwrap_err(),
+                *expected,
+                "create_dir {path:?}"
+            );
+        }
+        assert_eq!(snapshot(&fs), before);
+        // 255 bytes is the longest name; names are case-sensitive.
+        let longest = format!("/{}", "b".repeat(255));
+        fs.create_file(&longest, b"").unwrap();
+        fs.create_file("/F", b"upper").unwrap();
+        assert_eq!(fs.read_file("/F").unwrap(), b"upper");
+        assert_eq!(fs.read_file("/f").unwrap(), b"x");
+        assert_eq!(fs.list_dir("/").unwrap().len(), 4);
+    }
+
+    #[test]
+    fn create_dir_sets_dot_entries_links_and_used_dirs() {
+        let mut fs = default_fs();
+        let rec = fs.create_dir("/dir").unwrap();
+        assert_eq!(rec.op, "create_dir /dir");
+        assert_eq!(
+            count(&rec, "dir_entry_written"),
+            3,
+            ". and .. and the entry in /"
+        );
+        let dir = fs.inode(12).unwrap();
+        assert!(dir.is_dir());
+        assert_eq!(
+            (dir.mode, dir.links_count, dir.size, dir.blocks),
+            (0x41ED, 2, 1024, 2)
+        );
+        assert!(dir.block[1..].iter().all(|&b| b == 0));
+        assert_eq!(
+            dir_block(&fs, dir.block[0]),
+            vec![
+                (".".to_string(), 12, 2, 12),
+                ("..".to_string(), ROOT_INO, 2, 1012),
+            ]
+        );
+        assert_eq!(fs.inode(ROOT_INO).unwrap().links_count, 4);
+        let root_entries = dir_block(&fs, fs.inode(ROOT_INO).unwrap().block[0]);
+        assert_eq!(
+            root_entries.last().unwrap(),
+            &("dir".to_string(), 12, 2, 980)
+        );
+        assert_eq!(
+            counters(&fs),
+            (16_233, 1_012, vec![(8_110, 500, 3), (8_123, 512, 0)])
+        );
+        fs.create_dir("/dir/sub").unwrap();
+        assert_eq!(fs.inode(12).unwrap().links_count, 3);
+        assert_eq!(fs.inode(ROOT_INO).unwrap().links_count, 4);
+        let sub = fs.inode(13).unwrap();
+        assert_eq!(sub.links_count, 2);
+        assert_eq!(
+            dir_block(&fs, sub.block[0])[1],
+            ("..".to_string(), 12, 2, 1012)
+        );
+        assert_eq!(
+            counters(&fs),
+            (16_232, 1_011, vec![(8_109, 499, 4), (8_123, 512, 0)])
+        );
+        let info = fs.stat("/dir").unwrap();
+        assert!(info.is_dir);
+        assert_eq!(info.size, 1024);
+        assert_eq!(names(&fs, "/dir"), ["sub"]);
+        assert!(names(&fs, "/dir/sub").is_empty());
+        fs.create_file("/dir/sub/deep.txt", b"deep").unwrap();
+        assert_eq!(fs.read_file("/dir/sub/deep.txt").unwrap(), b"deep");
+    }
+
+    #[test]
+    fn a_directory_grows_a_block_when_its_blocks_are_full() {
+        let mut fs = default_fs();
+        fs.create_dir("/names").unwrap();
+        // 27-byte names: 36-byte entries, 27 fit after . and .., 28 in a fresh block.
+        let entries: Vec<String> = (0..60)
+            .map(|i| format!("entry-with-a-longer-name-{i:02}"))
+            .collect();
+        let mut grew = Vec::new();
+        for (i, name) in entries.iter().enumerate() {
+            let image = (i == 27 || i == 55).then(|| fs.disk().as_bytes().to_vec());
+            let rec = fs.create_file(&format!("/names/{name}"), b"").unwrap();
+            if count(&rec, "blocks_allocated") > 0 {
+                grew.push(i);
+            }
+            if let Some(image) = image {
+                assert!(
+                    rewind(fs.disk().as_bytes(), &rec) == image,
+                    "growth by entry {i} does not rewind"
+                );
+            }
+        }
+        assert_eq!(grew, [27, 55]);
+        let dir = fs.inode(12).unwrap();
+        assert_eq!((dir.size, dir.blocks), (3 * 1024, 6));
+        assert!(dir.block[..3].iter().all(|&b| b != 0));
+        assert_eq!(dir.block[3], 0);
+        assert_eq!(dir_block(&fs, dir.block[0]).len(), 2 + 27);
+        assert_eq!(dir_block(&fs, dir.block[1]).len(), 28);
+        assert_eq!(dir_block(&fs, dir.block[2]).len(), 5);
+        assert_eq!(names(&fs, "/names"), entries);
+        assert_eq!(fs.stat("/names").unwrap().size, 3 * 1024);
+        assert_eq!(
+            counters(&fs),
+            (
+                16_234 - 3,
+                1_013 - 61,
+                vec![(8_111 - 3, 501 - 61, 3), (8_123, 512, 0)]
+            )
+        );
+    }
+
+    #[test]
+    fn inodes_follow_the_parent_group_and_blocks_follow_the_inode_group() {
+        let mut fs = small_groups_disk();
+        assert_eq!(fs.geometry().groups, 2);
+        assert_eq!(
+            counters(&fs),
+            (16_358, 21, vec![(8_173, 5, 2), (8_185, 16, 0)])
+        );
+        // Group 0 has inodes 12..=16 free; five files in / take them all.
+        for i in 0..5 {
+            fs.create_file(&format!("/f{i}"), b"").unwrap();
+        }
+        assert_eq!(counters(&fs).2[0], (8_173, 0, 2));
+        // The goal group (the root's, 0) is full, so /dir takes group 1's first inode.
+        fs.create_dir("/dir").unwrap();
+        let geo = fs.geometry().clone();
+        let first = geo.group(1).first_data;
+        assert_eq!(geo.group_of_inode(17), 1);
+        let dir = fs.inode(17).unwrap();
+        assert!(dir.is_dir());
+        assert_eq!(dir.block[0], first);
+        // Under /dir: the inode from the parent's group 1, the blocks from the inode's group 1.
+        let inner = pattern(3000, 3);
+        fs.create_file("/dir/inner.bin", &inner).unwrap();
+        assert_eq!(geo.group_of_inode(18), 1);
+        let ino = fs.inode(18).unwrap();
+        assert_eq!(&ino.block[..3], &[first + 1, first + 2, first + 3]);
+        assert!(ino.block[..3].iter().all(|&b| geo.group_of_block(b) == 1));
+        assert_eq!(fs.read_file("/dir/inner.bin").unwrap(), inner);
+        // In / after group 0 ran out: group 1's next inode, and its block
+        // follows the inode's group, not the parent's.
+        fs.create_file("/late.txt", b"late").unwrap();
+        assert_eq!(geo.group_of_inode(19), 1);
+        assert_eq!(geo.group_of_block(fs.inode(19).unwrap().block[0]), 1);
+        assert_eq!(
+            counters(&fs),
+            (16_353, 13, vec![(8_173, 0, 2), (8_180, 13, 1)])
+        );
+    }
+
+    #[test]
+    fn disk_full_on_a_64_block_disk_leaves_the_disk_counters_and_history_as_they_were() {
+        let mut fs = tiny_disk();
+        assert_eq!(fs.geometry().groups, 1);
+        assert_eq!(counters(&fs), (44, 5, vec![(44, 5, 2)]));
+        // The count checks: these fail before the operation starts, so
+        // nothing is written. 44 data blocks also need a single-indirect
+        // block: 45 > 44.
+        let before = snapshot(&fs);
+        assert_eq!(
+            fs.create_file("/big", &pattern(44 * 1024, 4)).unwrap_err(),
+            Error::DiskFull
+        );
+        assert_eq!(snapshot(&fs), before);
+        // 43 data + 1 indirect fit exactly.
+        let big = pattern(43 * 1024, 4);
+        fs.create_file("/big", &big).unwrap();
+        assert_eq!(counters(&fs), (0, 4, vec![(0, 4, 2)]));
+        let before = snapshot(&fs);
+        assert_eq!(fs.create_file("/one", b"1").unwrap_err(), Error::DiskFull);
+        assert_eq!(fs.create_dir("/d").unwrap_err(), Error::DiskFull);
+        assert_eq!(snapshot(&fs), before);
+        // Empty files need only an inode and room in the root block.
+        for i in 0..3 {
+            fs.create_file(&format!("/{}{i}", "n".repeat(254)), b"")
+                .unwrap();
+        }
+        // Directory growth: the root block has 176 bytes left and one inode
+        // is free; a 200-byte name needs 208, so the directory must grow and
+        // no block is free. The counts pass (the file needs no block), so the
+        // operation runs: the inode and its bytes are written, then
+        // `dir_insert`'s `DiskFull` rolls the disk back and restores the
+        // cached counters, leaving disk, counters and history as before.
+        let before = snapshot(&fs);
+        assert_eq!(
+            fs.create_file(&format!("/{}", "m".repeat(200)), b"")
+                .unwrap_err(),
+            Error::DiskFull
+        );
+        assert_eq!(snapshot(&fs), before);
+        // A short name still fits and takes the last inode.
+        fs.create_file("/last", b"").unwrap();
+        assert_eq!(counters(&fs), (0, 0, vec![(0, 0, 2)]));
+        let before = snapshot(&fs);
+        assert_eq!(fs.create_file("/more", b"").unwrap_err(), Error::DiskFull);
+        assert_eq!(fs.create_dir("/more").unwrap_err(), Error::DiskFull);
+        assert_eq!(snapshot(&fs), before);
+        assert_eq!(fs.read_file("/big").unwrap(), big);
+    }
+
+    #[test]
+    fn creates_work_through_the_trait_object() {
+        let mut fs: Box<dyn FileSystem> = Box::new(default_fs());
+        fs.create_dir("/d").unwrap();
+        fs.create_file("/d/t", b"trait").unwrap();
+        assert_eq!(fs.read_file("/d/t").unwrap(), b"trait");
+        assert_eq!(fs.history().len(), 2);
+        assert_eq!(fs.history()[1].op, "create_file /d/t");
+    }
+}

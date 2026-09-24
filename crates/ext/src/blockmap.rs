@@ -161,6 +161,91 @@ pub fn indirect_blocks(disk: &Disk, inode: &Inode) -> Vec<(u32, u8)> {
     out
 }
 
+/// Point `inode` at `data`: logical block `i` becomes `data[i]`. Sets the 12
+/// direct pointers; allocates from `goal_group`, in one `alloc_blocks` call,
+/// each single-indirect, double-indirect, and second-level block the list
+/// needs that the inode does not already hold; writes every pointer block in
+/// full (unused slots zero); sets `inode.blocks` to the data plus pointer
+/// blocks in 512-byte units. Pointer blocks the inode already holds are
+/// reused, so a file that grows keeps them; a caller that shrinks a file
+/// releases the ones it no longer needs first. `FileTooLarge` past
+/// `MAX_FILE_BLOCKS` and `DiskFull` from the allocator both return before
+/// anything is written or `inode` changes. Emits only the allocator's
+/// events; `ExtFs::map_file_blocks` reports the pointer blocks.
+pub fn map_blocks(
+    ctx: &mut crate::alloc::AllocCtx,
+    inode: &mut crate::inode::Inode,
+    data: &[u32],
+    goal_group: u32,
+) -> fs_core::Result<()> {
+    use crate::alloc::alloc_blocks;
+    use crate::inode::{DIND_BLOCK, DIRECT_BLOCKS, IND_BLOCK};
+    use crate::superblock::BLOCK_SIZE;
+    use fs_core::Error;
+
+    let n = u32::try_from(data.len()).map_err(|_| Error::FileTooLarge)?;
+    if n > MAX_FILE_BLOCKS {
+        return Err(Error::FileTooLarge);
+    }
+    let per_block = PTRS_PER_BLOCK as usize;
+    let single_end = DIRECT_BLOCKS + per_block;
+    let needs_single = data.len() > DIRECT_BLOCKS;
+    let children = data.len().saturating_sub(single_end).div_ceil(per_block);
+    let mut child_ptrs = [0u32; PTRS_PER_BLOCK as usize];
+    if inode.block[DIND_BLOCK] != 0 {
+        child_ptrs = read_pointers(ctx.disk, inode.block[DIND_BLOCK]);
+    }
+    let new_single = needs_single && inode.block[IND_BLOCK] == 0;
+    let new_double = children > 0 && inode.block[DIND_BLOCK] == 0;
+    let new_children = child_ptrs[..children].iter().filter(|&&p| p == 0).count();
+    let missing = u32::from(new_single) + u32::from(new_double) + new_children as u32;
+    let mut fresh = alloc_blocks(ctx, goal_group, missing)?.into_iter();
+    let mut next = || {
+        fresh
+            .next()
+            .expect("alloc_blocks returns exactly the count asked for")
+    };
+    if new_single {
+        inode.block[IND_BLOCK] = next();
+    }
+    if new_double {
+        inode.block[DIND_BLOCK] = next();
+    }
+    for p in child_ptrs[..children].iter_mut().filter(|p| **p == 0) {
+        *p = next();
+    }
+    for (i, slot) in inode.block[..DIRECT_BLOCKS].iter_mut().enumerate() {
+        *slot = data.get(i).copied().unwrap_or(0);
+    }
+    if needs_single {
+        let end = data.len().min(single_end);
+        write_pointer_block(ctx.disk, inode.block[IND_BLOCK], &data[DIRECT_BLOCKS..end]);
+    } else {
+        inode.block[IND_BLOCK] = 0;
+    }
+    if children > 0 {
+        for (k, &child) in child_ptrs[..children].iter().enumerate() {
+            let start = single_end + k * per_block;
+            let end = data.len().min(start + per_block);
+            write_pointer_block(ctx.disk, child, &data[start..end]);
+        }
+        write_pointer_block(ctx.disk, inode.block[DIND_BLOCK], &child_ptrs[..children]);
+    } else {
+        inode.block[DIND_BLOCK] = 0;
+    }
+    inode.blocks = (n + indirect_blocks_needed(n)) * (BLOCK_SIZE / 512);
+    Ok(())
+}
+
+/// One pointer block: `pointers` little-endian from byte 0, zeros after.
+fn write_pointer_block(disk: &mut fs_core::Disk, block: u32, pointers: &[u32]) {
+    let mut bytes = [0u8; 1024];
+    for (chunk, p) in bytes.chunks_exact_mut(4).zip(pointers) {
+        chunk.copy_from_slice(&p.to_le_bytes());
+    }
+    disk.write(block as usize * 1024, &bytes);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

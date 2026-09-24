@@ -2,6 +2,7 @@
 //! on-disk codecs live here; `ExtFs`, the filesystem itself, joins them in
 //! `fs.rs`.
 
+mod alloc;
 pub mod bitmap;
 pub mod blockmap;
 pub mod dir;

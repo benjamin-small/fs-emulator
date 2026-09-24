@@ -521,8 +521,8 @@ impl ExtFs {
         Err(Error::Unsupported(MUTATIONS_PENDING.into()))
     }
 
-    pub fn create_file(&mut self, path: &str, _data: &[u8]) -> Result<OpRecord> {
-        self.mutation_pending(path)
+    pub fn create_file(&mut self, path: &str, data: &[u8]) -> Result<OpRecord> {
+        self.create_file_op(path, data)
     }
 
     pub fn write_file(&mut self, path: &str, _data: &[u8]) -> Result<OpRecord> {
@@ -534,7 +534,7 @@ impl ExtFs {
     }
 
     pub fn create_dir(&mut self, path: &str) -> Result<OpRecord> {
-        self.mutation_pending(path)
+        self.create_dir_op(path)
     }
 
     pub fn remove_dir(&mut self, path: &str) -> Result<OpRecord> {
@@ -997,5 +997,332 @@ impl FileSystem for ExtFs {
     }
     fn history(&self) -> &[OpRecord] {
         ExtFs::history(self)
+    }
+}
+
+/// Allocation-backed operations (spec sections 4 and 5) and the helpers the
+/// other mutations share. A child module, so its imports are its own and
+/// `ExtFs`'s private fields and methods stay reachable.
+mod create {
+    use super::{stamp, ExtFs};
+    use crate::alloc::{self, AllocCtx};
+    use crate::blockmap;
+    use crate::dir::{self, DirEntry, FT_DIR, FT_FILE};
+    use crate::events::ExtEvent;
+    use crate::inode::{Inode, MODE_DIR};
+    use crate::superblock::BLOCK_SIZE;
+    use fs_core::{path, Error, OpRecord, Result};
+
+    const BS: usize = BLOCK_SIZE as usize;
+
+    /// `/` for the root, otherwise `/a/b`.
+    pub(super) fn display_path(parts: &[String]) -> String {
+        if parts.is_empty() {
+            "/".to_string()
+        } else {
+            format!("/{}", parts.join("/"))
+        }
+    }
+
+    /// What `check_new_entry` hands back: where the new entry goes.
+    struct NewEntry {
+        parent_parts: Vec<String>,
+        name: String,
+        parent_ino: u32,
+        parent: Inode,
+    }
+
+    impl ExtFs {
+        /// Borrow what an allocation touches.
+        pub(super) fn ctx(&mut self) -> AllocCtx<'_> {
+            AllocCtx {
+                disk: &mut self.disk,
+                sb: &mut self.sb,
+                gds: &mut self.gds,
+                geo: &self.geo,
+            }
+        }
+
+        /// `now` as ext's 32-bit seconds, saturating at both ends (Task 3's
+        /// `stamp`).
+        pub(super) fn now_stamp(&self) -> u32 {
+            stamp(self.now)
+        }
+
+        /// `run_op` for operations that change the cached superblock or
+        /// descriptors: `run_op` rolls the disk back on error, and this
+        /// restores `sb` and `gds` from before the operation, so the cache
+        /// matches the disk again. Every mutation runs through this, never
+        /// through bare `run_op`.
+        pub(super) fn run_mutation(
+            &mut self,
+            op: String,
+            body: impl FnOnce(&mut Self) -> Result<()>,
+        ) -> Result<OpRecord> {
+            let saved_sb = self.sb.clone();
+            let saved_gds = self.gds.clone();
+            let result = self.run_op(op, body);
+            if result.is_err() {
+                self.sb = saved_sb;
+                self.gds = saved_gds;
+            }
+            result
+        }
+
+        /// Encode `inode` into its 128-byte slot and report `InodeWritten`.
+        pub(super) fn write_inode(&mut self, ino: u32, inode: &Inode, path: &str) {
+            let (block, offset) = self.geo.inode_location(ino);
+            let start = block as usize * BS + offset;
+            let mut bytes = [0u8; Inode::SIZE];
+            inode.encode(&mut bytes);
+            self.disk.write(start, &bytes);
+            self.disk.event(Box::new(ExtEvent::InodeWritten {
+                inode: ino,
+                path: path.to_string(),
+                range: start..start + Inode::SIZE,
+            }));
+        }
+
+        /// `blockmap::map_blocks` with the inode's own group as the goal,
+        /// then one `IndirectWritten` per pointer block the inode holds (each
+        /// was written in full by the mapping). Set `inode.size` first.
+        pub(super) fn map_file_blocks(
+            &mut self,
+            ino: u32,
+            inode: &mut Inode,
+            data: &[u32],
+        ) -> Result<()> {
+            let goal = self.geo.group_of_inode(ino);
+            blockmap::map_blocks(&mut self.ctx(), inode, data, goal)?;
+            for (block, level) in blockmap::indirect_blocks(&self.disk, inode) {
+                let start = block as usize * BS;
+                self.disk.event(Box::new(ExtEvent::IndirectWritten {
+                    inode: ino,
+                    level,
+                    block,
+                    range: start..start + BS,
+                }));
+            }
+            Ok(())
+        }
+
+        /// Write `data` into `blocks` (logical order, exactly
+        /// `blocks_needed(data.len())` of them), zero-filling the last
+        /// block's tail; one `DataWritten` per contiguous run.
+        pub(super) fn write_data(&mut self, ino: u32, blocks: &[u32], data: &[u8]) {
+            for (index, run) in alloc::contiguous_runs(blocks) {
+                let block = blocks[index];
+                let start = block as usize * BS;
+                let span = run * BS;
+                let from = index * BS;
+                let chunk = &data[from..(from + span).min(data.len())];
+                self.disk.write(start, chunk);
+                if chunk.len() < span {
+                    self.disk.fill(start + chunk.len(), span - chunk.len(), 0);
+                }
+                self.disk.event(Box::new(ExtEvent::DataWritten {
+                    inode: ino,
+                    bytes: chunk.len(),
+                    block,
+                    range: start..start + span,
+                }));
+            }
+        }
+
+        /// Insert `name` -> `ino` into directory `dir_ino` (spec section 4,
+        /// Directories): split the first entry whose slack fits the new
+        /// entry; when no block has room, allocate one goal-based (the
+        /// directory's group) holding the entry with `rec_len` spanning it.
+        /// Updates `dir_inode` in memory (`mtime`, `ctime`; `size`, `blocks`
+        /// and pointers when it grows); the caller writes it with
+        /// `write_inode`, so `create_dir` writes the parent once.
+        pub(super) fn dir_insert(
+            &mut self,
+            dir_ino: u32,
+            dir_inode: &mut Inode,
+            name: &str,
+            ino: u32,
+            file_type: u8,
+        ) -> Result<()> {
+            let now = self.now_stamp();
+            let bytes = name.as_bytes();
+            let mut entry = DirEntry {
+                inode: ino,
+                rec_len: 0,
+                name_len: bytes.len() as u8,
+                file_type,
+                name: bytes.to_vec(),
+            };
+            let need = usize::from(dir::record_len(bytes.len()));
+            let blocks = blockmap::file_blocks(&self.disk, dir_inode);
+            let mut slot = None;
+            'scan: for &block in &blocks {
+                let base = block as usize * BS;
+                let entries = dir::entries_in_block(self.disk.read(base, BS))?;
+                for (offset, existing) in entries {
+                    let used = if existing.inode == 0 {
+                        0
+                    } else {
+                        usize::from(existing.actual_len())
+                    };
+                    let rec_len = usize::from(existing.rec_len);
+                    if rec_len.saturating_sub(used) >= need {
+                        if used > 0 {
+                            // Shrink the entry to its own length; the rest becomes ours.
+                            self.disk
+                                .write(base + offset + 4, &(used as u16).to_le_bytes());
+                        }
+                        slot = Some((block, offset + used, (rec_len - used) as u16));
+                        break 'scan;
+                    }
+                }
+            }
+            let (block, offset, fresh) = match slot {
+                Some((block, offset, rec_len)) => {
+                    entry.rec_len = rec_len;
+                    (block, offset, false)
+                }
+                None => {
+                    let goal = self.geo.group_of_inode(dir_ino);
+                    let new_block = alloc::alloc_blocks(&mut self.ctx(), goal, 1)?[0];
+                    let mut all = blocks;
+                    all.push(new_block);
+                    dir_inode.size += BLOCK_SIZE;
+                    self.map_file_blocks(dir_ino, dir_inode, &all)?;
+                    entry.rec_len = BLOCK_SIZE as u16;
+                    (new_block, 0, true)
+                }
+            };
+            let mut scratch = [0u8; BS];
+            entry.encode(&mut scratch);
+            let len = usize::from(entry.actual_len());
+            let base = block as usize * BS;
+            if fresh {
+                self.disk.write(base, &scratch);
+            } else {
+                self.disk.write(base + offset, &scratch[..len]);
+            }
+            let start = base + offset;
+            self.disk.event(Box::new(ExtEvent::DirEntryWritten {
+                dir_inode: dir_ino,
+                name: name.to_string(),
+                block,
+                range: start..start + len,
+            }));
+            dir_inode.mtime = now;
+            dir_inode.ctime = now;
+            Ok(())
+        }
+
+        /// The checks both creates share, in the spec's order: the
+        /// corruption gate, `InvalidPath`, `InvalidName`, `NotFound` or
+        /// `NotADirectory` on the parent, `AlreadyExists`.
+        fn check_new_entry(&self, path: &str) -> Result<NewEntry> {
+            self.ensure_mounted()?;
+            let (parent_parts, name) = path::split_parent(path)?;
+            dir::validate_name(&name)?;
+            let (parent_ino, parent, _) = self.resolve_parent(path)?;
+            if !parent.is_dir() {
+                return Err(Error::NotADirectory);
+            }
+            match self.resolve(path) {
+                Ok(_) => Err(Error::AlreadyExists),
+                Err(Error::NotFound) => Ok(NewEntry {
+                    parent_parts,
+                    name,
+                    parent_ino,
+                    parent,
+                }),
+                Err(e) => Err(e),
+            }
+        }
+
+        /// `create_file` (spec section 4): then `FileTooLarge`, then
+        /// `DiskFull` from the counts before anything is written. A parent
+        /// that needs a new block for the entry is not counted here; that
+        /// `DiskFull` comes from `dir_insert` inside the operation and is
+        /// rolled back (spec section 5).
+        pub(super) fn create_file_op(&mut self, path: &str, data: &[u8]) -> Result<OpRecord> {
+            let NewEntry {
+                parent_parts,
+                name,
+                parent_ino,
+                mut parent,
+            } = self.check_new_entry(path)?;
+            let max = u64::from(blockmap::MAX_FILE_BLOCKS) * u64::from(BLOCK_SIZE);
+            if data.len() as u64 > max {
+                return Err(Error::FileTooLarge);
+            }
+            let data_blocks = blockmap::blocks_needed(data.len() as u64);
+            let needed = data_blocks + blockmap::indirect_blocks_needed(data_blocks);
+            if self.sb.free_inodes_count == 0 || self.sb.free_blocks_count < needed {
+                return Err(Error::DiskFull);
+            }
+            let parent_path = display_path(&parent_parts);
+            let own_path = display_path(&[parent_parts, vec![name.clone()]].concat());
+            let now = self.now_stamp();
+            let goal = self.geo.group_of_inode(parent_ino);
+            self.run_mutation(format!("create_file {path}"), |fs| {
+                fs.sb.wtime = now;
+                let ino = alloc::alloc_inode(&mut fs.ctx(), goal, false)?;
+                let group = fs.geo.group_of_inode(ino);
+                let blocks = alloc::alloc_blocks(&mut fs.ctx(), group, data_blocks)?;
+                let mut inode = Inode::new_file(now);
+                inode.size = data.len() as u32;
+                fs.map_file_blocks(ino, &mut inode, &blocks)?;
+                fs.write_data(ino, &blocks, data);
+                fs.write_inode(ino, &inode, &own_path);
+                fs.dir_insert(parent_ino, &mut parent, &name, ino, FT_FILE)?;
+                fs.write_inode(parent_ino, &parent, &parent_path);
+                Ok(())
+            })
+        }
+
+        /// `create_dir` (spec section 4): one block holding `.` and `..`,
+        /// links 2, the parent's links and the group's used directories up
+        /// by one. `DiskFull` from the counts (one inode, one block) before
+        /// anything is written; a parent that needs a new block fails
+        /// inside the operation and is rolled back, as in `create_file_op`.
+        pub(super) fn create_dir_op(&mut self, path: &str) -> Result<OpRecord> {
+            let NewEntry {
+                parent_parts,
+                name,
+                parent_ino,
+                mut parent,
+            } = self.check_new_entry(path)?;
+            if self.sb.free_inodes_count == 0 || self.sb.free_blocks_count == 0 {
+                return Err(Error::DiskFull);
+            }
+            let parent_path = display_path(&parent_parts);
+            let own_path = display_path(&[parent_parts, vec![name.clone()]].concat());
+            let now = self.now_stamp();
+            let goal = self.geo.group_of_inode(parent_ino);
+            self.run_mutation(format!("create_dir {path}"), |fs| {
+                fs.sb.wtime = now;
+                let ino = alloc::alloc_inode(&mut fs.ctx(), goal, true)?;
+                let group = fs.geo.group_of_inode(ino);
+                let block = alloc::alloc_blocks(&mut fs.ctx(), group, 1)?[0];
+                let mut inode = Inode::new_dir(now, MODE_DIR);
+                inode.links_count = 2;
+                inode.size = BLOCK_SIZE;
+                fs.map_file_blocks(ino, &mut inode, &[block])?;
+                let start = block as usize * BS;
+                fs.disk
+                    .write(start, &dir::dot_entries_block(ino, parent_ino));
+                for (dot, offset) in [(".", 0), ("..", 12)] {
+                    fs.disk.event(Box::new(ExtEvent::DirEntryWritten {
+                        dir_inode: ino,
+                        name: dot.to_string(),
+                        block,
+                        range: start + offset..start + offset + 12,
+                    }));
+                }
+                fs.write_inode(ino, &inode, &own_path);
+                parent.links_count = parent.links_count.saturating_add(1);
+                fs.dir_insert(parent_ino, &mut parent, &name, ino, FT_DIR)?;
+                fs.write_inode(parent_ino, &parent, &parent_path);
+                Ok(())
+            })
+        }
     }
 }

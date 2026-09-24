@@ -40,7 +40,6 @@ fn tool(name: &str) -> Option<PathBuf> {
 
 /// `len` bytes of the repeating pattern `i % 251`, for file contents the
 /// mutation oracle tests of Tasks 4 and 5 write.
-#[allow(dead_code)] // no test in this task writes a file
 fn pattern(len: usize) -> Vec<u8> {
     (0..len).map(|i| (i % 251) as u8).collect()
 }
@@ -143,5 +142,61 @@ fn dumpe2fs_reports_the_geometry_the_emulator_wrote() {
             Some(want),
             "dumpe2fs field {key:?}"
         );
+    }
+}
+
+/// Task 4: images after creates stay clean under `e2fsck -fn`.
+mod after_creates {
+    use super::{assert_clean, pattern};
+    use ext::{ExtFormatOptions, ExtFs};
+
+    #[test]
+    fn files_and_directories_on_the_default_disk_are_clean() {
+        let mut fs = ExtFs::format(ExtFormatOptions::default()).unwrap();
+        fs.create_file("/hello.txt", &pattern(100)).unwrap();
+        fs.create_file("/mid.bin", &pattern(20 * 1024)).unwrap();
+        fs.create_file("/big.bin", &pattern(300 * 1024)).unwrap();
+        fs.create_dir("/dir").unwrap();
+        fs.create_file("/dir/inner.txt", b"inner").unwrap();
+        fs.create_dir("/dir/sub").unwrap();
+        fs.create_file("/empty", b"").unwrap();
+        fs.create_dir("/names").unwrap();
+        for i in 0..60 {
+            fs.create_file(&format!("/names/entry-with-a-longer-name-{i:02}"), b"")
+                .unwrap();
+        }
+        assert_clean(&fs, "creates-default");
+    }
+
+    #[test]
+    fn a_directory_placed_in_group_1_is_clean() {
+        let mut fs = ExtFs::format(ExtFormatOptions {
+            inodes_per_group: Some(16),
+            ..Default::default()
+        })
+        .unwrap();
+        for i in 0..5 {
+            fs.create_file(&format!("/f{i}"), b"").unwrap();
+        }
+        fs.create_dir("/dir").unwrap();
+        fs.create_file("/dir/inner.bin", &pattern(3000)).unwrap();
+        fs.create_file("/late.txt", b"late").unwrap();
+        assert_clean(&fs, "creates-group-1");
+    }
+
+    #[test]
+    fn a_64_block_disk_filled_to_the_last_block_and_inode_is_clean() {
+        let mut fs = ExtFs::format(ExtFormatOptions {
+            total_blocks: 64,
+            ..Default::default()
+        })
+        .unwrap();
+        fs.create_file("/big", &pattern(43 * 1024)).unwrap();
+        for i in 0..3 {
+            fs.create_file(&format!("/{}{i}", "n".repeat(254)), b"")
+                .unwrap();
+        }
+        fs.create_file("/last", b"").unwrap();
+        assert_clean(&fs, "creates-tiny-full");
     }
 }
