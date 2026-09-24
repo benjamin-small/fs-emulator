@@ -9,9 +9,9 @@ images mount on macOS and Linux, and every operation records exactly which
 bytes changed and why. A browser UI built on those records lets you watch a
 filesystem lay itself out one operation at a time.
 
-FAT16 is implemented today. FAT32 comes next in the same crate, then ext2 and
-ext3 in a new one, all on the same filesystem-agnostic core and the same UI.
-See [docs/ROADMAP.md](docs/ROADMAP.md).
+FAT16 and ext2 are implemented today. FAT32 comes next in the FAT crate and
+ext3 in the ext crate, all on the same filesystem-agnostic core and the same
+UI. See [docs/ROADMAP.md](docs/ROADMAP.md).
 
 Try it: https://benjamin-small.github.io/fs-emulator/
 
@@ -42,8 +42,9 @@ change shape.
 |---|---|
 | FAT16 (`crates/fat`) | Complete: format, create, overwrite, delete, directories, LFN, mountable images, per-sector annotations |
 | FAT32 (`crates/fat`) | Planned. Cluster width, FAT entry codec, and `FatVariant` are already dispatched; see the roadmap for what is not |
-| ext2, ext3 (`crates/ext`) | Implemented: ext2, and ext3 with its journal, crash points, and recovery; the explorer does not load ext volumes yet |
-| `crates/wasm` | Complete for FAT16; FAT-only methods throw `NotFat` on other volumes |
+| ext2 (`crates/ext`) | Complete: revision 1, 1 KiB blocks, direct/single/double-indirect allocation, directories, mounting and e2fsprogs validation |
+| ext3 (`crates/ext`) | Complete: JBD2 journal on inode 8, ordered and full-data modes, armed crash points, and recovery that matches e2fsck; the explorer does not load ext volumes yet |
+| `crates/wasm` | Complete for FAT16, ext2, and ext3; family-specific methods reject the wrong filesystem |
 | `web/ui` | Complete for FAT16; the dump, ribbon, timeline, strings, and the terminal drawer (`/mnt`, `/dev/hda`) are region-driven and carry over |
 
 ## Crates
@@ -56,6 +57,9 @@ change shape.
 - `fat`: the FAT family. FAT16 today (`FatFs`) with FAT32's seams designed in,
   plus FAT-specific inspection: `fat_entries`, `cluster_chain`,
   `raw_dir_entries`, `cluster_owners`, `annotate_sector`.
+- `ext`: the ext family. ext2 today (`ExtFs`) with revision-1 metadata,
+  direct and indirect block mapping, external e2fsprogs validation, and ext3
+  journal seams designed in.
 - `wasm` (`fs-emulator-wasm`): the wasm-bindgen `Volume` class and TypeScript
   types for browsers. See `crates/wasm/README.md`.
 
@@ -97,6 +101,10 @@ cd web/ui && pnpm install && pnpm dev       # or web/demo
 
 ## Development
 
+The supported toolchain is Rust 1.87 or newer, Node.js 22, pnpm 10, and
+wasm-pack 0.15. Install `e2fsprogs` to run the external ext2 compatibility
+checks; CI treats those tools as required.
+
 ```
 cargo test --workspace
 cargo test -p fat --test mount_macos -- --ignored   # mounts the image with hdiutil
@@ -104,6 +112,10 @@ cargo build --workspace --target wasm32-unknown-unknown
 wasm-pack test --node crates/wasm
 cd web/ui && pnpm test && pnpm build
 ```
+
+See [docs/testing.md](docs/testing.md) for the measured coverage and test
+boundaries, and [docs/configuration.md](docs/configuration.md) for the two
+optional build/test environment variables.
 
 CI (`.github/workflows/ci.yml`) runs fmt, clippy with warnings denied, the
 Rust tests, the wasm32 build, the wasm-pack tests, and the demo and UI builds
@@ -113,6 +125,10 @@ on every pull request.
 
 - [docs/ROADMAP.md](docs/ROADMAP.md): what comes next, what was deliberately
   deferred, and the conventions for adding a filesystem.
+- [docs/testing.md](docs/testing.md): coverage measurements, test scope, and
+  commands for reproducing the report.
+- [docs/configuration.md](docs/configuration.md): optional build and test
+  environment variables; the browser application has no runtime secrets.
 - `docs/superpowers/specs/`: the design documents, one per feature. They are
   the binding description of how each piece works:
   `2026-09-21-fat16-emulator-design.md` (core and FAT16, including the FAT32

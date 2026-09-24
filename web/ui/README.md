@@ -25,6 +25,7 @@ Then, from `web/ui`:
 pnpm install
 pnpm dev       # dev server with HMR
 pnpm test      # vitest over src/core, src/fs and src/shell (loads the real wasm package)
+pnpm coverage  # the same suite with a local V8 coverage report
 pnpm build     # svelte-check, then vite build (the CI gate)
 pnpm preview   # serve the production build
 ```
