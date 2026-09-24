@@ -170,9 +170,11 @@ While `needsRecovery()` is true the path mutations throw `NeedsRecovery`;
 reads, `layout`, `annotateSector`, and `writeRaw` see the raw on-disk state.
 `layout()` carries a region of kind `journal` named `journal` over the
 journal's data blocks only: its indirect blocks stay in the data region,
-which is split around the journal, and a foreign image whose journal is
-fragmented gets one `journal (part k)` region per run, so match on the kind,
-not the name. `annotateSector` of a journal block explains it (its fields,
+which is split around the journal, and whenever the journal does not fit
+one group's data area — as on our own 262,144-block format, and for
+foreign images — it gets one `journal (part k)` region per run instead, so
+match on the kind, not the name. `annotateSector` of a journal block
+explains it (its fields,
 its tags, or the block it copies). A transaction that would tag more than
 `maxTransaction` blocks throws `Unsupported` and changes nothing: on the
 default disk only data-mode writes above roughly 250 KiB reach it.

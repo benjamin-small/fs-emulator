@@ -943,7 +943,7 @@ impl ExtFs {
                 });
             }
         };
-        let found = recovery::scan(&self.disk, &journal)?;
+        let found = recovery::scan(&self.disk, &journal, self.geo.total_blocks)?;
         let mut next_sequence = journal.sequence;
         let record = self.run_op("recover".into(), |fs| {
             next_sequence = recovery::replay(&mut fs.disk, &journal, &found)?;
@@ -1054,6 +1054,9 @@ const SUPERBLOCK_FIELDS: &[(usize, usize, &str, Shown)] = &[
     (200, 4, "algorithm bitmap", Shown::Dec),
     (204, 1, "preallocate blocks", Shown::Dec),
     (205, 1, "preallocate directory blocks", Shown::Dec),
+    (0xE0, 4, "journal inode", Shown::Dec),
+    (0xFD, 1, "journal backup type", Shown::Dec),
+    (0x100, 4, "default mount options", Shown::Hex),
 ];
 
 /// One inode slot in words: mode, size, links, blocks, the first direct
@@ -1160,7 +1163,20 @@ impl ExtFs {
                 note(offset..offset + len, label, value)
             })
             .collect();
-        notes.push(note(206..BS, "reserved", "unused"));
+        // The unlabelled bytes between and after `SUPERBLOCK_FIELDS`
+        // (`SUPERBLOCK_FIELDS` is in offset order): most of it is genuinely
+        // reserved, but this also covers ext3 fields the inspector does not
+        // itemize yet (the journal UUID, hash seed, `s_jnl_blocks`, …).
+        let mut at = 0;
+        for &(offset, len, ..) in SUPERBLOCK_FIELDS {
+            if at < offset {
+                notes.push(note(at..offset, "reserved", "unused"));
+            }
+            at = offset + len;
+        }
+        if at < BS {
+            notes.push(note(at..BS, "reserved", "unused"));
+        }
         notes
     }
 

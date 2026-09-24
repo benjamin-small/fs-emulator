@@ -299,6 +299,32 @@ mod format {
         assert_eq!(info.maxlen, 8_192);
         // mke2fs's goal: the group of block 131,071, group 15.
         assert_eq!(fs.geometry().group_of_block(info.first_block), 15);
+
+        // The 8,192-block journal does not fit group 15's 8,126-block data
+        // area (spec section 7), so it splits into two runs: part 1 fills
+        // the rest of group 15's data area, part 2 is the first 66 blocks
+        // of group 16's data area.
+        let layout = fs.layout();
+        let find = |name: &str| layout.iter().find(|r| r.name == name).unwrap();
+        let part1 = find("journal (part 1)");
+        assert_eq!(part1.sectors, 122_947..131_073);
+        assert_eq!(part1.kind, RegionKind::Journal);
+        let part2 = find("journal (part 2)");
+        assert_eq!(part2.sectors, 131_139..131_205);
+        assert_eq!(part2.kind, RegionKind::Journal);
+
+        // The journal inode's own indirect (pointer) blocks map the
+        // journal's data blocks but are not journal payload themselves, so
+        // `layout` leaves them in the ordinary data region that follows.
+        let inode = fs.inode(8).unwrap();
+        let (first_indirect, _) = blockmap::indirect_blocks(fs.disk(), &inode)[0];
+        assert_eq!(first_indirect, 131_205);
+        let holder = layout
+            .iter()
+            .find(|r| r.sectors.contains(&u64::from(first_indirect)))
+            .unwrap();
+        assert_eq!(holder.name, "data (group 16)");
+        assert_eq!(holder.kind, RegionKind::Data);
     }
 
     #[test]
@@ -1824,7 +1850,7 @@ mod recovery {
         assert_eq!(
             texts(&rec),
             vec![
-                "journal is clean; nothing to replay",
+                "journal holds no transactions; nothing to replay",
                 "journal emptied; next transaction 2",
                 "cleared needs_recovery in the superblock",
             ]
@@ -2061,7 +2087,7 @@ mod recovery {
         assert_eq!(
             texts(&rec),
             vec![
-                "journal is clean; nothing to replay",
+                "journal holds no transactions; nothing to replay",
                 "journal emptied; next transaction 0",
                 "cleared needs_recovery in the superblock",
             ]
@@ -2317,6 +2343,26 @@ mod inspect {
         fields[5].1 = "2";
         fields[6].1 = "10";
         assert_eq!(notes(&fs, 82), want(&fields));
+    }
+
+    #[test]
+    fn the_ext_superblock_annotates_the_journal_fields() {
+        let has = |list: &[(String, String, Range<usize>)], label: &str, value: &str| {
+            assert!(
+                list.iter().any(|(l, v, _)| l == label && v == value),
+                "no {label:?} = {value:?} in {list:#?}"
+            );
+        };
+        for (mode, default_mount_opts) in [
+            (JournalMode::Ordered, "0x00000040"),
+            (JournalMode::Data, "0x00000020"),
+        ] {
+            let fs = ext3(mode);
+            let list = notes(&fs, 1);
+            has(&list, "journal inode", "8");
+            has(&list, "journal backup type", "1");
+            has(&list, "default mount options", default_mount_opts);
+        }
     }
 
     #[test]

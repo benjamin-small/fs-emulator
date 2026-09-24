@@ -169,13 +169,20 @@ pub(crate) struct ScannedTransaction {
 /// The transactions `LogWalk` finds from `s_start` (spec section 6, step
 /// 2): a descriptor's tags join the transaction of its sequence, and a
 /// commit closes it. Nothing is found when `s_start` is 0. `Unsupported`
-/// for a revoke block; `CorruptImage` for tags that do not parse, a tag
-/// outside the volume (the disk holds exactly the volume's blocks), a
+/// for a revoke block; `CorruptImage` for tags that do not parse, a tag at
+/// or beyond `total_blocks` (the caller's `geo.total_blocks`, not
+/// `disk.sector_count()`: a raw write can shrink `s_blocks_count` below
+/// what the disk holds, and `JournalState::open` already checks journal
+/// blocks against `geo.total_blocks`, so this must agree with it), a
 /// descriptor whose copies would run past the end of the log more than
 /// once, or a walk that comes around the ring without ending.
-pub(crate) fn scan(disk: &Disk, journal: &JournalState) -> Result<Vec<ScannedTransaction>> {
+pub(crate) fn scan(
+    disk: &Disk,
+    journal: &JournalState,
+    total_blocks: u32,
+) -> Result<Vec<ScannedTransaction>> {
     let jsb = journal.superblock(disk)?;
-    let volume = disk.sector_count();
+    let volume = u64::from(total_blocks);
     let lap = journal.maxlen - journal.first;
     let mut found: Vec<ScannedTransaction> = Vec::new();
     let mut walk = LogWalk::new(disk, journal, jsb.start, jsb.sequence);
@@ -405,7 +412,7 @@ mod tests {
         let (mut disk, j) = journal(16, 5, 0);
         // A descriptor at the first log block is ignored while s_start is 0.
         put(&mut disk, &j, 1, &descriptor(5, &[40]));
-        assert_eq!(scan(&disk, &j).unwrap(), vec![]);
+        assert_eq!(scan(&disk, &j, 64).unwrap(), vec![]);
     }
 
     #[test]
@@ -424,7 +431,7 @@ mod tests {
         put(&mut disk, &j, 3, &encode_descriptor(5, &[7; 16], &tags));
         put(&mut disk, &j, 6, &encode_commit(5, 1));
         put(&mut disk, &j, 7, &descriptor(6, &[42]));
-        let found = scan(&disk, &j).unwrap();
+        let found = scan(&disk, &j, 64).unwrap();
         assert_eq!(found.len(), 2);
         assert_eq!((found[0].tid, found[0].descriptor_index), (5, 3));
         assert!(found[0].committed);
@@ -445,7 +452,7 @@ mod tests {
         put(&mut disk, &j, 2, &encode_commit(5, 1));
         put(&mut disk, &j, 3, &descriptor(6, &[42]));
         put(&mut disk, &j, 5, &encode_commit(6, 1));
-        let found = scan(&disk, &j).unwrap();
+        let found = scan(&disk, &j, 64).unwrap();
         assert_eq!(homes(&found[0]), vec![(15, 40), (1, 41)]);
         assert_eq!(homes(&found[1]), vec![(4, 42)]);
         assert!(found.iter().all(|t| t.committed));
@@ -457,7 +464,7 @@ mod tests {
         put(&mut disk, &j, 1, &descriptor(5, &[40]));
         put(&mut disk, &j, 3, &descriptor(5, &[41]));
         put(&mut disk, &j, 5, &encode_commit(5, 1));
-        let found = scan(&disk, &j).unwrap();
+        let found = scan(&disk, &j, 64).unwrap();
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].descriptor_index, 1);
         assert_eq!(homes(&found[0]), vec![(2, 40), (4, 41)]);
@@ -468,7 +475,7 @@ mod tests {
     fn a_commit_without_a_descriptor_is_an_empty_committed_transaction() {
         let (mut disk, j) = journal(16, 5, 1);
         put(&mut disk, &j, 1, &encode_commit(5, 1));
-        let found = scan(&disk, &j).unwrap();
+        let found = scan(&disk, &j, 64).unwrap();
         assert_eq!(
             found,
             vec![ScannedTransaction {
@@ -497,7 +504,7 @@ mod tests {
             put(&mut disk, &j, 1, &descriptor(5, &[40]));
             put(&mut disk, &j, 3, &encode_commit(5, 1));
             put(&mut disk, &j, 4, &end);
-            let found = scan(&disk, &j).unwrap();
+            let found = scan(&disk, &j, 64).unwrap();
             assert_eq!(found.len(), 1);
             assert!(found[0].committed);
         }
@@ -509,7 +516,7 @@ mod tests {
         put(&mut disk, &j, 1, &descriptor(5, &[40]));
         put(&mut disk, &j, 3, &header(BLOCKTYPE_REVOKE, 5));
         assert_eq!(
-            scan(&disk, &j),
+            scan(&disk, &j, 64),
             Err(Error::Unsupported("journal revoke records".into()))
         );
     }
@@ -519,9 +526,32 @@ mod tests {
         let (mut disk, j) = journal(16, 5, 1);
         put(&mut disk, &j, 1, &descriptor(5, &[40, 64]));
         assert_eq!(
-            scan(&disk, &j),
+            scan(&disk, &j, 64),
             Err(Error::CorruptImage(
                 "journal descriptor at journal block 1 tags block 64, outside the 64-block volume"
+                    .into()
+            ))
+        );
+    }
+
+    #[test]
+    fn scan_checks_tags_against_the_caller_s_volume_bound_not_the_disk_s() {
+        // Minor 4: after a raw write shrinks `s_blocks_count` and the
+        // corruption gate adopts it, `geo.total_blocks` is smaller than
+        // `disk.sector_count()` (64 in this fixture). `scan` must key off
+        // the bound its caller passes, so a tag at `total_blocks - 1` is
+        // still in the volume and one at `total_blocks` is not, even
+        // though both are well inside the disk.
+        let (mut disk, j) = journal(16, 5, 1);
+        put(&mut disk, &j, 1, &descriptor(5, &[39]));
+        assert_eq!(scan(&disk, &j, 40).unwrap().len(), 1);
+
+        let (mut disk, j) = journal(16, 5, 1);
+        put(&mut disk, &j, 1, &descriptor(5, &[40]));
+        assert_eq!(
+            scan(&disk, &j, 40),
+            Err(Error::CorruptImage(
+                "journal descriptor at journal block 1 tags block 40, outside the 40-block volume"
                     .into()
             ))
         );
@@ -534,7 +564,7 @@ mod tests {
         let (mut disk, j) = journal(8, 5, 7);
         put(&mut disk, &j, 7, &descriptor(5, &[40; 8]));
         assert_eq!(
-            scan(&disk, &j),
+            scan(&disk, &j, 64),
             Err(Error::CorruptImage(
                 "journal descriptor at journal block 7 tags 8 blocks, which run past the end \
                  of the 8-block log more than once"
@@ -550,7 +580,7 @@ mod tests {
         let (mut disk, j) = journal(8, 5, 1);
         put(&mut disk, &j, 1, &descriptor(5, &[40; 6]));
         assert_eq!(
-            scan(&disk, &j),
+            scan(&disk, &j, 64),
             Err(Error::CorruptImage(
                 "the journal log from journal block 1 runs more than once around the ring".into()
             ))
@@ -580,7 +610,7 @@ mod tests {
         put(&mut disk, &j, 4, &encode_commit(5, 1));
         put(&mut disk, &j, 5, &descriptor(6, &[42]));
         put(&mut disk, &j, 6, &[0xC1; 1024]);
-        let found = scan(&disk, &j).unwrap();
+        let found = scan(&disk, &j, 64).unwrap();
         disk.begin_op("recover");
         let next = replay(&mut disk, &j, &found).unwrap();
         let rec = disk.end_op();
@@ -634,7 +664,7 @@ mod tests {
         put(&mut disk, &j, 3, &encode_commit(u32::MAX, 1));
         put(&mut disk, &j, 4, &descriptor(0, &[41]));
         put(&mut disk, &j, 6, &encode_commit(0, 1));
-        let found = scan(&disk, &j).unwrap();
+        let found = scan(&disk, &j, 64).unwrap();
         assert_eq!(found.len(), 2);
         assert_eq!(found[0].tid, u32::MAX);
         assert!(found[0].committed);

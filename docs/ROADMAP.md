@@ -173,7 +173,11 @@ gives the `mke2fs -t ext3 -b 1024 -I 128 -O
 none,has_journal,filetype,sparse_super -J size=1` recipe for a loadable ext3
 image, checked by hand against the loader; the leading `none,` matters,
 since without it mke2fs adds `ext_attr`, `resize_inode`, `dir_index`, and
-`large_file`, which the loader refuses. The ignored ext3 mount test in
+`large_file`, which the loader refuses. `JournalState::open` does not yet
+reject a journal that overlaps group metadata or maps a block twice; a
+crafted foreign image would then have transactions write over metadata;
+slice 4, which loads foreign images, should add the check (`CorruptImage`,
+as e2fsck reports). The ignored ext3 mount test in
 `crates/ext/tests/mount_linux.rs`
 (`linux_replays_a_crashed_ext3_image_like_recover`) has not been run.
 

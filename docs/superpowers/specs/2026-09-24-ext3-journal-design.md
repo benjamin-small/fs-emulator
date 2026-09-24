@@ -396,7 +396,9 @@ is not subject to `arm_crash`. Steps:
    single event `RecoveryScanned { start: 0, sequence, committed: 0, tagged:
    0, range: 0..0 }` and return it (the terminal can say "journal is clean").
 2. Scan (jbd2's `PASS_SCAN`): `pos = s_start`, `expected = s_sequence`. If
-   `s_start == 0` the scan finds nothing. Otherwise loop: read journal index
+   `s_start == 0` the scan finds nothing (the Display text is "journal
+   holds no transactions; nothing to replay", distinct from step 1's
+   "journal is clean" since the flag was set). Otherwise loop: read journal index
    `pos`; stop when the magic is absent, the block type is not 1, 2, or 5,
    or the header sequence is not `expected`. Type 1: parse the tags
    (stopping at `LAST_TAG`; the uuid follows the first tag and any tag
@@ -459,9 +461,11 @@ before any write).
 - `layout()`: each maximal run of consecutive physical blocks among the
   journal's data blocks becomes a `Region { name: "journal", kind:
   RegionKind::Journal }` (`"journal (part k)"` when there is more than one
-  run, foreign images only), carved out of the data region it lies in, so
-  the group's data region splits around it. Journal indirect blocks stay in
-  the data region.
+  run, which happens whenever the journal does not fit one group's data
+  area — as on our own 262,144-block format, whose 8,192-block journal
+  splits across groups 15 and 16 — and for foreign images), carved out of
+  the data region it lies in, so the group's data region splits around it.
+  Journal indirect blocks stay in the data region.
 - `block_owners()`: the journal's data and indirect blocks are listed with
   `inode: 8`, `path: "<journal>"`, and roles `BlockRole::Journal` (new) for
   the data blocks and `Indirect` for the indirect blocks. Nothing else in

@@ -135,9 +135,12 @@ pub enum ExtEvent {
         phase: CrashPhase,
         range: Range<usize>,
     },
-    /// Recovery's scan: from journal index `start` (0: the journal is
-    /// clean), expecting `sequence`, found `committed` transactions tagging
-    /// `tagged` blocks.
+    /// Recovery's scan: from journal index `start` (0 with an empty
+    /// `range`: `needs_recovery` was already clear and the journal is
+    /// clean; 0 with a non-empty `range`: `needs_recovery` was set but the
+    /// journal superblock's own `s_start` is 0, so it holds no
+    /// transactions), expecting `sequence`, found `committed` transactions
+    /// tagging `tagged` blocks.
     RecoveryScanned {
         start: u32,
         sequence: u32,
@@ -291,10 +294,12 @@ impl fmt::Display for ExtEvent {
                 sequence,
                 committed,
                 tagged,
-                ..
+                range,
             } => {
-                if *start == 0 {
+                if range.start == range.end {
                     write!(f, "journal is clean; nothing to replay")
+                } else if *start == 0 {
+                    write!(f, "journal holds no transactions; nothing to replay")
                 } else {
                     write!(
                         f,
@@ -673,7 +678,7 @@ mod tests {
                     range: 84_016..84_024,
                 },
                 "recovery_scanned",
-                "journal is clean; nothing to replay",
+                "journal holds no transactions; nothing to replay",
             ),
             (
                 ExtEvent::RecoveryScanned {
