@@ -4,6 +4,9 @@
 //! passes, unless `CI` is set, where a missing tool fails the test.
 //! Locally: `brew install e2fsprogs` (keg-only; found under its sbin).
 
+mod common;
+
+use common::pattern;
 use ext::{ExtFormatOptions, ExtFs};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -36,12 +39,6 @@ fn tool(name: &str) -> Option<PathBuf> {
         println!("e2fsprogs not found; skipping");
     }
     found
-}
-
-/// `len` bytes of the repeating pattern `i % 251`, for file contents the
-/// mutation oracle tests of Tasks 4 and 5 write.
-fn pattern(len: usize) -> Vec<u8> {
-    (0..len).map(|i| (i % 251) as u8).collect()
 }
 
 /// Write the volume's image to a fresh file under the temp directory.
@@ -390,6 +387,199 @@ mod scripted_sequence {
             (Some(fs.stat("/big.bin").unwrap().size), Some(1)),
             "debugfs stat /big.bin:\n{}",
             super::both_streams(&big_stat)
+        );
+    }
+}
+
+/// ext3 Task 3: a fresh ext3 volume as dumpe2fs, debugfs, and e2fsck see it
+/// (ext3 spec section 10.3, first bullet).
+mod ext3_format {
+    use super::common::ext3;
+    use super::{assert_clean, both_streams, image_file, run, tool};
+    use ext::{ExtFormatOptions, ExtFs, JournalMode, JournalOptions};
+
+    /// `common::ext3` on a disk of `total_blocks` blocks instead of the
+    /// default 16,384, for the journal-size cases.
+    fn ext3_with_blocks(total_blocks: u32, mode: JournalMode) -> ExtFs {
+        ExtFs::format(ExtFormatOptions {
+            total_blocks,
+            journal: Some(JournalOptions { blocks: None, mode }),
+            ..Default::default()
+        })
+        .unwrap()
+    }
+
+    /// The stdout of `tool_name args image`, one entry per line, with every
+    /// run of whitespace collapsed to one space: dumpe2fs pads after the
+    /// colon (`Journal inode:            8` becomes `Journal inode: 8`).
+    /// `None` when the tool is missing.
+    fn normalised(fs: &ExtFs, name: &str, tool_name: &str, args: &[&str]) -> Option<Vec<String>> {
+        let program = tool(tool_name)?;
+        let image = image_file(fs, name);
+        let output = run(&program, args, &image);
+        std::fs::remove_file(&image).unwrap();
+        assert!(
+            output.status.success(),
+            "{tool_name} {args:?}:\n{}",
+            both_streams(&output)
+        );
+        Some(
+            String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .map(|line| line.split_whitespace().collect::<Vec<_>>().join(" "))
+                .collect(),
+        )
+    }
+
+    fn assert_lines(lines: &[String], want: &[&str], what: &str) {
+        for line in want {
+            assert!(
+                lines.iter().any(|l| l == line),
+                "{what}: no line {line:?} in\n{}",
+                lines.join("\n")
+            );
+        }
+    }
+
+    #[test]
+    fn dumpe2fs_describes_the_journal_in_both_modes() {
+        for (mode, opts) in [
+            (JournalMode::Ordered, "journal_data_ordered"),
+            (JournalMode::Data, "journal_data"),
+        ] {
+            let fs = ext3(mode);
+            let Some(lines) = normalised(&fs, "ext3-dumpe2fs", "dumpe2fs", &["-h"]) else {
+                return;
+            };
+            let mount = format!("Default mount options: {opts}");
+            assert_lines(
+                &lines,
+                &[
+                    "Filesystem features: has_journal filetype sparse_super",
+                    mount.as_str(),
+                    "Free blocks: 15205",
+                    "Free inodes: 1013",
+                    "Journal inode: 8",
+                    "Journal backup: inode blocks",
+                    "Journal features: (none)",
+                    "Total journal size: 1024k",
+                    "Total journal blocks: 1024",
+                    "Max transaction length: 1024",
+                    "Journal sequence: 0x00000001",
+                    "Journal start: 0",
+                ],
+                &format!("dumpe2fs -h ({mode:?})"),
+            );
+        }
+    }
+
+    #[test]
+    fn debugfs_reads_inode_8_as_the_emulator_wrote_it() {
+        let fs = ext3(JournalMode::Ordered);
+        let Some(lines) = normalised(&fs, "ext3-stat-8", "debugfs", &["-R", "stat <8>"]) else {
+            return;
+        };
+        let text = lines.join("\n");
+        for want in [
+            "Type: regular Mode: 0600",
+            "Size: 1048576",
+            "Links: 1 Blockcount: 2058",
+            "(0-11):82-93, (IND):1106, (12-267):94-349, (DIND):1107, (IND):1108, \
+             (268-523):350-605, (IND):1109, (524-779):606-861, (IND):1110, (780-1023):862-1105",
+            "TOTAL: 1029",
+        ] {
+            assert!(
+                text.contains(want),
+                "debugfs stat <8>: no {want:?} in\n{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_mke2fs_ext3_image_loads_with_the_same_journal_geometry() {
+        let Some(mke2fs) = tool("mke2fs") else {
+            return;
+        };
+        let dir = std::env::temp_dir().join(format!("ext2-emulator-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let image = dir.join("mke2fs-ext3.img");
+        std::fs::write(&image, vec![0u8; 16 * 1024 * 1024]).unwrap();
+        let args = [
+            "-q",
+            "-F",
+            "-t",
+            "ext3",
+            "-b",
+            "1024",
+            "-I",
+            "128",
+            "-O",
+            "none,has_journal,filetype,sparse_super",
+            "-J",
+            "size=1",
+            "-N",
+            "1024",
+        ];
+        let output = run(&mke2fs, &args, &image);
+        let bytes = std::fs::read(&image).unwrap();
+        std::fs::remove_file(&image).unwrap();
+        assert!(
+            output.status.success(),
+            "mke2fs:\n{}",
+            both_streams(&output)
+        );
+        let fs = ExtFs::from_image(bytes).unwrap();
+        assert_eq!(fs.fs_type(), "ext3");
+        assert_eq!(fs.superblock().free_blocks_count, 15_205);
+        let info = fs.journal_info().unwrap();
+        assert_eq!(
+            (info.maxlen, info.first_block, info.sequence, info.start),
+            (1_024, 82, 1, 0)
+        );
+        // mke2fs sets `user_xattr acl` and no journal mode bits: ordered.
+        assert_eq!(info.mode, JournalMode::Ordered);
+        assert!(!info.needs_recovery);
+        let journal_blocks = fs
+            .block_owners()
+            .values()
+            .filter(|o| o.path == "<journal>")
+            .count();
+        assert_eq!(journal_blocks, 1_029);
+    }
+
+    #[test]
+    fn e2fsck_calls_both_modes_clean() {
+        assert_clean(&ext3(JournalMode::Ordered), "ext3-ordered");
+        assert_clean(&ext3(JournalMode::Data), "ext3-data");
+    }
+
+    #[test]
+    fn a_4096_block_volume_gets_1024_journal_blocks_and_is_clean() {
+        let fs = ext3_with_blocks(4_096, JournalMode::Ordered);
+        assert_eq!(fs.journal_info().unwrap().maxlen, 1_024);
+        assert_clean(&fs, "ext3-4096");
+        let Some(lines) = normalised(&fs, "ext3-4096-dumpe2fs", "dumpe2fs", &["-h"]) else {
+            return;
+        };
+        assert_lines(
+            &lines,
+            &["Total journal blocks: 1024"],
+            "dumpe2fs -h (4096)",
+        );
+    }
+
+    #[test]
+    fn a_262144_block_volume_gets_8192_journal_blocks_and_is_clean() {
+        let fs = ext3_with_blocks(262_144, JournalMode::Ordered);
+        assert_eq!(fs.journal_info().unwrap().maxlen, 8_192);
+        assert_clean(&fs, "ext3-262144");
+        let Some(lines) = normalised(&fs, "ext3-262144-dumpe2fs", "dumpe2fs", &["-h"]) else {
+            return;
+        };
+        assert_lines(
+            &lines,
+            &["Total journal blocks: 8192", "Total journal size: 8M"],
+            "dumpe2fs -h (262144)",
         );
     }
 }

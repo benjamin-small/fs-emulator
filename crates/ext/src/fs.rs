@@ -12,6 +12,8 @@ use crate::group::{self, Geometry, GroupDescriptor, GroupLayout};
 use crate::inode::{
     Inode, MODE_DIR, MODE_LOST_FOUND, MODE_TYPE_DIR, MODE_TYPE_FILE, MODE_TYPE_MASK,
 };
+use crate::journal::state::{self, JournalInfo, JournalState};
+use crate::journal::{JournalMode, JournalSuperblock, FEATURE_COMPAT_HAS_JOURNAL, JOURNAL_INO};
 use crate::superblock::{
     ExtFormatOptions, Superblock, BLOCK_SIZE, EXT2_MAGIC, FIRST_INO, LOST_FOUND_INO, ROOT_INO,
     SUPERBLOCK_OFFSET,
@@ -49,21 +51,24 @@ pub struct BlockOwner {
 }
 
 pub struct ExtFs {
-    disk: Disk,
-    sb: Superblock,
-    gds: Vec<GroupDescriptor>,
-    geo: Geometry,
-    history: Vec<OpRecord>,
-    now: DateTime,
-    /// The gate error, or `None` while mounted. `sb`, `gds`, and `geo` keep
-    /// their last good values so layout and annotation stay stable.
-    corrupt: Option<Error>,
+    pub(crate) disk: Disk,
+    pub(crate) sb: Superblock,
+    pub(crate) gds: Vec<GroupDescriptor>,
+    pub(crate) geo: Geometry,
+    pub(crate) history: Vec<OpRecord>,
+    pub(crate) now: DateTime,
+    /// The gate error, or `None` while mounted. `sb`, `gds`, `geo`, and
+    /// `journal` keep their last good values so layout and annotation stay
+    /// stable.
+    pub(crate) corrupt: Option<Error>,
+    /// `Some` when the superblock sets `has_journal` (ext3).
+    pub(crate) journal: Option<JournalState>,
 }
 
 /// `now` as the 32-bit seconds ext stores: saturating at both ends, and
 /// never below 1 second, so a delete never writes `dtime = 0` (which reads
 /// as "not deleted").
-fn stamp(now: DateTime) -> u32 {
+pub(crate) fn stamp(now: DateTime) -> u32 {
     now.to_unix_seconds().clamp(1, i64::from(u32::MAX)) as u32
 }
 
@@ -144,11 +149,21 @@ fn parse_metadata(image: &[u8]) -> Result<(Superblock, Geometry, Vec<GroupDescri
     Ok((sb, geo, gds))
 }
 
+/// The journal of a volume whose superblock sets `has_journal` (spec
+/// section 4), `None` for ext2. Shared by `from_image` and the gate.
+fn open_journal(disk: &Disk, sb: &Superblock, geo: &Geometry) -> Result<Option<JournalState>> {
+    if sb.feature_compat & FEATURE_COMPAT_HAS_JOURNAL == 0 {
+        return Ok(None);
+    }
+    JournalState::open(disk, sb, geo).map(Some)
+}
+
 impl ExtFs {
     /// A freshly formatted volume: every superblock copy and descriptor
     /// table, both bitmaps of every group, zeroed inode tables, inodes 1 to
-    /// 10 reserved, the root directory, and `lost+found`. Written outside
-    /// any operation, so history starts empty.
+    /// 10 reserved, the root directory, and `lost+found`; with
+    /// `options.journal`, the ext3 journal on inode 8 as well. Written
+    /// outside any operation, so history starts empty.
     pub fn format(options: ExtFormatOptions) -> Result<ExtFs> {
         let geo = Geometry::from_options(&options)?;
         for gl in &geo.groups_layout {
@@ -230,20 +245,7 @@ impl ExtFs {
         sb.free_inodes_count = gds.iter().map(|g| u32::from(g.free_inodes_count)).sum();
         sb.wtime = secs;
         sb.lastcheck = secs;
-        let mut table = vec![0u8; geo.descriptor_blocks as usize * BS];
-        group::encode_table(&gds, &mut table);
-        for gl in &geo.groups_layout {
-            if let (Some(sb_block), Some(table_block)) = (gl.superblock_block, gl.descriptors_block)
-            {
-                let mut copy = sb.clone();
-                copy.block_group_nr = gl.index as u16;
-                let mut bytes = [0u8; Superblock::LEN];
-                copy.encode(&mut bytes);
-                disk.write(sb_block as usize * BS, &bytes);
-                disk.write(table_block as usize * BS, &table);
-            }
-        }
-        Ok(ExtFs {
+        let mut fs = ExtFs {
             disk,
             sb,
             gds,
@@ -251,12 +253,38 @@ impl ExtFs {
             history: Vec::new(),
             now,
             corrupt: None,
-        })
+            journal: None,
+        };
+        if let Some(journal) = &options.journal {
+            fs.journal = Some(state::write_journal(&mut fs, journal)?);
+        }
+        fs.write_metadata_copies();
+        Ok(fs)
     }
 
-    /// Wrap an existing ext2 image. Trailing bytes past `s_blocks_count`
-    /// blocks are dropped; a shorter image is `CorruptImage`, a feature this
-    /// crate does not implement is `Unsupported`.
+    /// Write the cached superblock and descriptor table to every group
+    /// that carries a copy (format's last step).
+    fn write_metadata_copies(&mut self) {
+        let mut table = vec![0u8; self.geo.descriptor_blocks as usize * BS];
+        group::encode_table(&self.gds, &mut table);
+        for gl in &self.geo.groups_layout {
+            if let (Some(sb_block), Some(table_block)) = (gl.superblock_block, gl.descriptors_block)
+            {
+                let mut copy = self.sb.clone();
+                copy.block_group_nr = gl.index as u16;
+                let mut bytes = [0u8; Superblock::LEN];
+                copy.encode(&mut bytes);
+                self.disk.write(sb_block as usize * BS, &bytes);
+                self.disk.write(table_block as usize * BS, &table);
+            }
+        }
+    }
+
+    /// Wrap an existing ext2 or ext3 image. Trailing bytes past
+    /// `s_blocks_count` blocks are dropped; a shorter image is
+    /// `CorruptImage`, a feature this crate does not implement is
+    /// `Unsupported`. An ext3 journal is opened (spec section 4) but never
+    /// replayed, even when the volume needs recovery.
     pub fn from_image(mut bytes: Vec<u8>) -> Result<ExtFs> {
         if bytes.len() < SUPERBLOCK_OFFSET + Superblock::LEN {
             return Err(Error::CorruptImage(format!(
@@ -268,6 +296,7 @@ impl ExtFs {
         let (sb, geo, gds) = parse_metadata(&bytes)?;
         bytes.truncate(geo.total_blocks as usize * BS);
         let disk = Disk::from_bytes(BS, bytes)?;
+        let journal = open_journal(&disk, &sb, &geo)?;
         Ok(ExtFs {
             disk,
             sb,
@@ -276,6 +305,7 @@ impl ExtFs {
             history: Vec::new(),
             now: DateTime::default(),
             corrupt: None,
+            journal,
         })
     }
 
@@ -310,8 +340,43 @@ impl ExtFs {
         self.corrupt.as_ref()
     }
 
+    /// `"ext3"` when the volume has a journal, else `"ext2"`.
     pub fn fs_type(&self) -> &'static str {
-        "ext2"
+        if self.journal.is_some() {
+            "ext3"
+        } else {
+            "ext2"
+        }
+    }
+
+    /// Whether the superblock carries `needs_recovery`; false on ext2.
+    pub fn needs_recovery(&self) -> bool {
+        self.journal.as_ref().is_some_and(|j| j.needs_recovery)
+    }
+
+    /// The journal at a glance (spec section 7); `None` on ext2. `start` is
+    /// read from the journal superblock on the disk, the rest from the
+    /// session's `JournalState`.
+    pub fn journal_info(&self) -> Option<JournalInfo> {
+        let j = self.journal.as_ref()?;
+        let at = j.offset(0) + JournalSuperblock::START_OFFSET;
+        let raw = self.disk.read(at, 4);
+        Some(JournalInfo {
+            inode: JOURNAL_INO,
+            maxlen: j.maxlen,
+            first_block: j.physical(0),
+            sequence: j.sequence,
+            start: u32::from_be_bytes([raw[0], raw[1], raw[2], raw[3]]),
+            head: j.head,
+            mode: j.mode,
+            needs_recovery: j.needs_recovery,
+            max_transaction: j.max_transaction(),
+        })
+    }
+
+    /// The journal mode; `None` on ext2.
+    pub fn journal_mode(&self) -> Option<JournalMode> {
+        self.journal.as_ref().map(|j| j.mode)
     }
 
     pub fn disk(&self) -> &Disk {
@@ -330,9 +395,12 @@ impl ExtFs {
         &self.history
     }
 
-    /// Regions per group in disk order, after the boot block (spec section 7).
+    /// Regions per group in disk order, after the boot block (spec section
+    /// 7). On ext3 each run of journal data blocks is a `journal` region
+    /// carved out of the data region it lies in.
     pub fn layout(&self) -> Vec<Region> {
         let g = &self.geo;
+        let journal = self.journal_runs();
         let region = |name: String, start: u32, end: u32, kind: RegionKind| Region {
             name,
             sectors: u64::from(start)..u64::from(end),
@@ -375,14 +443,63 @@ impl ExtFs {
                 gl.inode_table + g.inode_table_blocks,
                 RegionKind::Metadata,
             ));
-            regions.push(region(
-                format!("data (group {n})"),
-                gl.first_data,
-                gl.first_block + gl.block_count,
-                RegionKind::Data,
-            ));
+            // The data region, split around the journal runs inside it.
+            let data_end = gl.first_block + gl.block_count;
+            let mut at = gl.first_data;
+            for &(start, end, ref name) in &journal {
+                let (start, end) = (start.max(at), end.min(data_end));
+                if start >= end {
+                    continue;
+                }
+                if at < start {
+                    regions.push(region(
+                        format!("data (group {n})"),
+                        at,
+                        start,
+                        RegionKind::Data,
+                    ));
+                }
+                regions.push(region(name.clone(), start, end, RegionKind::Journal));
+                at = end;
+            }
+            if at < data_end {
+                regions.push(region(
+                    format!("data (group {n})"),
+                    at,
+                    data_end,
+                    RegionKind::Data,
+                ));
+            }
         }
         regions
+    }
+
+    /// The maximal runs of consecutive physical blocks among the journal's
+    /// data blocks, as `(first, end, name)`: `journal`, or `journal (part
+    /// k)` from 1 when there is more than one run. Empty on ext2.
+    fn journal_runs(&self) -> Vec<(u32, u32, String)> {
+        let Some(j) = &self.journal else {
+            return Vec::new();
+        };
+        let mut blocks = j.blocks.clone();
+        blocks.sort_unstable();
+        blocks.dedup();
+        let runs: Vec<(u32, u32)> = alloc::contiguous_runs(&blocks)
+            .into_iter()
+            .map(|(i, len)| (blocks[i], blocks[i] + len as u32))
+            .collect();
+        let many = runs.len() > 1;
+        runs.into_iter()
+            .enumerate()
+            .map(|(k, (start, end))| {
+                let name = if many {
+                    format!("journal (part {})", k + 1)
+                } else {
+                    "journal".to_string()
+                };
+                (start, end, name)
+            })
+            .collect()
     }
 }
 
@@ -583,7 +700,9 @@ impl ExtFs {
 
     /// Which inode and path every directory, data, and indirect block
     /// belongs to, from a walk of the tree from the root. Directories that
-    /// do not parse are skipped, so this never fails.
+    /// do not parse are skipped, so this never fails. On ext3 the journal's
+    /// data blocks (role `Journal`) and pointer blocks (`Indirect`) belong
+    /// to inode 8 with the path `<journal>`.
     pub fn block_owners(&self) -> BTreeMap<u32, BlockOwner> {
         let mut owners = BTreeMap::new();
         let mut seen = BTreeSet::from([ROOT_INO]);
@@ -627,6 +746,21 @@ impl ExtFs {
                 stack.push((entry.inode, child));
             }
         }
+        if let Some(j) = &self.journal {
+            let owner = |role| BlockOwner {
+                inode: JOURNAL_INO,
+                path: "<journal>".to_string(),
+                role,
+            };
+            for &block in &j.blocks {
+                owners.insert(block, owner(BlockRole::Journal));
+            }
+            if let Ok(inode) = self.inode(JOURNAL_INO) {
+                for (block, _) in blockmap::indirect_blocks(&self.disk, &inode) {
+                    owners.insert(block, owner(BlockRole::Indirect));
+                }
+            }
+        }
         owners
     }
 }
@@ -649,26 +783,53 @@ impl ExtFs {
         fs_core::finish_op(&mut self.disk, &mut self.history, result)
     }
 
-    /// The byte ranges of the primary superblock and descriptor table, from
-    /// the last good geometry.
-    fn primary_metadata(&self) -> [Range<usize>; 2] {
+    /// The byte ranges a raw write re-parses after: the primary superblock
+    /// and descriptor table, from the last good geometry, and on ext3
+    /// journal index 0, inode 8's slot, and the journal's pointer blocks
+    /// (as inode 8 maps them before the write).
+    fn primary_metadata(&self) -> Vec<Range<usize>> {
         let table = self.geo.group(0).descriptors_block.unwrap_or(2) as usize * BS;
-        [
+        let mut ranges = vec![
             SUPERBLOCK_OFFSET..SUPERBLOCK_OFFSET + Superblock::LEN,
             table..table + self.geo.descriptor_blocks as usize * BS,
-        ]
+        ];
+        if let Some(j) = &self.journal {
+            ranges.push(j.offset(0)..j.offset(0) + BS);
+            let (block, offset) = self.geo.inode_location(JOURNAL_INO);
+            let slot = block as usize * BS + offset;
+            ranges.push(slot..slot + Inode::SIZE);
+            if let Ok(inode) = self.inode(JOURNAL_INO) {
+                for (block, _) in blockmap::indirect_blocks(&self.disk, &inode) {
+                    ranges.push(block as usize * BS..(block as usize + 1) * BS);
+                }
+            }
+        }
+        ranges
     }
 
-    /// Re-read the primary superblock and descriptor table after a raw write
-    /// touched them. A parse that succeeds and fits the disk is adopted (the
-    /// disk is the truth); otherwise the last good values stay and the
-    /// volume is marked corrupt. Never fails: the bytes stay as written.
+    /// Re-read the primary superblock, descriptor table, and (with
+    /// `has_journal`) the journal after a raw write touched them. A parse
+    /// that succeeds and fits the disk is adopted (the disk is the truth),
+    /// keeping the session's journal head and armed crash when the journal
+    /// keeps its length; otherwise the last good values stay and the volume
+    /// is marked corrupt. Never fails: the bytes stay as written.
     fn reparse_metadata(&mut self) {
-        match parse_metadata(self.disk.as_bytes()) {
-            Ok((sb, geo, gds)) => {
+        let parsed = parse_metadata(self.disk.as_bytes()).and_then(|(sb, geo, gds)| {
+            let journal = open_journal(&self.disk, &sb, &geo)?;
+            Ok((sb, geo, gds, journal))
+        });
+        match parsed {
+            Ok((sb, geo, gds, mut journal)) => {
+                if let (Some(new), Some(old)) = (journal.as_mut(), self.journal.as_ref()) {
+                    if new.maxlen == old.maxlen {
+                        new.head = old.head;
+                        new.armed = old.armed;
+                    }
+                }
                 self.sb = sb;
                 self.geo = geo;
                 self.gds = gds;
+                self.journal = journal;
                 self.corrupt = None;
             }
             Err(e) => {
@@ -683,14 +844,16 @@ impl ExtFs {
         }
     }
 
-    /// Write bytes anywhere on the disk, journaled like every operation. A
-    /// write that touches the primary superblock or descriptor table
+    /// Write bytes anywhere on the disk, recorded like every operation. A
+    /// write that touches the primary superblock or descriptor table, or on
+    /// ext3 the journal superblock, inode 8, or a journal pointer block,
     /// re-parses them. Works while the volume is corrupt, so a later write
     /// can repair it.
     pub fn write_raw(&mut self, offset: u64, bytes: &[u8]) -> Result<OpRecord> {
         self.run_op(fs_core::raw_write_op(offset, bytes.len()), |fs| {
+            let watched = fs.primary_metadata();
             let range = fs_core::raw_write(&mut fs.disk, offset, bytes)?;
-            if fs.primary_metadata().iter().any(|m| overlaps(&range, m)) {
+            if watched.iter().any(|m| overlaps(&range, m)) {
                 fs.reparse_metadata();
             }
             // Nothing fallible may follow: `run_op` rolls the bytes back on
@@ -1751,6 +1914,7 @@ fn annotate_pointer_block(ptrs: &[u32; 256]) -> Vec<Annotation> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::journal::CrashPhase;
 
     #[test]
     fn write_changed_journals_only_the_differing_runs() {
@@ -1766,6 +1930,21 @@ mod tests {
             .collect();
         assert_eq!(changes, vec![(2, b"X".to_vec()), (5, b"YY".to_vec())]);
         assert_eq!(disk.read(0, 7), b"abXdeYY");
+    }
+
+    #[test]
+    fn a_reparse_keeps_the_session_head_and_armed_crash() {
+        let mut fs = ExtFs::format(ExtFormatOptions::ext3()).unwrap();
+        let journal = fs.journal.as_mut().unwrap();
+        journal.head = 7;
+        journal.armed = Some(CrashPhase::AfterCommit);
+        fs.write_raw(1_024 + 120, b"renamed\0").unwrap();
+        assert_eq!(fs.superblock().label(), "renamed");
+        let journal = fs.journal.as_ref().unwrap();
+        assert_eq!(
+            (journal.head, journal.armed),
+            (7, Some(CrashPhase::AfterCommit))
+        );
     }
 
     #[test]

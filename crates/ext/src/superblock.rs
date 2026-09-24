@@ -3,6 +3,7 @@
 //! decide which superblocks this crate can mount.
 
 use crate::group::Geometry;
+use crate::journal::{JournalOptions, FEATURE_COMPAT_HAS_JOURNAL, FEATURE_INCOMPAT_RECOVER};
 use fs_core::{Error, Result};
 
 pub const EXT2_MAGIC: u16 = 0xEF53;
@@ -98,6 +99,8 @@ pub struct ExtFormatOptions {
     /// The volume name, NUL-padded.
     pub label: [u8; 16],
     pub uuid: [u8; 16],
+    /// `None` formats ext2; `Some` adds the ext3 journal on inode 8.
+    pub journal: Option<JournalOptions>,
 }
 
 impl Default for ExtFormatOptions {
@@ -107,6 +110,17 @@ impl Default for ExtFormatOptions {
             inodes_per_group: None,
             label: [0; 16],
             uuid: DEFAULT_UUID,
+            journal: None,
+        }
+    }
+}
+
+impl ExtFormatOptions {
+    /// The default disk as ext3: an ordered-mode journal of mke2fs's size.
+    pub fn ext3() -> Self {
+        Self {
+            journal: Some(JournalOptions::default()),
+            ..Self::default()
         }
     }
 }
@@ -345,7 +359,10 @@ impl Superblock {
     /// Check that this crate can mount the superblock of a disk holding
     /// `disk_blocks` 1 KiB blocks. The magic is checked first, then the
     /// revision, block size, inode size, and features (`Unsupported`), then
-    /// the geometry (`CorruptImage`).
+    /// the geometry (`CorruptImage`). The features are ext2's (`filetype`,
+    /// `sparse_super`), plus `has_journal` on ext3 and `needs_recovery`
+    /// while a transaction is in flight; `needs_recovery` without
+    /// `has_journal` is `CorruptImage`.
     pub fn validate(&self, disk_blocks: u64) -> Result<()> {
         if self.magic != EXT2_MAGIC {
             return Err(Error::CorruptImage(format!(
@@ -371,20 +388,29 @@ impl Superblock {
                 self.inode_size
             )));
         }
-        if self.feature_compat != 0 {
+        let compat = self.feature_compat & !FEATURE_COMPAT_HAS_JOURNAL;
+        if compat != 0 {
             return Err(Error::Unsupported(format!(
                 "compat features are not supported: {}",
-                feature_names(self.feature_compat, &COMPAT_NAMES)
+                feature_names(compat, &COMPAT_NAMES)
             )));
         }
-        let incompat = self.feature_incompat & !FEATURE_INCOMPAT_FILETYPE;
+        let incompat =
+            self.feature_incompat & !(FEATURE_INCOMPAT_FILETYPE | FEATURE_INCOMPAT_RECOVER);
         if incompat != 0 {
             return Err(Error::Unsupported(format!(
                 "incompatible feature {}",
                 feature_names(incompat, &INCOMPAT_NAMES)
             )));
         }
-        if self.feature_incompat != FEATURE_INCOMPAT_FILETYPE {
+        if self.feature_incompat & FEATURE_INCOMPAT_RECOVER != 0
+            && self.feature_compat & FEATURE_COMPAT_HAS_JOURNAL == 0
+        {
+            return Err(Error::CorruptImage(
+                "needs_recovery is set but the volume has no journal".into(),
+            ));
+        }
+        if self.feature_incompat & FEATURE_INCOMPAT_FILETYPE == 0 {
             return Err(Error::Unsupported(
                 "the filetype feature is required".into(),
             ));
@@ -465,6 +491,7 @@ pub fn default_inodes_per_group(total_blocks: u32, groups: u32) -> u32 {
 mod tests {
     use super::*;
     use crate::group::Geometry;
+    use crate::journal::JournalMode;
     use fs_core::Error;
 
     fn default_superblock() -> Superblock {
@@ -711,6 +738,62 @@ mod tests {
             ..good
         });
         assert_eq!(msg, "compat features are not supported: 0x40000000");
+    }
+
+    #[test]
+    fn validate_accepts_the_ext3_feature_variants() {
+        let good = default_superblock();
+        let ext3 = Superblock {
+            feature_compat: 0x0004,
+            ..good.clone()
+        };
+        assert_eq!(ext3.validate(16_384), Ok(()));
+        let recovering = Superblock {
+            feature_incompat: 0x0002 | 0x0004,
+            ..ext3.clone()
+        };
+        assert_eq!(recovering.validate(16_384), Ok(()));
+        let msg = unsupported_message(&Superblock {
+            feature_compat: 0x0004 | 0x0010,
+            ..good
+        });
+        assert_eq!(msg, "compat features are not supported: resize_inode");
+        let msg = unsupported_message(&Superblock {
+            feature_incompat: 0x0004,
+            ..ext3
+        });
+        assert_eq!(msg, "the filetype feature is required");
+    }
+
+    #[test]
+    fn validate_calls_needs_recovery_without_a_journal_corrupt() {
+        let sb = Superblock {
+            feature_incompat: 0x0002 | 0x0004,
+            ..default_superblock()
+        };
+        assert_eq!(
+            sb.validate(16_384),
+            Err(Error::CorruptImage(
+                "needs_recovery is set but the volume has no journal".into()
+            ))
+        );
+    }
+
+    #[test]
+    fn options_ext3_is_the_default_disk_with_an_ordered_journal() {
+        assert_eq!(ExtFormatOptions::default().journal, None);
+        let o = ExtFormatOptions::ext3();
+        assert_eq!(
+            o.journal,
+            Some(JournalOptions {
+                blocks: None,
+                mode: JournalMode::Ordered
+            })
+        );
+        assert_eq!(
+            ExtFormatOptions { journal: None, ..o },
+            ExtFormatOptions::default()
+        );
     }
 
     #[test]

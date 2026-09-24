@@ -330,6 +330,7 @@ impl TryFrom<ExtFormatOptions> for ext::ExtFormatOptions {
                 Some(u) => parse_uuid(&u)?,
                 None => d.uuid,
             },
+            journal: d.journal,
         })
     }
 }

@@ -2,7 +2,10 @@
 //! the journal superblock, descriptor, and commit codecs, the escape rule,
 //! the ring arithmetic, and the small types the rest of the journal code and
 //! the wasm boundary share. Everything here is a pure function over byte
-//! slices; every JBD2 field is big-endian.
+//! slices; every JBD2 field is big-endian. `state` holds the journal of a
+//! mounted volume: opening it, the format-time writer, and `JournalInfo`.
+
+pub mod state;
 
 use fs_core::{Error, Result};
 use std::fmt;

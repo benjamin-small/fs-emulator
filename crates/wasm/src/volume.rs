@@ -12,8 +12,8 @@ use serde_wasm_bindgen::Serializer;
 use wasm_bindgen::prelude::*;
 
 enum Inner {
-    Fat(FatFs),
-    Ext(ExtFs),
+    Fat(Box<FatFs>),
+    Ext(Box<ExtFs>),
 }
 
 /// The family an image's signature names; `from_image` picks the parser from it.
@@ -58,11 +58,11 @@ fn has_fat_signature(bytes: &[u8]) -> bool {
 fn load(bytes: Vec<u8>) -> fs_core::Result<Inner> {
     match detect(&bytes) {
         Detected::Ext if has_fat_signature(&bytes) => match ExtFs::from_image(bytes.clone()) {
-            Ok(fs) => Ok(Inner::Ext(fs)),
-            Err(_) => FatFs::from_image(bytes).map(Inner::Fat),
+            Ok(fs) => Ok(Inner::Ext(Box::new(fs))),
+            Err(_) => FatFs::from_image(bytes).map(|fs| Inner::Fat(Box::new(fs))),
         },
-        Detected::Ext => ExtFs::from_image(bytes).map(Inner::Ext),
-        Detected::Fat => FatFs::from_image(bytes).map(Inner::Fat),
+        Detected::Ext => ExtFs::from_image(bytes).map(|fs| Inner::Ext(Box::new(fs))),
+        Detected::Fat => FatFs::from_image(bytes).map(|fs| Inner::Fat(Box::new(fs))),
         Detected::Unknown => Err(fs_core::Error::Unsupported(
             "no recognisable filesystem signature".into(),
         )),
@@ -130,22 +130,22 @@ fn reject_unknown_keys(value: &JsValue, allowed: &[&str]) -> Result<(), JsValue>
 impl Volume {
     fn fs(&self) -> &dyn FileSystem {
         match &self.inner {
-            Inner::Fat(f) => f,
-            Inner::Ext(e) => e,
+            Inner::Fat(f) => f.as_ref(),
+            Inner::Ext(e) => e.as_ref(),
         }
     }
 
     fn fs_mut(&mut self) -> &mut dyn FileSystem {
         match &mut self.inner {
-            Inner::Fat(f) => f,
-            Inner::Ext(e) => e,
+            Inner::Fat(f) => f.as_mut(),
+            Inner::Ext(e) => e.as_mut(),
         }
     }
 
     /// The FAT volume, or `NotFat` on any other family.
     fn fat(&self) -> Result<&FatFs, JsValue> {
         match &self.inner {
-            Inner::Fat(f) => Ok(f),
+            Inner::Fat(f) => Ok(f.as_ref()),
             Inner::Ext(_) => Err(js_error(NOT_FAT, "not a FAT volume")),
         }
     }
@@ -181,7 +181,7 @@ impl Volume {
         check_volume_size(opts.total_sectors as u64 * opts.bytes_per_sector as u64)?;
         let fs = FatFs::format(opts).map_err(to_js)?;
         Ok(Volume {
-            inner: Inner::Fat(fs),
+            inner: Inner::Fat(Box::new(fs)),
         })
     }
 
@@ -201,7 +201,7 @@ impl Volume {
         check_volume_size(u64::from(opts.total_blocks) * u64::from(ext::BLOCK_SIZE))?;
         let fs = ExtFs::format(opts).map_err(to_js)?;
         Ok(Volume {
-            inner: Inner::Ext(fs),
+            inner: Inner::Ext(Box::new(fs)),
         })
     }
 
