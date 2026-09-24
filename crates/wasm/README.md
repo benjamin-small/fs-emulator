@@ -93,6 +93,10 @@ parses anything, checking in this order:
 2. FAT: the image is at least 512 bytes long and bytes 510..512 are `55 AA`.
 
 ext goes first because a bootable ext image can also carry `55 AA` at 510.
+When an image carries the ext magic but does not parse as ext and also carries
+`55 AA` at 510 (a FAT volume can hold `53 EF` at 1080 in its FAT), it is
+handed to the FAT parser, and FAT's result, error included, is what
+`fromImage` returns.
 Whether the metadata behind a signature parses is then that family's parser's
 job, so a recognised image can still throw `CorruptImage` (or `Unsupported`
 for an ext feature the emulator does not implement). An image that matches

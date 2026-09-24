@@ -39,10 +39,33 @@ fn detect(bytes: &[u8]) -> Detected {
         .map(|m| u16::from_le_bytes([m[0], m[1]]));
     if ext_magic == Some(ext::EXT2_MAGIC) {
         Detected::Ext
-    } else if bytes.len() >= 512 && bytes[510..512] == [0x55, 0xAA] {
+    } else if has_fat_signature(bytes) {
         Detected::Fat
     } else {
         Detected::Unknown
+    }
+}
+
+/// Whether bytes 510..512 are FAT's `55 AA` boot signature.
+fn has_fat_signature(bytes: &[u8]) -> bool {
+    bytes.len() >= 512 && bytes[510..512] == [0x55, 0xAA]
+}
+
+/// Parse `bytes` as the family `detect` names. An image that carries the
+/// ext magic but does not parse as ext, and also carries `55 AA` at 510,
+/// is handed to the FAT parser, whose result (error included) is returned:
+/// a FAT volume can hold `53 EF` at 1080 in its FAT or root directory.
+fn load(bytes: Vec<u8>) -> fs_core::Result<Inner> {
+    match detect(&bytes) {
+        Detected::Ext if has_fat_signature(&bytes) => match ExtFs::from_image(bytes.clone()) {
+            Ok(fs) => Ok(Inner::Ext(fs)),
+            Err(_) => FatFs::from_image(bytes).map(Inner::Fat),
+        },
+        Detected::Ext => ExtFs::from_image(bytes).map(Inner::Ext),
+        Detected::Fat => FatFs::from_image(bytes).map(Inner::Fat),
+        Detected::Unknown => Err(fs_core::Error::Unsupported(
+            "no recognisable filesystem signature".into(),
+        )),
     }
 }
 
@@ -186,15 +209,7 @@ impl Volume {
     #[wasm_bindgen(js_name = fromImage)]
     pub fn from_image(bytes: Vec<u8>) -> Result<Volume, JsValue> {
         check_volume_size(bytes.len() as u64)?;
-        let inner = match detect(&bytes) {
-            Detected::Ext => Inner::Ext(ExtFs::from_image(bytes).map_err(to_js)?),
-            Detected::Fat => Inner::Fat(FatFs::from_image(bytes).map_err(to_js)?),
-            Detected::Unknown => {
-                return Err(to_js(fs_core::Error::Unsupported(
-                    "no recognisable filesystem signature".into(),
-                )))
-            }
-        };
+        let inner = load(bytes).map_err(to_js)?;
         Ok(Volume { inner })
     }
 
@@ -453,7 +468,7 @@ impl Volume {
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
-    use super::{detect, Detected, EXT_MAGIC_OFFSET};
+    use super::{detect, load, Detected, Inner, EXT_MAGIC_OFFSET};
 
     #[test]
     fn detect_names_fat_by_the_55_aa_signature_in_a_full_first_sector() {
@@ -500,6 +515,43 @@ mod tests {
             detect(fs_core::FileSystem::disk(&real).as_bytes()),
             Detected::Ext
         );
+    }
+
+    #[test]
+    fn a_fat_image_carrying_the_ext_magic_falls_back_to_fat() {
+        let fat = fat::FatFs::format(fat::FormatOptions::default()).unwrap();
+        let mut bytes = fat.disk().as_bytes().to_vec();
+        // Offset 1080 sits in the first FAT (sectors 1..), in entry 284.
+        bytes[1080] = 0x53;
+        bytes[1081] = 0xEF;
+        assert_eq!(detect(&bytes), Detected::Ext);
+        match load(bytes) {
+            Ok(Inner::Fat(fs)) => assert_eq!(fs.fs_type(), "FAT16"),
+            Ok(Inner::Ext(_)) => panic!("loaded as ext"),
+            Err(e) => panic!("did not load: {e}"),
+        }
+    }
+
+    #[test]
+    fn an_ext_magic_without_the_fat_signature_keeps_the_ext_error() {
+        let mut img = vec![0u8; 4096];
+        img[1080] = 0x53;
+        img[1081] = 0xEF;
+        assert!(matches!(
+            load(img.clone()),
+            Err(fs_core::Error::Unsupported(_))
+        ));
+        // With `55 AA` too, the FAT parser's own error comes back instead.
+        img[510] = 0x55;
+        img[511] = 0xAA;
+        let fat_error = fat::FatFs::from_image(img.clone()).err().unwrap();
+        assert_eq!(load(img).err(), Some(fat_error));
+        // A real ext image with `55 AA` still loads as ext.
+        let ext = ext::ExtFs::format(ext::ExtFormatOptions::default()).unwrap();
+        let mut bytes = fs_core::FileSystem::disk(&ext).as_bytes().to_vec();
+        bytes[510] = 0x55;
+        bytes[511] = 0xAA;
+        assert!(matches!(load(bytes), Ok(Inner::Ext(_))));
     }
 
     /// Writes a formatted ext2 image holding `/hello.txt` to the path in
