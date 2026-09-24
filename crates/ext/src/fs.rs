@@ -490,20 +490,43 @@ impl ExtFs {
         Ok(Self::entry_info(name, &inode))
     }
 
-    pub fn read_file(&self, path: &str) -> Result<Vec<u8>> {
-        self.ensure_mounted()?;
-        let (_, inode) = self.resolve(path)?;
+    /// `IsADirectory` for a directory, `Unsupported` for any other inode
+    /// that is not a regular file (a symbolic link or device node from a
+    /// foreign image, whose `i_block` is not a block map), so `read_file`,
+    /// `write_file`, and `delete_file` never follow or free its pointers.
+    fn check_regular_file(inode: &Inode) -> Result<()> {
         if inode.is_dir() {
             return Err(Error::IsADirectory);
         }
+        if !inode.is_file() {
+            return Err(Error::Unsupported(
+                "symbolic links and device nodes are not supported".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// The data blocks of a regular file, or `CorruptImage` when the
+    /// mapping ends before `blocks_needed(i_size)` (a hole or a short map
+    /// in a foreign image), so no operation reads or frees past it.
+    fn mapped_blocks(&self, inode: &Inode) -> Result<Vec<u32>> {
         let size = inode.size as usize;
-        let blocks = blockmap::file_blocks(&self.disk, &inode);
+        let blocks = blockmap::file_blocks(&self.disk, inode);
         if blocks.len() * BS < size {
             return Err(Error::CorruptImage(format!(
                 "inode claims {size} bytes but maps only {} blocks",
                 blocks.len()
             )));
         }
+        Ok(blocks)
+    }
+
+    pub fn read_file(&self, path: &str) -> Result<Vec<u8>> {
+        self.ensure_mounted()?;
+        let (_, inode) = self.resolve(path)?;
+        Self::check_regular_file(&inode)?;
+        let size = inode.size as usize;
+        let blocks = self.mapped_blocks(&inode)?;
         let mut out = Vec::with_capacity(size);
         for block in blocks {
             let take = (size - out.len()).min(BS);
@@ -1365,15 +1388,13 @@ impl ExtFs {
     fn overwrite_file(&mut self, path: &str, data: &[u8]) -> Result<OpRecord> {
         self.ensure_mounted()?;
         let (ino, old) = self.resolve(path)?;
-        if old.is_dir() {
-            return Err(Error::IsADirectory);
-        }
+        Self::check_regular_file(&old)?;
         let size = u32::try_from(data.len()).map_err(|_| Error::FileTooLarge)?;
         let new_n = blockmap::blocks_needed(data.len() as u64);
         if new_n > blockmap::MAX_FILE_BLOCKS {
             return Err(Error::FileTooLarge);
         }
-        let old_blocks = blockmap::file_blocks(&self.disk, &old);
+        let old_blocks = self.mapped_blocks(&old)?;
         let old_n = old_blocks.len() as u32;
         if new_n > old_n {
             let extra = (new_n - old_n) + blockmap::indirect_blocks_needed(new_n)
@@ -1503,9 +1524,8 @@ impl ExtFs {
     fn unlink_file(&mut self, path: &str) -> Result<OpRecord> {
         self.ensure_mounted()?;
         let (ino, inode) = self.resolve(path)?;
-        if inode.is_dir() {
-            return Err(Error::IsADirectory);
-        }
+        Self::check_regular_file(&inode)?;
+        self.mapped_blocks(&inode)?;
         let (parent_ino, _, name) = self.resolve_parent(path)?;
         let (parent_parts, _) = path::split_parent(path)?;
         let parent_path = create::display_path(&parent_parts);

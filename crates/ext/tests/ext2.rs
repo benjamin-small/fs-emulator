@@ -2038,4 +2038,111 @@ mod write_delete_remove {
         // Plain data blocks carry no annotations.
         assert!(fs.annotate_sector(data[0] as u64).is_empty());
     }
+
+    /// Overwrite inode `ino`'s 128-byte slot through a raw write.
+    fn plant_inode(fs: &mut ExtFs, ino: u32, inode: &ext::Inode) {
+        let (block, offset) = fs.geometry().inode_location(ino);
+        let mut raw = [0u8; 128];
+        inode.encode(&mut raw);
+        fs.write_raw((block as usize * BS + offset) as u64, &raw)
+            .unwrap();
+    }
+
+    #[test]
+    fn a_fast_symlink_is_never_followed_or_freed() {
+        let mut fs = default_fs();
+        let victim_data = pattern(BS, 7);
+        fs.create_file("/victim.bin", &victim_data).unwrap();
+        let victim = blocks_of(&fs, "/victim.bin")[0];
+        fs.create_file("/link", b"").unwrap();
+        let link = ino_of(&fs, "/link");
+
+        // A fast symlink keeps its target text in `i_block`: a target whose
+        // bytes read as the victim's block number (for block 82, "R").
+        let mut target = victim.to_le_bytes().to_vec();
+        while target.last() == Some(&0) {
+            target.pop();
+        }
+        let mut inode = fs.inode(link).unwrap();
+        inode.mode = 0xA1FF;
+        inode.size = target.len() as u32;
+        inode.block[0] = victim;
+        plant_inode(&mut fs, link, &inode);
+        assert_eq!(
+            fs.disk().read(fs_offset(&fs, link) + 40, target.len()),
+            &target[..]
+        );
+
+        let before = fs.disk().as_bytes().to_vec();
+        let history = fs.history().len();
+        let unsupported = Err(Error::Unsupported(
+            "symbolic links and device nodes are not supported".into(),
+        ));
+        assert_eq!(fs.delete_file("/link").map(|_| ()), unsupported);
+        assert_eq!(
+            fs.write_file("/link", b"overwritten").map(|_| ()),
+            unsupported
+        );
+        assert_eq!(fs.read_file("/link").map(|_| ()), unsupported);
+        assert!(
+            block_used(&fs, victim),
+            "the victim's block stays allocated"
+        );
+        assert_eq!(fs.read_file("/victim.bin").unwrap(), victim_data);
+        assert!(fs.disk().as_bytes() == &before[..], "nothing was written");
+        assert_eq!(fs.history().len(), history);
+
+        // Listing and stat still show it, as a file.
+        let info = fs.stat("/link").unwrap();
+        assert!(!info.is_dir);
+        assert_eq!(info.size, target.len() as u64);
+        assert!(fs
+            .list_dir("/")
+            .unwrap()
+            .iter()
+            .any(|e| e.name == "link" && !e.is_dir));
+    }
+
+    /// The byte offset of inode `ino`'s slot.
+    fn fs_offset(fs: &ExtFs, ino: u32) -> usize {
+        let (block, offset) = fs.geometry().inode_location(ino);
+        block as usize * BS + offset
+    }
+
+    #[test]
+    fn a_file_whose_mapping_stops_short_is_not_written_or_deleted() {
+        let mut fs = default_fs();
+        fs.create_file("/sparse.bin", &pattern(3 * BS, 3)).unwrap();
+        let ino = ino_of(&fs, "/sparse.bin");
+        let blocks = blocks_of(&fs, "/sparse.bin");
+        assert_eq!(blocks.len(), 3);
+        // A hole at logical block 1: `i_size` still claims three blocks.
+        let mut inode = fs.inode(ino).unwrap();
+        inode.block[1] = 0;
+        plant_inode(&mut fs, ino, &inode);
+
+        let before = fs.disk().as_bytes().to_vec();
+        let history = fs.history().len();
+        assert!(matches!(
+            fs.write_file("/sparse.bin", b"short"),
+            Err(Error::CorruptImage(_))
+        ));
+        assert!(matches!(
+            fs.write_file("/sparse.bin", &pattern(20 * BS, 4)),
+            Err(Error::CorruptImage(_))
+        ));
+        assert!(matches!(
+            fs.delete_file("/sparse.bin"),
+            Err(Error::CorruptImage(_))
+        ));
+        assert!(matches!(
+            fs.read_file("/sparse.bin"),
+            Err(Error::CorruptImage(_))
+        ));
+        for block in blocks {
+            assert!(block_used(&fs, block), "block {block} stays allocated");
+        }
+        assert!(fs.disk().as_bytes() == &before[..], "nothing was written");
+        assert_eq!(fs.history().len(), history);
+    }
 }
