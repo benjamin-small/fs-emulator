@@ -150,6 +150,41 @@ pub fn raw_write(disk: &mut Disk, offset: u64, bytes: &[u8]) -> Result<Range<usi
     Ok(start..end)
 }
 
+/// Settle the operation the caller opened with `disk.begin_op`. On `Ok` a
+/// clone of the record is appended to `history` and the record returned. On
+/// `Err` every recorded change is restored in reverse order (the op is
+/// already closed, so the restores are not journaled), `history` is left
+/// alone, and the error is returned. Panics if no operation is open.
+pub fn finish_op(
+    disk: &mut Disk,
+    history: &mut Vec<OpRecord>,
+    result: Result<()>,
+) -> Result<OpRecord> {
+    let record = disk.end_op();
+    if let Err(e) = result {
+        for change in record.changes.iter().rev() {
+            disk.write(change.offset, &change.before);
+        }
+        return Err(e);
+    }
+    history.push(record.clone());
+    Ok(record)
+}
+
+/// Run `body` as one recorded operation named `op`: `begin_op`, the body,
+/// then `finish_op`. For bodies that need only the disk; a filesystem whose
+/// body needs more of itself calls `begin_op` and `finish_op` directly.
+pub fn run_op(
+    disk: &mut Disk,
+    history: &mut Vec<OpRecord>,
+    op: String,
+    body: impl FnOnce(&mut Disk) -> Result<()>,
+) -> Result<OpRecord> {
+    disk.begin_op(op);
+    let result = body(disk);
+    finish_op(disk, history, result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -364,5 +399,81 @@ mod tests {
         let record = disk.end_op();
         let copy = record.clone();
         assert_eq!(copy.events[0].to_string(), "dummy");
+    }
+
+    #[test]
+    fn run_op_on_success_pushes_the_record_and_returns_it() {
+        let mut disk = Disk::new(4, 2);
+        let mut history = Vec::new();
+        let record = run_op(&mut disk, &mut history, "ok".to_string(), |d| {
+            d.write(1, &[5, 6]);
+            d.event(Box::new(Dummy));
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(record.op, "ok");
+        assert_eq!(
+            record.changes,
+            vec![ByteChange {
+                offset: 1,
+                before: vec![0, 0],
+                after: vec![5, 6]
+            }]
+        );
+        assert_eq!(record.event_kinds(), vec!["dummy"]);
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].op, "ok");
+        assert_eq!(history[0].changes, record.changes);
+        assert_eq!(disk.read(1, 2), &[5, 6]);
+        assert!(!disk.op_open());
+    }
+
+    #[test]
+    fn run_op_on_error_restores_every_before_in_reverse_order() {
+        let mut disk = Disk::new(4, 1);
+        disk.write(0, &[9, 9, 9, 9]);
+        let mut history = Vec::new();
+        run_op(&mut disk, &mut history, "first".to_string(), |_| Ok(())).unwrap();
+        // Overlapping writes: only a reverse-order restore gets back to 9 9 9 9.
+        let err = run_op(&mut disk, &mut history, "fails".to_string(), |d| {
+            d.write(0, &[1, 1]);
+            d.write(1, &[2, 2]);
+            Err(Error::DiskFull)
+        })
+        .unwrap_err();
+        assert_eq!(err, Error::DiskFull);
+        assert_eq!(disk.as_bytes(), &[9, 9, 9, 9]);
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].op, "first");
+        assert!(!disk.op_open());
+    }
+
+    #[test]
+    fn finish_op_settles_an_op_the_caller_opened() {
+        let mut disk = Disk::new(4, 1);
+        let mut history = Vec::new();
+        disk.begin_op("kept");
+        disk.write(0, &[7]);
+        let record = finish_op(&mut disk, &mut history, Ok(())).unwrap();
+        assert_eq!(record.op, "kept");
+        assert_eq!(history.len(), 1);
+        disk.begin_op("dropped");
+        disk.write(0, &[8]);
+        disk.write(3, &[8]);
+        assert_eq!(
+            finish_op(&mut disk, &mut history, Err(Error::InvalidName)).unwrap_err(),
+            Error::InvalidName
+        );
+        assert_eq!(disk.as_bytes(), &[7, 0, 0, 0]);
+        assert_eq!(history.len(), 1);
+        assert!(!disk.op_open());
+    }
+
+    #[test]
+    #[should_panic(expected = "no operation is open")]
+    fn finish_op_without_an_open_op_panics() {
+        let mut disk = Disk::new(4, 1);
+        let mut history = Vec::new();
+        let _ = finish_op(&mut disk, &mut history, Ok(()));
     }
 }

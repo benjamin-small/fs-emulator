@@ -144,6 +144,8 @@ impl FatFs {
     /// appended to history and returned. On failure the operation is rolled
     /// back byte-for-byte (every recorded change is restored in reverse
     /// order) and leaves no history entry; the error is then returned.
+    /// The body needs all of `FatFs`, not only the disk, so this opens the
+    /// op itself and leaves the settling to the shared `fs_core::finish_op`.
     fn run_op(
         &mut self,
         op: String,
@@ -151,16 +153,7 @@ impl FatFs {
     ) -> Result<OpRecord> {
         self.disk.begin_op(op);
         let result = body(self);
-        let record = self.disk.end_op();
-        if let Err(e) = result {
-            // The op is closed, so these restores are not re-journaled.
-            for change in record.changes.iter().rev() {
-                self.disk.write(change.offset, &change.before);
-            }
-            return Err(e);
-        }
-        self.history.push(record.clone());
-        Ok(record)
+        fs_core::finish_op(&mut self.disk, &mut self.history, result)
     }
 
     /// The gate every path-based method passes first: `CorruptImage` while

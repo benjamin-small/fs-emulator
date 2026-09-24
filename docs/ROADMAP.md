@@ -24,8 +24,8 @@ These hold for every filesystem the project adds.
   `Annotation` are what the wasm layer and the UI program against.
 - **One crate per filesystem family**, and one `Inner` variant per family in
   the wasm `Volume`. Filesystem-specific inspection is exposed as extra
-  methods that throw a family-specific error code (`NotFat` today) on other
-  volumes; the UI branches on `fsType()`.
+  methods that throw a family-specific error code (`NotFat`, `NotExt`) on
+  other volumes; the UI branches on `fsType()`.
 - **The UI is region-driven.** The hex dump, disk ribbon, byte attribution,
   strings overlay, and timeline read `layout()` regions and the journal, not
   FAT structures. Filesystem-specific panels (the FAT map, the entry and chain
@@ -62,20 +62,45 @@ with `Unsupported`. Still to do:
   JavaScript copy of the cluster-count formula, must follow the Rust one (or
   be replaced by a wasm call).
 
-## Then: `crates/ext`
+## In progress: `crates/ext`
 
-ext2 first (superblock, block groups, inodes, bitmaps, directory blocks), then
-ext3 as ext2 plus a journal. Expected shape:
+Decided 2026-09-23, in four slices, each with its spec under
+`docs/superpowers/specs/`. Slice 1 has landed; slice 2 is in review on
+`feat/ext2`:
 
-- `ExtFs` implementing `FileSystem`; regions for the superblock, group
-  descriptors, block and inode bitmaps, inode tables, and data blocks.
-- Inspection methods of the same kind as FAT's: inode table entries, block
-  ownership, the journal's transactions for ext3.
-- Wasm: `Inner::Ext`, `formatExt2` / `formatExt3`, ext-only methods throwing
-  `NotExt`.
-- UI: a block-group map that replaces the FAT map through `PANELS` when an
-  ext volume is mounted, an inode inspector, and scenarios that show indirect
-  blocks and, for ext3, a journaled write replaying.
+- **Slice 1, the adapter seam** (`2026-09-23-fs-adapter-design.md`): every
+  FAT assumption in `web/ui` sits behind `FsAdapter`; see "What stays
+  fixed".
+- **Slice 2, `crates/ext`** (`2026-09-23-ext2-design.md`): `ExtFs`
+  implements `FileSystem` over a minimal ext2 revision 1 disk (1 KiB blocks,
+  128-byte inodes, the `filetype` and `sparse_super` features, direct,
+  single-, and double-indirect blocks, goal-based allocation by block group,
+  overwrite in place). `layout()` names each group's superblock or backup,
+  descriptors, bitmaps, inode table, and data; `annotate_sector()` decodes
+  the superblock, descriptors, bitmaps, inodes, directory entries, and
+  indirect pointers; a raw write that breaks the primary superblock or
+  descriptors raises the `CorruptImage` gate. `e2fsck -fn`, `dumpe2fs`, and
+  `debugfs` check its images in CI.
+- **Slice 2, generic wasm support:** `Inner::Ext`, `Volume.formatExt2` with
+  `ExtFormatOptions`, `fromImage` detection by the ext magic before FAT's
+  signature (an image with neither throws `Unsupported`), `fsType()` of
+  `"ext2"`, and the `NotFat` / `NotExt` codes (`blockGroupCount`, the one
+  ext-only method the spec names for this slice: decision 3, section 8). The
+  explorer refuses an ext image with the status `no adapter for ext2`.
+
+Still to do:
+
+- **Slice 3, the ext3 journal:** `has_journal` on the reserved inode 8,
+  `formatExt3`, and journaled operations the timeline can replay.
+- **Slice 4, the explorer:** an ext adapter under `web/ui/src/fs/`, ext-only
+  wasm DTOs (superblock, inodes, block owners), a block-group map that
+  replaces the FAT map through `PANELS`, an inode inspector, the terminal's
+  ext vocabulary, and scenarios that show indirect blocks and, for ext3, a
+  journaled write replaying. It inherits the `web/ui` seams listed under
+  "Deferred, by area", decides whether an ext volume's labels say "block"
+  instead of "sector", and gives `Unsupported` from `fromImage` its own
+  status text (an unrecognised image now shows the generic "That isn't
+  supported yet.").
 
 ## Core API additions
 
@@ -89,6 +114,16 @@ already stores it).
 Known and accepted; not bugs.
 
 **`crates/fat`**: NT lowercase bits in short entries are not set.
+
+**`crates/ext`**: `s_wtime` (every operation) and the zeroed tails of the
+pointer blocks a shrinking `write_file` keeps change bytes with no event, so
+slice 4's attribution will see bytes no event explains. `fs_core::run_op` has
+no caller yet (FAT and ext keep their own `run_op`). A last block group too
+small for its metadata throws `InvalidGeometry` from `formatExt2` and
+`CorruptImage` from `fromImage` (for example 8,194 to 8,260 blocks with 512
+inodes per group); `crates/wasm/README.md` gives the range and the intended
+`mke2fs -t ext2 -b 1024 -I 128 -O none,filetype,sparse_super` recipe for a
+loadable image, which has not yet been run against the loader.
 
 **`crates/wasm`**: `init` is exported by wasm-bindgen despite being private.
 `vite-plugin-top-level-await` and its `@swc/core` pin may be removable from
@@ -195,12 +230,17 @@ any of this underneath it.
 2. A spec under `docs/superpowers/specs/` first, then a plan under
    `docs/superpowers/plans/`. Specs are binding; plans record the build.
 3. Mount test behind `--ignored`, like `crates/fat/tests/mount_macos.rs`.
-4. Wasm: an `Inner` variant, a `formatXxx` constructor, `fromImage`
-   detection, family-specific inspection methods with a `NotXxx` error code,
-   TypeScript types for any new DTOs.
+4. Wasm: an `Inner` variant, a `formatXxx` constructor, the family's
+   signature in `detect` (`crates/wasm/src/volume.rs`) and a `fromImage` arm
+   for it, family-specific inspection methods with a `NotXxx` error code,
+   TypeScript types for any new DTOs. `detect` checks the more specific
+   signature first: ext's magic at byte 1080 runs before FAT's `55 AA` at
+   510, which a bootable ext image can also carry, and an image matching no
+   signature throws `Unsupported`.
 5. UI: extend `FsFamilyId` in `web/ui/src/fs/adapter.ts`, implement
    `FsAdapter` under `web/ui/src/fs/<family>/`, register it in `fs/index.ts`
-   and `fs/panels.ts`, add its signature to `detect`, and write scenarios
-   that teach what is different about this filesystem.
+   (where `familyIdOf` maps the `fsType()` string to it) and `fs/panels.ts`,
+   and write scenarios that teach what is different about this filesystem.
+   The UI does no signature detection of its own; `fromImage` does it.
 6. CI already builds every crate for `wasm32-unknown-unknown` and runs the
    web builds; nothing to add unless the crate needs a new tool.

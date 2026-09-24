@@ -58,6 +58,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "ext"
+version = "0.1.0"
+dependencies = [
+ "fs-core",
+]
+
+[[package]]
 name = "fat"
 version = "0.1.0"
 dependencies = [
@@ -79,6 +86,7 @@ name = "fs-emulator-wasm"
 version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
+ "ext",
  "fat",
  "fs-core",
  "js-sys",

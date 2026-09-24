@@ -1,8 +1,9 @@
 //! The one class a UI talks to. Generic operations go through the
-//! `FileSystem` trait; FAT-specific inspection is gated on the inner variant.
+//! `FileSystem` trait; family-specific inspection is gated on the inner variant.
 
 use crate::dto;
-use crate::error::{js_error, to_js};
+use crate::error::{js_error, to_js, BAD_ARGUMENT, NOT_EXT, NOT_FAT};
+use ext::ExtFs;
 use fat::FatFs;
 use fs_core::FileSystem;
 use js_sys::Object;
@@ -12,34 +13,75 @@ use wasm_bindgen::prelude::*;
 
 enum Inner {
     Fat(FatFs),
+    Ext(ExtFs),
 }
 
 /// The family an image's signature names; `from_image` picks the parser from it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Detected {
+    Ext,
     Fat,
     Unknown,
 }
 
-/// Detection rule: FAT when the image is at least one 512-byte sector long
-/// and bytes 510..512 are `55 AA`. Whether the BPB inside parses is
-/// `FatFs::from_image`'s job, not this function's.
-///
-/// Reserved for the ext slice: an ext superblock is recognised by the `u16le`
-/// at offset 1080 equal to `0xEF53`, and that check must run before the FAT
-/// check because a bootable ext image can also carry `55 AA` at 510. Once
-/// `Inner::Ext` exists, `Unknown` becomes
-/// `Unsupported("no recognisable filesystem signature")` in `from_image`.
+/// Byte offset of `s_magic` (superblock offset 56) in an ext image: 1080.
+const EXT_MAGIC_OFFSET: usize = ext::SUPERBLOCK_OFFSET + 56;
+
+/// Detection rule, in order: ext when the image reaches byte 1082 and the
+/// `u16le` at 1080 is `0xEF53`; then FAT when the image is at least one
+/// 512-byte sector long and bytes 510..512 are `55 AA`. ext goes first
+/// because a bootable ext image can also carry `55 AA` at 510. Whether the
+/// metadata behind the signature parses is the family parser's job, not
+/// this function's.
 fn detect(bytes: &[u8]) -> Detected {
-    if bytes.len() >= 512 && bytes[510..512] == [0x55, 0xAA] {
+    let ext_magic = bytes
+        .get(EXT_MAGIC_OFFSET..EXT_MAGIC_OFFSET + 2)
+        .map(|m| u16::from_le_bytes([m[0], m[1]]));
+    if ext_magic == Some(ext::EXT2_MAGIC) {
+        Detected::Ext
+    } else if has_fat_signature(bytes) {
         Detected::Fat
     } else {
         Detected::Unknown
     }
 }
 
+/// Whether bytes 510..512 are FAT's `55 AA` boot signature.
+fn has_fat_signature(bytes: &[u8]) -> bool {
+    bytes.len() >= 512 && bytes[510..512] == [0x55, 0xAA]
+}
+
+/// Parse `bytes` as the family `detect` names. An image that carries the
+/// ext magic but does not parse as ext, and also carries `55 AA` at 510,
+/// is handed to the FAT parser, whose result (error included) is returned:
+/// a FAT volume can hold `53 EF` at 1080 in its FAT or root directory.
+fn load(bytes: Vec<u8>) -> fs_core::Result<Inner> {
+    match detect(&bytes) {
+        Detected::Ext if has_fat_signature(&bytes) => match ExtFs::from_image(bytes.clone()) {
+            Ok(fs) => Ok(Inner::Ext(fs)),
+            Err(_) => FatFs::from_image(bytes).map(Inner::Fat),
+        },
+        Detected::Ext => ExtFs::from_image(bytes).map(Inner::Ext),
+        Detected::Fat => FatFs::from_image(bytes).map(Inner::Fat),
+        Detected::Unknown => Err(fs_core::Error::Unsupported(
+            "no recognisable filesystem signature".into(),
+        )),
+    }
+}
+
 /// Largest volume the wrapper will allocate in browser memory.
 pub const MAX_VOLUME_BYTES: u64 = 256 * 1024 * 1024;
+
+/// `BadArgument` when a volume of `bytes` would pass `MAX_VOLUME_BYTES`.
+fn check_volume_size(bytes: u64) -> Result<(), JsValue> {
+    if bytes > MAX_VOLUME_BYTES {
+        return Err(js_error(
+            BAD_ARGUMENT,
+            &format!("volume of {bytes} bytes exceeds the {MAX_VOLUME_BYTES}-byte limit"),
+        ));
+    }
+    Ok(())
+}
 
 #[wasm_bindgen]
 pub struct Volume {
@@ -47,7 +89,7 @@ pub struct Volume {
 }
 
 // `Result::unwrap_err` requires the `Ok` type to implement `Debug`. Neither
-// `fat::FatFs` nor `fs_core::Disk` derive it, so this is written by hand
+// filesystem type nor `fs_core::Disk` derives it, so this is written by hand
 // rather than derived; it is never shown to JS, only used by `.unwrap_err()`
 // in tests and any other Rust-side debug formatting.
 impl std::fmt::Debug for Volume {
@@ -64,11 +106,11 @@ fn to_value<T: Serialize>(value: &T) -> Result<JsValue, JsValue> {
         .serialize_missing_as_null(true);
     value
         .serialize(&serializer)
-        .map_err(|e| js_error("BadArgument", &e.to_string()))
+        .map_err(|e| js_error(BAD_ARGUMENT, &e.to_string()))
 }
 
 fn from_value<T: serde::de::DeserializeOwned>(value: JsValue) -> Result<T, JsValue> {
-    serde_wasm_bindgen::from_value(value).map_err(|e| js_error("BadArgument", &e.to_string()))
+    serde_wasm_bindgen::from_value(value).map_err(|e| js_error(BAD_ARGUMENT, &e.to_string()))
 }
 
 /// Reject any own key of `value` that is not in `allowed`. `#[serde(deny_unknown_fields)]`
@@ -79,10 +121,7 @@ fn reject_unknown_keys(value: &JsValue, allowed: &[&str]) -> Result<(), JsValue>
     for key in Object::keys(value.unchecked_ref::<Object>()).iter() {
         let key = key.as_string().unwrap_or_default();
         if !allowed.contains(&key.as_str()) {
-            return Err(js_error(
-                "BadArgument",
-                &format!("unknown option \"{key}\""),
-            ));
+            return Err(js_error(BAD_ARGUMENT, &format!("unknown option \"{key}\"")));
         }
     }
     Ok(())
@@ -92,20 +131,30 @@ impl Volume {
     fn fs(&self) -> &dyn FileSystem {
         match &self.inner {
             Inner::Fat(f) => f,
+            Inner::Ext(e) => e,
         }
     }
 
     fn fs_mut(&mut self) -> &mut dyn FileSystem {
         match &mut self.inner {
             Inner::Fat(f) => f,
+            Inner::Ext(e) => e,
         }
     }
 
-    /// The FAT volume: `Ok` for the only variant today; the `NotFat` arm
-    /// arrives with `Inner::Ext`.
+    /// The FAT volume, or `NotFat` on any other family.
     fn fat(&self) -> Result<&FatFs, JsValue> {
         match &self.inner {
             Inner::Fat(f) => Ok(f),
+            Inner::Ext(_) => Err(js_error(NOT_FAT, "not a FAT volume")),
+        }
+    }
+
+    /// The ext volume, or `NotExt` on any other family.
+    fn ext(&self) -> Result<&ExtFs, JsValue> {
+        match &self.inner {
+            Inner::Ext(e) => Ok(e),
+            Inner::Fat(_) => Err(js_error(NOT_EXT, "not an ext volume")),
         }
     }
 
@@ -129,38 +178,39 @@ impl Volume {
             from_value(options)?
         };
         let opts: fat::FormatOptions = opts.into();
-        let bytes = opts.total_sectors as u64 * opts.bytes_per_sector as u64;
-        if bytes > MAX_VOLUME_BYTES {
-            return Err(js_error(
-                "BadArgument",
-                &format!("volume of {bytes} bytes exceeds the {MAX_VOLUME_BYTES}-byte limit"),
-            ));
-        }
+        check_volume_size(opts.total_sectors as u64 * opts.bytes_per_sector as u64)?;
         let fs = FatFs::format(opts).map_err(to_js)?;
         Ok(Volume {
             inner: Inner::Fat(fs),
         })
     }
 
+    /// Format a fresh ext2 volume with 1 KiB blocks. `options` may be `undefined`.
+    #[wasm_bindgen(js_name = formatExt2)]
+    pub fn format_ext2(
+        #[wasm_bindgen(unchecked_param_type = "ExtFormatOptions | undefined")] options: JsValue,
+    ) -> Result<Volume, JsValue> {
+        let opts: dto::ExtFormatOptions = if options.is_undefined() || options.is_null() {
+            dto::ExtFormatOptions::default()
+        } else {
+            reject_unknown_keys(&options, dto::ExtFormatOptions::FIELDS)?;
+            from_value(options)?
+        };
+        let opts =
+            ext::ExtFormatOptions::try_from(opts).map_err(|msg| js_error(BAD_ARGUMENT, &msg))?;
+        check_volume_size(u64::from(opts.total_blocks) * u64::from(ext::BLOCK_SIZE))?;
+        let fs = ExtFs::format(opts).map_err(to_js)?;
+        Ok(Volume {
+            inner: Inner::Ext(fs),
+        })
+    }
+
+    /// Load an image of any family `detect` recognises; `Unsupported` otherwise.
     #[wasm_bindgen(js_name = fromImage)]
     pub fn from_image(bytes: Vec<u8>) -> Result<Volume, JsValue> {
-        let len = bytes.len() as u64;
-        if len > MAX_VOLUME_BYTES {
-            return Err(js_error(
-                "BadArgument",
-                &format!("volume of {len} bytes exceeds the {MAX_VOLUME_BYTES}-byte limit"),
-            ));
-        }
-        let fs = match detect(&bytes) {
-            // Both arms parse as FAT today, so an image without the signature
-            // still fails inside `FatFs::from_image` with the same
-            // `CorruptImage` text and code as before. The ext slice adds an
-            // `Ext` arm and turns `Unknown` into `Unsupported`.
-            Detected::Fat | Detected::Unknown => FatFs::from_image(bytes).map_err(to_js)?,
-        };
-        Ok(Volume {
-            inner: Inner::Fat(fs),
-        })
+        check_volume_size(bytes.len() as u64)?;
+        let inner = load(bytes).map_err(to_js)?;
+        Ok(Volume { inner })
     }
 
     #[wasm_bindgen(js_name = fsType)]
@@ -257,7 +307,7 @@ impl Volume {
         let history = self.fs().history();
         let record = history.get(index).ok_or_else(|| {
             js_error(
-                "BadArgument",
+                BAD_ARGUMENT,
                 &format!(
                     "history index {index} is out of range (length {})",
                     history.len()
@@ -282,7 +332,7 @@ impl Volume {
         let disk = self.fs().disk();
         if n as u64 >= disk.sector_count() {
             return Err(js_error(
-                "BadArgument",
+                BAD_ARGUMENT,
                 &format!("sector {n} is out of range (count {})", disk.sector_count()),
             ));
         }
@@ -307,7 +357,7 @@ impl Volume {
             .filter(|&end| end <= disk_len);
         let Some(end) = end else {
             return Err(js_error(
-                "BadArgument",
+                BAD_ARGUMENT,
                 &format!(
                     "range {offset}..{} is out of range (disk is {disk_len} bytes)",
                     offset as u64 + len as u64
@@ -403,9 +453,22 @@ impl Volume {
     }
 }
 
+/// ext-specific inspection. Each throws `code === "NotExt"` on a non-ext volume.
+/// The superblock, inode, and block-ownership DTOs arrive with the explorer's
+/// ext panels; the group count is the one method the spec names as ext-only
+/// for this slice (decision 3, section 8).
+#[wasm_bindgen]
+impl Volume {
+    /// How many block groups the volume has (2 on the default 16 MiB disk).
+    #[wasm_bindgen(js_name = blockGroupCount)]
+    pub fn block_group_count(&self) -> Result<u32, JsValue> {
+        Ok(self.ext()?.geometry().groups)
+    }
+}
+
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
-    use super::{detect, Detected};
+    use super::{detect, load, Detected, Inner, EXT_MAGIC_OFFSET};
 
     #[test]
     fn detect_names_fat_by_the_55_aa_signature_in_a_full_first_sector() {
@@ -425,5 +488,83 @@ mod tests {
         assert_eq!(detect(&long), Detected::Fat);
         let real = fat::FatFs::format(fat::FormatOptions::default()).unwrap();
         assert_eq!(detect(real.disk().as_bytes()), Detected::Fat);
+    }
+
+    #[test]
+    fn detect_names_ext_by_the_superblock_magic_before_fat() {
+        assert_eq!(EXT_MAGIC_OFFSET, 1080);
+        let mut img = vec![0u8; 2048];
+        assert_eq!(detect(&img), Detected::Unknown);
+        img[1080] = 0x53;
+        img[1081] = 0xEF;
+        assert_eq!(detect(&img), Detected::Ext);
+        assert_eq!(detect(&img[..1082]), Detected::Ext);
+        assert_eq!(detect(&img[..1081]), Detected::Unknown);
+        // A boot signature does not outrank the magic: ext is checked first.
+        img[510] = 0x55;
+        img[511] = 0xAA;
+        assert_eq!(detect(&img), Detected::Ext);
+        // Too short to hold the magic, so FAT's rule decides.
+        assert_eq!(detect(&img[..1081]), Detected::Fat);
+        // The magic is little-endian; the byte-swapped value is not ext.
+        img[1080] = 0xEF;
+        img[1081] = 0x53;
+        assert_eq!(detect(&img), Detected::Fat);
+        let real = ext::ExtFs::format(ext::ExtFormatOptions::default()).unwrap();
+        assert_eq!(
+            detect(fs_core::FileSystem::disk(&real).as_bytes()),
+            Detected::Ext
+        );
+    }
+
+    #[test]
+    fn a_fat_image_carrying_the_ext_magic_falls_back_to_fat() {
+        let fat = fat::FatFs::format(fat::FormatOptions::default()).unwrap();
+        let mut bytes = fat.disk().as_bytes().to_vec();
+        // Offset 1080 sits in the first FAT (sectors 1..), in entry 284.
+        bytes[1080] = 0x53;
+        bytes[1081] = 0xEF;
+        assert_eq!(detect(&bytes), Detected::Ext);
+        match load(bytes) {
+            Ok(Inner::Fat(fs)) => assert_eq!(fs.fs_type(), "FAT16"),
+            Ok(Inner::Ext(_)) => panic!("loaded as ext"),
+            Err(e) => panic!("did not load: {e}"),
+        }
+    }
+
+    #[test]
+    fn an_ext_magic_without_the_fat_signature_keeps_the_ext_error() {
+        let mut img = vec![0u8; 4096];
+        img[1080] = 0x53;
+        img[1081] = 0xEF;
+        assert!(matches!(
+            load(img.clone()),
+            Err(fs_core::Error::Unsupported(_))
+        ));
+        // With `55 AA` too, the FAT parser's own error comes back instead.
+        img[510] = 0x55;
+        img[511] = 0xAA;
+        let fat_error = fat::FatFs::from_image(img.clone()).err().unwrap();
+        assert_eq!(load(img).err(), Some(fat_error));
+        // A real ext image with `55 AA` still loads as ext.
+        let ext = ext::ExtFs::format(ext::ExtFormatOptions::default()).unwrap();
+        let mut bytes = fs_core::FileSystem::disk(&ext).as_bytes().to_vec();
+        bytes[510] = 0x55;
+        bytes[511] = 0xAA;
+        assert!(matches!(load(bytes), Ok(Inner::Ext(_))));
+    }
+
+    /// Writes a formatted ext2 image holding `/hello.txt` to the path in
+    /// `FS_EMULATOR_EXT2_IMAGE` when it is set, for loading into the explorer
+    /// by hand; without it the test only checks that the image detects as ext.
+    #[test]
+    fn writes_an_ext2_image_for_the_explorer_when_asked() {
+        let mut fs = ext::ExtFs::format(ext::ExtFormatOptions::default()).unwrap();
+        fs_core::FileSystem::create_file(&mut fs, "/hello.txt", b"hello from ext2\n").unwrap();
+        let bytes = fs_core::FileSystem::disk(&fs).as_bytes().to_vec();
+        assert_eq!(detect(&bytes), Detected::Ext);
+        if let Some(path) = std::env::var_os("FS_EMULATOR_EXT2_IMAGE") {
+            std::fs::write(&path, &bytes).unwrap();
+        }
     }
 }

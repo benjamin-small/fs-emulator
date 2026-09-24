@@ -15,6 +15,7 @@ export type RegionKind = "boot" | "metadata" | "allocationTable" | "directory" |
 export interface Region { name: string; sectors: Range; kind: RegionKind; }
 export interface Annotation { range: Range; label: string; value: string; }
 export interface FormatOptions { bytesPerSector?: number; sectorsPerCluster?: number; totalSectors?: number; fatCount?: number; rootEntries?: number; reservedSectors?: number; volumeLabel?: string; volumeId?: number; enforceFat16Range?: boolean; }
+export interface ExtFormatOptions { totalBlocks?: number; inodesPerGroup?: number; label?: string; uuid?: string; }
 export interface BootSector { oemName: string; bytesPerSector: number; sectorsPerCluster: number; reservedSectors: number; fatCount: number; rootEntries: number; totalSectors: number; media: number; sectorsPerFat: number; sectorsPerTrack: number; heads: number; hiddenSectors: number; driveNumber: number; bootSignature: number; volumeId: number; volumeLabel: string; fsType: string; }
 export interface Geometry { variant: "fat16"; bytesPerSector: number; sectorsPerCluster: number; reservedSectors: number; fatCount: number; sectorsPerFat: number; rootEntries: number; rootDirSectors: number; firstRootDirSector: number; firstDataSector: number; totalSectors: number; clusterCount: number; }
 export type FatEntry = { kind: "free" } | { kind: "next"; cluster: number } | { kind: "endOfChain" } | { kind: "bad" } | { kind: "reserved" };

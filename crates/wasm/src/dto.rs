@@ -257,6 +257,82 @@ impl From<FormatOptions> for fat::FormatOptions {
     }
 }
 
+/// `formatExt2`'s options. Every field optional; absent fields take
+/// `ext::ExtFormatOptions::default()` (16,384 blocks, derived inodes per
+/// group, empty label, the fixed default UUID).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
+pub struct ExtFormatOptions {
+    pub total_blocks: Option<u32>,
+    pub inodes_per_group: Option<u32>,
+    pub label: Option<String>,
+    pub uuid: Option<String>,
+}
+
+impl ExtFormatOptions {
+    /// The camelCase keys a JS caller may pass; see `FormatOptions::FIELDS`
+    /// for why the boundary checks them by hand.
+    pub const FIELDS: &'static [&'static str] = &["totalBlocks", "inodesPerGroup", "label", "uuid"];
+}
+
+/// The on-disk UUID from 32 hex digits, bare or hyphenated 8-4-4-4-12
+/// (either case). Anything else is an error message for `BadArgument`.
+pub fn parse_uuid(text: &str) -> Result<[u8; 16], String> {
+    let bad = || format!("uuid \"{text}\" is not 32 hex digits (optionally hyphenated 8-4-4-4-12)");
+    let bytes = text.as_bytes();
+    let digits: String = if bytes.len() == 36 {
+        if [8, 13, 18, 23].iter().any(|&i| bytes[i] != b'-') {
+            return Err(bad());
+        }
+        text.split('-').collect()
+    } else {
+        text.to_string()
+    };
+    if digits.len() != 32 || !digits.bytes().all(|c| c.is_ascii_hexdigit()) {
+        return Err(bad());
+    }
+    let mut out = [0u8; 16];
+    for (i, byte) in out.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&digits[2 * i..2 * i + 2], 16).map_err(|_| bad())?;
+    }
+    Ok(out)
+}
+
+/// NUL-pad the label to the 16-byte `s_volume_name`. A longer label is an
+/// error message for `BadArgument`, not truncated as FAT's `pad_label` does.
+pub fn ext_label(label: &str) -> Result<[u8; 16], String> {
+    let bytes = label.as_bytes();
+    if bytes.len() > 16 {
+        return Err(format!(
+            "label \"{label}\" is {} bytes; an ext2 label holds at most 16",
+            bytes.len()
+        ));
+    }
+    let mut out = [0u8; 16];
+    out[..bytes.len()].copy_from_slice(bytes);
+    Ok(out)
+}
+
+impl TryFrom<ExtFormatOptions> for ext::ExtFormatOptions {
+    type Error = String;
+
+    fn try_from(o: ExtFormatOptions) -> Result<Self, String> {
+        let d = ext::ExtFormatOptions::default();
+        Ok(ext::ExtFormatOptions {
+            total_blocks: o.total_blocks.unwrap_or(d.total_blocks),
+            inodes_per_group: o.inodes_per_group.or(d.inodes_per_group),
+            label: match o.label {
+                Some(l) => ext_label(&l)?,
+                None => d.label,
+            },
+            uuid: match o.uuid {
+                Some(u) => parse_uuid(&u)?,
+                None => d.uuid,
+            },
+        })
+    }
+}
+
 fn text(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).trim_end().to_string()
 }
@@ -749,6 +825,85 @@ mod tests {
         assert_eq!(pad_label(""), *b"           ");
         assert_eq!(pad_label("A"), *b"A          ");
         assert_eq!(pad_label("TWELVE CHARS"), *b"TWELVE CHAR");
+    }
+
+    #[test]
+    fn ext_format_options_default_to_the_core_defaults() {
+        let core = ext::ExtFormatOptions::try_from(ExtFormatOptions::default()).unwrap();
+        assert_eq!(core, ext::ExtFormatOptions::default());
+        let dto = ExtFormatOptions {
+            total_blocks: Some(8192),
+            inodes_per_group: Some(64),
+            label: Some("teach".into()),
+            uuid: Some("01234567-89AB-cdef-0123-456789abcdef".into()),
+        };
+        let core = ext::ExtFormatOptions::try_from(dto).unwrap();
+        assert_eq!(core.total_blocks, 8192);
+        assert_eq!(core.inodes_per_group, Some(64));
+        assert_eq!(&core.label, b"teach\0\0\0\0\0\0\0\0\0\0\0");
+        assert_eq!(
+            core.uuid,
+            [
+                0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab,
+                0xcd, 0xef
+            ]
+        );
+        assert_eq!(
+            ExtFormatOptions::FIELDS,
+            &["totalBlocks", "inodesPerGroup", "label", "uuid"]
+        );
+    }
+
+    #[test]
+    fn ext_uuids_parse_bare_or_hyphenated_and_nothing_else() {
+        assert_eq!(
+            parse_uuid("e2f5ee00-2026-4923-8000-000000000001"),
+            Ok(ext::DEFAULT_UUID)
+        );
+        assert_eq!(
+            parse_uuid("E2F5EE00202649238000000000000001"),
+            Ok(ext::DEFAULT_UUID)
+        );
+        for bad in [
+            "",
+            "not-a-uuid",
+            "e2f5ee0020264923800000000000000",
+            "e2f5ee00202649238000000000000001ff",
+            "e2f5ee0020264923800000000000000g",
+            "e2f5ee002-026-4923-8000-000000000001",
+            "e2f5ee00-2026-4923-8000-00000000-001",
+            "+2f5ee00202649238000000000000001",
+            "e2f5ee00-2026-4923-8000-0000000000é",
+        ] {
+            let err = parse_uuid(bad).unwrap_err();
+            assert!(err.starts_with("uuid \""), "{bad}: {err}");
+        }
+        let err = ext::ExtFormatOptions::try_from(ExtFormatOptions {
+            uuid: Some("xyz".into()),
+            ..Default::default()
+        })
+        .unwrap_err();
+        assert_eq!(
+            err,
+            "uuid \"xyz\" is not 32 hex digits (optionally hyphenated 8-4-4-4-12)"
+        );
+    }
+
+    #[test]
+    fn ext_labels_hold_sixteen_bytes() {
+        assert_eq!(ext_label(""), Ok([0u8; 16]));
+        assert_eq!(ext_label("sixteen-bytes!!!"), Ok(*b"sixteen-bytes!!!"));
+        assert_eq!(
+            ext_label("seventeen-bytes!!"),
+            Err("label \"seventeen-bytes!!\" is 17 bytes; an ext2 label holds at most 16".into())
+        );
+        // Bytes, not characters: nine two-byte characters are 18 bytes.
+        assert!(ext_label("ééééééééé").is_err());
+        assert!(ext::ExtFormatOptions::try_from(ExtFormatOptions {
+            label: Some("x".repeat(17)),
+            ..Default::default()
+        })
+        .is_err());
     }
 
     #[test]
