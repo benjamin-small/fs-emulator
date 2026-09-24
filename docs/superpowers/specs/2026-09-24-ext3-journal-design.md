@@ -487,9 +487,16 @@ before any write).
 - DTOs (camelCase): `JournalInfo { inode, maxlen, firstBlock, sequence,
   start, head, mode, needsRecovery, maxTransaction }`; `JournalBlock {
   index, block, kind, tid?, home?, escaped?, stale }` with `kind` in
-  `superblock | descriptor | copy | commit | revoke | unused`.
+  `superblock | descriptor | copy | commit | revoke | unused`. Absent
+  optionals serialise as `null`, like every `Option` in the existing DTOs
+  (`tid` is null for the superblock and unused blocks; `home` and `escaped`
+  are null except for copies).
 - Error codes: `NeedsRecovery` joins the table. Journal events serialise
-  like every `ExtEvent` (`kind`, `range`, `text`, and their fields).
+  like every `ExtEvent` through the existing `EventRecord`: `kind`, `text`
+  (the Display string, which carries the tid, block, and index values),
+  and `region` (the event's range; the clean-case `RecoveryScanned` has the
+  empty region `0..0`). Event fields are not exposed as separate DTO
+  members; slice 4 reads them from `text` or adds fields then.
 - `crates/wasm/README.md`: the ext3 constructor, the crash and recovery
   methods, the journal DTOs, the `NeedsRecovery` code, and a "Loading an
   ext3 image" paragraph with the `mke2fs` recipe
