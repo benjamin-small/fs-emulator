@@ -621,14 +621,14 @@ mod transactions {
     use std::collections::BTreeSet;
 
     const BS: usize = 1024;
-    const BOTH: [JournalMode; 2] = [JournalMode::Ordered, JournalMode::Data];
+    pub(super) const BOTH: [JournalMode; 2] = [JournalMode::Ordered, JournalMode::Data];
     /// `s_feature_incompat` of the primary superblock.
-    const FLAG: usize = 1024 + 0x60;
+    pub(super) const FLAG: usize = 1024 + 0x60;
     /// `s_sequence` and `s_start` of the journal superblock (block 82).
-    const JSB_SEQ: usize = 82 * 1024 + 0x18;
+    pub(super) const JSB_SEQ: usize = 82 * 1024 + 0x18;
     /// Journal index `i` is physical block `82 + i` on the default disk.
     const JOURNAL_BLOCK_0: u32 = 82;
-    const MAGIC: [u8; 4] = [0xC0, 0x3B, 0x39, 0x98];
+    pub(super) const MAGIC: [u8; 4] = [0xC0, 0x3B, 0x39, 0x98];
     /// The event kinds a transaction adds to the body's own.
     const JOURNAL_KINDS: [&str; 7] = [
         "recovery_flag_set",
@@ -645,11 +645,11 @@ mod transactions {
     }
 
     /// `(block * 1024, 1024)` for each block: whole-block writes.
-    fn whole(blocks: impl IntoIterator<Item = u32>) -> Vec<(usize, usize)> {
+    pub(super) fn whole(blocks: impl IntoIterator<Item = u32>) -> Vec<(usize, usize)> {
         blocks.into_iter().map(|b| (b as usize * BS, BS)).collect()
     }
 
-    fn texts(record: &OpRecord) -> Vec<String> {
+    pub(super) fn texts(record: &OpRecord) -> Vec<String> {
         record.events.iter().map(|e| e.to_string()).collect()
     }
 
@@ -1211,21 +1211,21 @@ mod transactions {
         }
     }
 
-    const PHASES: [CrashPhase; 3] = [
+    pub(super) const PHASES: [CrashPhase; 3] = [
         CrashPhase::BeforeCommit,
         CrashPhase::AfterCommit,
         CrashPhase::DuringCheckpoint,
     ];
 
     /// A mutation to crash, with the state it needs first.
-    struct Scenario {
-        setup: fn(&mut ExtFs),
-        op: fn(&mut ExtFs) -> Result<OpRecord>,
+    pub(super) struct Scenario {
+        pub(super) setup: fn(&mut ExtFs),
+        pub(super) op: fn(&mut ExtFs) -> Result<OpRecord>,
     }
 
     /// `create_file`, `write_file` growing and shrinking, `delete_file`,
     /// `create_dir`, `remove_dir`.
-    fn scenarios() -> Vec<Scenario> {
+    pub(super) fn scenarios() -> Vec<Scenario> {
         vec![
             Scenario {
                 setup: |_| {},
@@ -1505,5 +1505,565 @@ mod transactions {
         assert_eq!(fs.crash_phase(), Some(CrashPhase::DuringCheckpoint));
         assert_eq!(fs.create_dir("/e").unwrap_err(), Error::NeedsRecovery);
         assert_eq!(fs.crash_phase(), Some(CrashPhase::DuringCheckpoint));
+    }
+}
+
+/// Task 5: `recover()` (spec section 6), judged against the uncrashed and
+/// the pre-operation images.
+mod recovery {
+    use super::common::{changes_in_order, ext3, mask_journal, pattern};
+    use super::transactions::{
+        scenarios, texts, whole, Scenario, BOTH, FLAG, JSB_SEQ, MAGIC, PHASES,
+    };
+    use ext::{
+        encode_commit, encode_descriptor, write_header, CrashPhase, ExtFormatOptions, ExtFs,
+        JournalMode, Tag, BLOCKTYPE_REVOKE, TAG_ESCAPE,
+    };
+    use fs_core::{ByteChange, Error, OpRecord};
+    use std::collections::BTreeSet;
+
+    const BS: usize = 1024;
+
+    fn be32(image: &[u8], at: usize) -> u32 {
+        u32::from_be_bytes([image[at], image[at + 1], image[at + 2], image[at + 3]])
+    }
+
+    /// A volume that crashed at a phase of a scenario's operation.
+    struct Crashed {
+        fs: ExtFs,
+        /// The image after the setup, before the crashed operation.
+        before: Vec<u8>,
+        /// The crashed operation's record.
+        rec: OpRecord,
+        /// The crashed transaction's tid.
+        tid: u32,
+    }
+
+    fn crash(mode: JournalMode, s: &Scenario, phase: CrashPhase) -> Crashed {
+        let mut fs = ext3(mode);
+        (s.setup)(&mut fs);
+        let before = fs.disk().as_bytes().to_vec();
+        let tid = fs.journal_info().unwrap().sequence;
+        fs.arm_crash(phase).unwrap();
+        let rec = (s.op)(&mut fs).unwrap();
+        assert!(fs.needs_recovery());
+        Crashed {
+            fs,
+            before,
+            rec,
+            tid,
+        }
+    }
+
+    #[test]
+    fn the_recover_record_replays_every_tag_in_order_then_empties_the_journal() {
+        for (mode, homes) in [
+            (JournalMode::Ordered, vec![1, 2, 3, 4, 5, 6, 69]),
+            (
+                JournalMode::Data,
+                vec![1, 2, 3, 4, 5, 6, 69, 1111, 1112, 1113],
+            ),
+        ] {
+            for phase in [CrashPhase::AfterCommit, CrashPhase::DuringCheckpoint] {
+                let Crashed { mut fs, rec, .. } = crash(mode, &scenarios()[0], phase);
+                assert_eq!(rec.op, format!("create_file /f (crashed {phase})"));
+                let rec = fs.recover().unwrap();
+                let what = format!("{mode:?} {phase:?}");
+                // The descriptor is at journal block 1 (block 83); copy k is
+                // at journal block k + 2.
+                let n = homes.len();
+                let mut want = whole(homes.iter().copied());
+                want.push((JSB_SEQ, 8));
+                want.push((FLAG, 4));
+                assert_eq!(changes_in_order(&rec), want, "{what}");
+                let mut events = vec![format!(
+                    "scanned the journal from block 1, sequence 1: 1 committed transaction, \
+                     {n} tagged blocks"
+                )];
+                for (k, home) in homes.iter().enumerate() {
+                    events.push(format!(
+                        "replayed block {home} from journal block {} (transaction 1)",
+                        k + 2
+                    ));
+                }
+                events.push("journal emptied; next transaction 3".into());
+                events.push("cleared needs_recovery in the superblock".into());
+                assert_eq!(texts(&rec), events, "{what}");
+                assert_eq!(rec.events[0].region(), Some(JSB_SEQ..JSB_SEQ + 8));
+                for (k, &home) in homes.iter().enumerate() {
+                    let at = home as usize * BS;
+                    assert_eq!(rec.events[k + 1].region(), Some(at..at + BS), "{what}");
+                    let copy = fs.disk().read((84 + k) * BS, BS);
+                    assert!(rec.changes[k].after == copy, "{what}: replay of {home}");
+                }
+                let c = &rec.changes;
+                assert_eq!(c[n].before, [0, 0, 0, 1, 0, 0, 0, 1]);
+                assert_eq!(c[n].after, [0, 0, 0, 3, 0, 0, 0, 0]);
+                // The replayed superblock carries the flag; step 5 clears it.
+                assert_eq!(c[n + 1].before, [6, 0, 0, 0]);
+                assert_eq!(c[n + 1].after, [2, 0, 0, 0]);
+                assert_eq!(rec.events[n + 1].region(), Some(JSB_SEQ..JSB_SEQ + 8));
+                assert_eq!(rec.events[n + 2].region(), Some(FLAG..FLAG + 4));
+                assert_eq!(fs.read_file("/f").unwrap(), pattern(3000));
+            }
+        }
+    }
+
+    #[test]
+    fn a_transaction_without_its_commit_is_discarded_and_nothing_goes_home() {
+        for (mode, n) in [(JournalMode::Ordered, 7), (JournalMode::Data, 10)] {
+            let Crashed {
+                mut fs,
+                before,
+                tid,
+                ..
+            } = crash(mode, &scenarios()[0], CrashPhase::BeforeCommit);
+            let rec = fs.recover().unwrap();
+            assert_eq!(changes_in_order(&rec), vec![(JSB_SEQ, 8), (FLAG, 4)]);
+            assert_eq!(
+                texts(&rec),
+                vec![
+                    format!(
+                        "scanned the journal from block 1, sequence {tid}: 0 committed \
+                         transactions, 0 tagged blocks"
+                    ),
+                    format!("discarded uncommitted transaction {tid} ({n} tagged blocks)"),
+                    format!("journal emptied; next transaction {}", tid + 1),
+                    "cleared needs_recovery in the superblock".into(),
+                ]
+            );
+            // The discard points at the descriptor, journal block 1.
+            assert_eq!(rec.events[1].region(), Some(83 * BS..84 * BS));
+            assert_eq!(rec.changes[0].after, [0, 0, 0, 2, 0, 0, 0, 0]);
+            assert_eq!(rec.changes[1].after, [2, 0, 0, 0]);
+            // Outside the journal's blocks (82..=1105) the image is the one
+            // before the operation, plus in ordered mode the file's data,
+            // already home in blocks 1111..=1113 at step 2.
+            let mut want = before;
+            if mode == JournalMode::Ordered {
+                want[1111 * BS..1111 * BS + 3000].copy_from_slice(&pattern(3000));
+            }
+            let image = fs.disk().as_bytes();
+            assert!(image[..82 * BS] == want[..82 * BS], "{mode:?}");
+            assert!(image[1106 * BS..] == want[1106 * BS..], "{mode:?}");
+        }
+    }
+
+    #[test]
+    fn recover_on_a_clean_volume_records_one_event_and_no_change() {
+        let mut used = ext3(JournalMode::Data);
+        used.create_file("/f", b"f").unwrap();
+        let volumes = [
+            ext3(JournalMode::Ordered),
+            used,
+            ExtFs::format(ExtFormatOptions::default()).unwrap(),
+        ];
+        for mut fs in volumes {
+            let image = fs.disk().as_bytes().to_vec();
+            let (history, info) = (fs.history().len(), fs.journal_info());
+            let rec = fs.recover().unwrap();
+            assert_eq!(rec.op, "recover");
+            assert!(rec.changes.is_empty());
+            assert_eq!(rec.event_kinds(), vec!["recovery_scanned"]);
+            assert_eq!(texts(&rec), vec!["journal is clean; nothing to replay"]);
+            assert_eq!(rec.events[0].region(), Some(0..0));
+            assert_eq!(fs.history().len(), history + 1);
+            assert_eq!(fs.history().last().unwrap().op, "recover");
+            assert!(fs.disk().as_bytes() == image.as_slice());
+            assert_eq!(fs.journal_info(), info);
+        }
+    }
+
+    #[test]
+    fn an_escaped_copy_goes_home_with_its_magic() {
+        for phase in [CrashPhase::AfterCommit, CrashPhase::DuringCheckpoint] {
+            let mut fs = ext3(JournalMode::Data);
+            let mut data = pattern(1024);
+            data[..4].copy_from_slice(&MAGIC);
+            fs.arm_crash(phase).unwrap();
+            fs.create_file("/magic", &data).unwrap();
+            // Journal block 9 (block 91) holds the escaped copy; the home
+            // block is still zero.
+            assert_eq!(fs.disk().read(91 * BS, 4), [0, 0, 0, 0]);
+            assert!(fs.disk().sector(1111).iter().all(|&b| b == 0));
+            let rec = fs.recover().unwrap();
+            let replayed = "replayed block 1111 from journal block 9 (transaction 1)";
+            assert!(texts(&rec).iter().any(|t| t == replayed), "{phase:?}");
+            assert_eq!(fs.disk().sector(1111), &data[..]);
+            assert_eq!(fs.read_file("/magic").unwrap(), data);
+        }
+    }
+
+    #[test]
+    fn a_revoke_block_in_the_log_is_unsupported_and_changes_nothing() {
+        let Crashed { mut fs, .. } = crash(
+            JournalMode::Ordered,
+            &scenarios()[0],
+            CrashPhase::AfterCommit,
+        );
+        // The commit is at journal block 9 (block 91); a revoke block of
+        // the next sequence follows it.
+        let mut revoke = [0u8; 12];
+        write_header(&mut revoke, BLOCKTYPE_REVOKE, 2);
+        fs.write_raw(92 * BS as u64, &revoke).unwrap();
+        let image = fs.disk().as_bytes().to_vec();
+        let history = fs.history().len();
+        assert_eq!(
+            fs.recover().unwrap_err(),
+            Error::Unsupported("journal revoke records".into())
+        );
+        assert!(fs.disk().as_bytes() == image.as_slice());
+        assert_eq!(fs.history().len(), history);
+        assert!(fs.needs_recovery());
+    }
+
+    #[test]
+    fn a_tag_outside_the_volume_is_corrupt_and_changes_nothing() {
+        let Crashed { mut fs, .. } = crash(
+            JournalMode::Ordered,
+            &scenarios()[0],
+            CrashPhase::AfterCommit,
+        );
+        let tags = [Tag {
+            block: 16_384,
+            flags: 0,
+        }];
+        let descriptor = encode_descriptor(1, &fs.superblock().uuid, &tags);
+        fs.write_raw(83 * BS as u64, &descriptor).unwrap();
+        let image = fs.disk().as_bytes().to_vec();
+        let history = fs.history().len();
+        assert_eq!(
+            fs.recover().unwrap_err(),
+            Error::CorruptImage(
+                "journal descriptor at journal block 1 tags block 16384, outside the \
+                 16384-block volume"
+                    .into()
+            )
+        );
+        assert!(fs.disk().as_bytes() == image.as_slice());
+        assert_eq!(fs.history().len(), history);
+        assert!(fs.needs_recovery());
+    }
+
+    #[test]
+    fn a_foreign_log_with_two_committed_transactions_replays_both_in_order() {
+        let fs = ext3(JournalMode::Ordered);
+        let uuid = fs.superblock().uuid;
+        let mut image = fs.disk().as_bytes().to_vec();
+        let mut put = |index: usize, block: &[u8]| {
+            let at = (82 + index) * BS;
+            image[at..at + BS].copy_from_slice(block);
+        };
+        let tag = |block, flags| Tag { block, flags };
+        let mut escaped = [0xC3; 1024];
+        escaped[..4].fill(0);
+        // Transaction 7 wraps: descriptor at 1021, copies at 1022 and 1023,
+        // commit at 1. Transaction 8: descriptor at 2, copies at 3 (block
+        // 2001 again) and 4 (escaped), commit at 5. Transaction 9:
+        // descriptor at 6, its copy at 7, never committed.
+        put(
+            1021,
+            &encode_descriptor(7, &uuid, &[tag(2000, 0), tag(2001, 0)]),
+        );
+        put(1022, &[0xA1; 1024]);
+        put(1023, &[0xB1; 1024]);
+        put(1, &encode_commit(7, 1));
+        put(
+            2,
+            &encode_descriptor(8, &uuid, &[tag(2001, 0), tag(2002, TAG_ESCAPE)]),
+        );
+        put(3, &[0xB2; 1024]);
+        put(4, &escaped);
+        put(5, &encode_commit(8, 1));
+        put(6, &encode_descriptor(9, &uuid, &[tag(2003, 0)]));
+        put(7, &[0xD1; 1024]);
+        // s_sequence 7, s_start 1021, and needs_recovery.
+        image[JSB_SEQ..JSB_SEQ + 8].copy_from_slice(&[0, 0, 0, 7, 0, 0, 0x03, 0xFD]);
+        image[FLAG] = 0x06;
+        let mut fs = ExtFs::from_image(image).unwrap();
+        assert!(fs.needs_recovery());
+        assert_eq!(fs.journal_info().unwrap().start, 1021);
+
+        let rec = fs.recover().unwrap();
+        assert_eq!(
+            texts(&rec),
+            vec![
+                "scanned the journal from block 1021, sequence 7: 2 committed transactions, \
+                 4 tagged blocks",
+                "replayed block 2000 from journal block 1022 (transaction 7)",
+                "replayed block 2001 from journal block 1023 (transaction 7)",
+                "replayed block 2001 from journal block 3 (transaction 8)",
+                "replayed block 2002 from journal block 4 (transaction 8)",
+                "discarded uncommitted transaction 9 (1 tagged block)",
+                "journal emptied; next transaction 10",
+                "cleared needs_recovery in the superblock",
+            ]
+        );
+        assert_eq!(rec.events[5].region(), Some(88 * BS..89 * BS));
+        assert_eq!(fs.disk().sector(2000), &[0xA1; 1024][..]);
+        assert_eq!(fs.disk().sector(2001), &[0xB2; 1024][..]);
+        let mut home = [0xC3; 1024];
+        home[..4].copy_from_slice(&MAGIC);
+        assert_eq!(fs.disk().sector(2002), &home[..]);
+        assert!(fs.disk().sector(2003).iter().all(|&b| b == 0));
+        assert_eq!(be32(fs.disk().as_bytes(), JSB_SEQ), 10);
+        let info = fs.journal_info().unwrap();
+        assert_eq!(
+            (info.sequence, info.head, info.start, info.needs_recovery),
+            (10, 1, 0, false)
+        );
+    }
+
+    #[test]
+    fn a_flag_set_over_an_empty_journal_is_cleared_and_the_sequence_moves_on() {
+        let mut fs = ext3(JournalMode::Ordered);
+        fs.write_raw(FLAG as u64, &[6, 0, 0, 0]).unwrap();
+        assert!(fs.needs_recovery());
+        let rec = fs.recover().unwrap();
+        assert_eq!(changes_in_order(&rec), vec![(JSB_SEQ, 8), (FLAG, 4)]);
+        assert_eq!(
+            texts(&rec),
+            vec![
+                "journal is clean; nothing to replay",
+                "journal emptied; next transaction 2",
+                "cleared needs_recovery in the superblock",
+            ]
+        );
+        assert_eq!(rec.events[0].region(), Some(JSB_SEQ..JSB_SEQ + 8));
+        assert!(!fs.needs_recovery());
+        assert_eq!(fs.journal_info().unwrap().sequence, 2);
+    }
+
+    #[test]
+    fn recover_never_crashes_and_an_armed_phase_waits_for_the_next_mutation() {
+        let Crashed { mut fs, .. } = crash(
+            JournalMode::Ordered,
+            &scenarios()[4],
+            CrashPhase::AfterCommit,
+        );
+        fs.arm_crash(CrashPhase::DuringCheckpoint).unwrap();
+        let rec = fs.recover().unwrap();
+        assert_eq!(rec.op, "recover");
+        assert!(!rec.event_kinds().contains(&"crashed"));
+        assert!(!fs.needs_recovery());
+        assert_eq!(fs.crash_phase(), Some(CrashPhase::DuringCheckpoint));
+        let rec = fs.create_dir("/e").unwrap();
+        assert_eq!(rec.op, "create_dir /e (crashed during checkpoint)");
+        assert!(fs.needs_recovery());
+    }
+
+    #[test]
+    fn recover_fails_with_the_gate_error_while_the_volume_is_corrupt() {
+        let mut fs = ext3(JournalMode::Ordered);
+        // Zero the ext magic (0x38 of the primary superblock).
+        fs.write_raw(1024 + 0x38, &[0, 0]).unwrap();
+        let err = fs.corruption().unwrap().clone();
+        let history = fs.history().len();
+        assert_eq!(fs.recover().unwrap_err(), err);
+        assert_eq!(fs.history().len(), history);
+    }
+
+    /// `image` with `fs`'s journal masked away (`mask_journal`).
+    fn masked(image: &[u8], fs: &ExtFs) -> Vec<u8> {
+        let mut image = image.to_vec();
+        mask_journal(&mut image, fs);
+        image
+    }
+
+    /// Whether `block`'s bit is set in the block bitmap `image` holds.
+    fn allocated(fs: &ExtFs, image: &[u8], block: u32) -> bool {
+        let geo = fs.geometry();
+        let group = geo.group_of_block(block) as usize;
+        let bitmap = fs.group_descriptors()[group].block_bitmap as usize * BS;
+        let bit = (block - geo.groups_layout[group].first_block) as usize;
+        image[bitmap + bit / 8] & (1 << (bit % 8)) != 0
+    }
+
+    /// The image of `s` run to completion in `mode`.
+    fn uncrashed(mode: JournalMode, s: &Scenario) -> Vec<u8> {
+        let mut fs = ext3(mode);
+        (s.setup)(&mut fs);
+        (s.op)(&mut fs).unwrap();
+        fs.disk().as_bytes().to_vec()
+    }
+
+    /// What a crashed record wrote between the flag (its first change) and
+    /// the journal superblock: ordered mode's data home (spec 5.2 step 2);
+    /// nothing in data mode.
+    fn data_home(rec: &OpRecord) -> &[ByteChange] {
+        let step3 = rec
+            .changes
+            .iter()
+            .position(|c| c.offset == JSB_SEQ)
+            .unwrap();
+        &rec.changes[1..step3]
+    }
+
+    #[test]
+    fn recover_leaves_the_uncrashed_or_the_pre_operation_image_in_every_case() {
+        for mode in BOTH {
+            for s in scenarios() {
+                let whole = uncrashed(mode, &s);
+                for phase in PHASES {
+                    let Crashed {
+                        mut fs,
+                        before,
+                        rec,
+                        tid,
+                    } = crash(mode, &s, phase);
+                    let what = format!("{mode:?} {phase:?} {}", rec.op);
+                    let history = fs.history().len();
+                    let recovered = fs.recover().unwrap();
+                    assert_eq!(recovered.op, "recover", "{what}");
+                    assert_eq!(fs.history().len(), history + 1, "{what}");
+                    let image = fs.disk().as_bytes().to_vec();
+                    // After a commit the transaction is replayed: the image of
+                    // the whole operation. Before it, the transaction is
+                    // discarded: the image before the operation, plus in
+                    // ordered mode the data already written home.
+                    let want = match phase {
+                        CrashPhase::BeforeCommit => {
+                            let mut want = before;
+                            let data = data_home(&rec);
+                            if mode == JournalMode::Data {
+                                assert!(data.is_empty(), "{what}");
+                            }
+                            for c in data {
+                                want[c.offset..c.offset + c.after.len()].copy_from_slice(&c.after);
+                            }
+                            want
+                        }
+                        _ => whole.clone(),
+                    };
+                    assert!(
+                        masked(&image, &fs) == masked(&want, &fs),
+                        "{what}: differs from the expected image"
+                    );
+                    // The journal is empty and `s_sequence` follows section 6:
+                    // tid + 2 after a replay, tid + 1 after a discard.
+                    let next = match phase {
+                        CrashPhase::BeforeCommit => tid + 1,
+                        _ => tid + 2,
+                    };
+                    assert_eq!(
+                        (be32(&image, JSB_SEQ), be32(&image, JSB_SEQ + 4)),
+                        (next, 0),
+                        "{what}"
+                    );
+                    assert_eq!(image[FLAG..FLAG + 4], [2, 0, 0, 0], "{what}");
+                    assert_eq!(fs.superblock().feature_incompat, 0x0002, "{what}");
+                    let info = fs.journal_info().unwrap();
+                    assert_eq!(
+                        (info.sequence, info.head, info.start, info.needs_recovery),
+                        (next, 1, 0, false),
+                        "{what}"
+                    );
+                    assert!(!fs.needs_recovery(), "{what}");
+                    // Mutations run again, from the first log block.
+                    let rec = fs.create_dir("/after").unwrap();
+                    let started = format!("started transaction {next} at journal block 1 (");
+                    assert!(
+                        texts(&rec).iter().any(|t| t.starts_with(&started)),
+                        "{what}: {:?}",
+                        texts(&rec)
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn ordered_before_commit_keeps_the_data_home_and_the_bitmap_as_it_was() {
+        // Per scenario, how many of the blocks written home were free
+        // before the operation: the fresh allocations the discarded
+        // transaction never recorded.
+        let fresh = [3, 19, 0, 0, 0, 0];
+        for (s, fresh) in scenarios().iter().zip(fresh) {
+            let Crashed {
+                mut fs,
+                before,
+                rec,
+                ..
+            } = crash(JournalMode::Ordered, s, CrashPhase::BeforeCommit);
+            fs.recover().unwrap();
+            let image = fs.disk().as_bytes().to_vec();
+            let mut free = BTreeSet::new();
+            for c in data_home(&rec) {
+                assert_eq!(fs.disk().read(c.offset, c.after.len()), &c.after[..]);
+                let block = (c.offset / BS) as u32;
+                let was = allocated(&fs, &before, block);
+                assert_eq!(allocated(&fs, &image, block), was, "block {block}");
+                if !was {
+                    free.insert(block);
+                }
+            }
+            assert_eq!(free.len(), fresh, "{}", rec.op);
+        }
+        // The created file is in no directory; its data is orphaned in
+        // blocks the bitmap calls free.
+        let Crashed { mut fs, .. } = crash(
+            JournalMode::Ordered,
+            &scenarios()[0],
+            CrashPhase::BeforeCommit,
+        );
+        fs.recover().unwrap();
+        assert_eq!(fs.read_file("/f").unwrap_err(), Error::NotFound);
+        assert_eq!(fs.superblock().free_blocks_count, 15_205);
+        assert_eq!(fs.disk().read(1111 * BS, 3000), &pattern(3000)[..]);
+    }
+
+    #[test]
+    fn a_reloaded_crashed_image_recovers_to_the_same_bytes_as_the_volume_in_place() {
+        for mode in BOTH {
+            for s in scenarios() {
+                for phase in PHASES {
+                    let Crashed { mut fs, .. } = crash(mode, &s, phase);
+                    let what = format!("{mode:?} {phase:?}");
+                    let mut loaded = ExtFs::from_image(fs.disk().as_bytes().to_vec()).unwrap();
+                    assert!(loaded.needs_recovery(), "{what}");
+                    assert!(loaded.history().is_empty());
+                    assert_eq!(
+                        loaded.journal_info().unwrap().start,
+                        fs.journal_info().unwrap().start,
+                        "{what}"
+                    );
+                    let here = fs.recover().unwrap();
+                    let there = loaded.recover().unwrap();
+                    assert!(fs.disk().as_bytes() == loaded.disk().as_bytes(), "{what}");
+                    assert_eq!(here.changes, there.changes, "{what}");
+                    assert_eq!(texts(&here), texts(&there), "{what}");
+                    assert_eq!(fs.journal_info(), loaded.journal_info(), "{what}");
+                    assert_eq!(fs.superblock(), loaded.superblock(), "{what}");
+                    assert_eq!(fs.group_descriptors(), loaded.group_descriptors());
+                }
+            }
+        }
+    }
+
+    /// Amendment to Task 4's review (`tid + 1` panicking in debug builds at
+    /// `u32::MAX`): every sequence increment recovery makes uses
+    /// `wrapping_add`, so a volume whose `s_sequence` is already
+    /// `u32::MAX` (reachable only with a raw write) recovers instead of
+    /// panicking, with `s_sequence` wrapping to 0 for a discarded or empty
+    /// scan (section 6 step 4: `expected + 1`, here `0xFFFF_FFFF + 1`).
+    #[test]
+    fn s_sequence_at_u32_max_recovers_by_wrapping_instead_of_panicking() {
+        let mut fs = ext3(JournalMode::Ordered);
+        fs.write_raw(JSB_SEQ as u64, &0xFFFF_FFFFu32.to_be_bytes())
+            .unwrap();
+        fs.write_raw(FLAG as u64, &[6, 0, 0, 0]).unwrap();
+        assert!(fs.needs_recovery());
+        assert_eq!(fs.journal_info().unwrap().sequence, 0xFFFF_FFFF);
+        let rec = fs.recover().unwrap();
+        assert_eq!(
+            texts(&rec),
+            vec![
+                "journal is clean; nothing to replay",
+                "journal emptied; next transaction 0",
+                "cleared needs_recovery in the superblock",
+            ]
+        );
+        assert!(!fs.needs_recovery());
+        assert_eq!(fs.journal_info().unwrap().sequence, 0);
     }
 }

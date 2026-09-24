@@ -603,7 +603,7 @@ mod ext3_transactions {
     use super::common::ext3;
     use super::scripted_sequence::{assert_tools_agree, run_script};
     use super::{both_streams, image_file, pattern, run, tool};
-    use ext::{decode_descriptor, CrashPhase, ExtFs, JournalMode};
+    use ext::{decode_descriptor, ExtFs, JournalMode};
     use fs_core::OpRecord;
 
     const BOTH: [JournalMode; 2] = [JournalMode::Ordered, JournalMode::Data];
@@ -615,7 +615,7 @@ mod ext3_transactions {
     /// The indexes and flags come from the record's bytes: the descriptor
     /// is the first log write, the copies follow it, the commit follows
     /// them.
-    fn logdump_lines(rec: &OpRecord, tid: u32, with_commit: bool) -> Vec<String> {
+    pub(super) fn logdump_lines(rec: &OpRecord, tid: u32, with_commit: bool) -> Vec<String> {
         let log = |offset: usize| {
             (offset / 1024)
                 .checked_sub(JOURNAL_BLOCK_0)
@@ -650,7 +650,7 @@ mod ext3_transactions {
     /// What `debugfs -R "<request>"` prints about transaction `tid`: its
     /// descriptor line, the tag lines that follow it, and its commit line,
     /// trimmed. `None` without debugfs.
-    fn logdump(fs: &ExtFs, name: &str, request: &str, tid: u32) -> Option<Vec<String>> {
+    pub(super) fn logdump(fs: &ExtFs, name: &str, request: &str, tid: u32) -> Option<Vec<String>> {
         let debugfs = tool("debugfs")?;
         let image = image_file(fs, name);
         let output = run(&debugfs, &["-R", request], &image);
@@ -718,43 +718,164 @@ mod ext3_transactions {
             assert_eq!(escaped, mode == JournalMode::Data, "{want:?}");
         }
     }
+}
+
+/// ext3 Task 5: `e2fsck -fy` as the replay oracle (ext3 spec section 10.3,
+/// third and fourth bullets): on a copy of a crashed image it must write
+/// exactly the bytes `recover()` writes.
+mod ext3_recovery {
+    use super::common::{assert_images_agree, ext3, SUPERBLOCK_IGNORED};
+    use super::ext3_transactions::{logdump, logdump_lines};
+    use super::{both_streams, image_file, pattern, run, tool};
+    use ext::{encode_commit, encode_descriptor, CrashPhase, ExtFs, JournalMode, Tag, TAG_ESCAPE};
+
+    const BOTH: [JournalMode; 2] = [JournalMode::Ordered, JournalMode::Data];
+    const PHASES: [CrashPhase; 3] = [
+        CrashPhase::BeforeCommit,
+        CrashPhase::AfterCommit,
+        CrashPhase::DuringCheckpoint,
+    ];
+    const MAGIC: [u8; 4] = [0xC0, 0x3B, 0x39, 0x98];
+    /// Run `e2fsck -fy` on a copy of `fs`'s image and `e2fsck -fn` after
+    /// it, check both, and return the repaired bytes. `None` without
+    /// e2fsck.
+    fn e2fsck_recovered(fs: &ExtFs, name: &str) -> Option<Vec<u8>> {
+        let e2fsck = tool("e2fsck")?;
+        let image = image_file(fs, name);
+        let fix = run(&e2fsck, &["-fy"], &image);
+        let check = run(&e2fsck, &["-fn"], &image);
+        let bytes = std::fs::read(&image).unwrap();
+        std::fs::remove_file(&image).unwrap();
+        let text = both_streams(&fix);
+        assert!(
+            matches!(fix.status.code(), Some(0 | 1)),
+            "e2fsck -fy {name}:\n{text}"
+        );
+        assert!(text.contains("recovering journal"), "{name}:\n{text}");
+        let text = both_streams(&check);
+        assert_eq!(check.status.code(), Some(0), "e2fsck -fn {name}:\n{text}");
+        assert!(!text.contains("Fix?"), "{name}:\n{text}");
+        Some(bytes)
+    }
 
     #[test]
-    fn a_crashed_create_logs_our_tags_and_e2fsck_recovers_it_clean() {
-        let (Some(e2fsck), Some(_)) = (tool("e2fsck"), tool("debugfs")) else {
+    fn assert_images_agree_ignores_only_the_listed_superblock_fields() {
+        let fs = ext3(JournalMode::Ordered);
+        let ours = fs.disk().as_bytes().to_vec();
+        let mut theirs = ours.clone();
+        for (offset, len, _) in SUPERBLOCK_IGNORED {
+            for sb in [1024, 8193 * 1024] {
+                theirs[sb + offset..sb + offset + len].fill(0xEE);
+            }
+        }
+        let geo = fs.geometry();
+        assert_images_agree(&ours, &theirs, geo, "e2fsck's");
+        for at in [1024 + 0x0C, 8193 * 1024 + 0x60, 82 * 1024 + 0x18, 69 * 1024] {
+            let mut theirs = ours.clone();
+            theirs[at] ^= 1;
+            let message = std::panic::catch_unwind(|| {
+                assert_images_agree(&ours, &theirs, geo, "e2fsck's");
+            })
+            .unwrap_err();
+            let message = message.downcast_ref::<String>().unwrap();
+            let want = format!("block {} differs at offset 0x{:03X}", at / 1024, at % 1024);
+            assert!(message.starts_with(&want), "{message}");
+        }
+    }
+
+    #[test]
+    fn e2fsck_replays_a_crashed_create_to_the_bytes_recover_writes() {
+        if tool("e2fsck").is_none() || tool("debugfs").is_none() {
             return;
-        };
+        }
         for mode in BOTH {
-            for phase in [
-                CrashPhase::BeforeCommit,
-                CrashPhase::AfterCommit,
-                CrashPhase::DuringCheckpoint,
-            ] {
+            for phase in PHASES {
                 let mut fs = ext3(mode);
                 fs.create_dir("/d").unwrap();
                 let tid = fs.journal_info().unwrap().sequence;
                 fs.arm_crash(phase).unwrap();
                 let rec = fs.create_file("/d/f", &pattern(3000)).unwrap();
-                let name = format!("ext3-crash-{}-{}", mode.as_str(), phase.as_str());
-                // Plain logdump starts at s_start: our transaction.
+                let name = format!("ext3-replay-{}-{}", mode.as_str(), phase.as_str());
+                // logdump reads our descriptor, tags, and (once written) commit.
                 let with_commit = phase != CrashPhase::BeforeCommit;
                 let got = logdump(&fs, &name, "logdump -a", tid).unwrap();
                 assert_eq!(got, logdump_lines(&rec, tid, with_commit), "{name}");
 
-                let image = image_file(&fs, &name);
-                let fix = run(&e2fsck, &["-fy"], &image);
-                let check = run(&e2fsck, &["-fn"], &image);
-                std::fs::remove_file(&image).unwrap();
-                let text = both_streams(&fix);
-                assert!(
-                    matches!(fix.status.code(), Some(0 | 1)),
-                    "e2fsck -fy {name}:\n{text}"
-                );
-                assert!(text.contains("recovering journal"), "{name}:\n{text}");
-                let text = both_streams(&check);
-                assert_eq!(check.status.code(), Some(0), "e2fsck -fn {name}:\n{text}");
-                assert!(!text.contains("Fix?"), "{name}:\n{text}");
+                let theirs = e2fsck_recovered(&fs, &name).unwrap();
+                fs.recover().unwrap();
+                assert_images_agree(fs.disk().as_bytes(), &theirs, fs.geometry(), "e2fsck's");
             }
         }
+    }
+
+    #[test]
+    fn e2fsck_replays_an_escaped_copy_to_the_bytes_recover_writes() {
+        if tool("e2fsck").is_none() {
+            return;
+        }
+        for phase in [CrashPhase::AfterCommit, CrashPhase::DuringCheckpoint] {
+            let mut fs = ext3(JournalMode::Data);
+            let mut data = pattern(3000);
+            data[..4].copy_from_slice(&MAGIC);
+            fs.arm_crash(phase).unwrap();
+            let rec = fs.create_file("/magic", &data).unwrap();
+            assert!(
+                rec.events
+                    .iter()
+                    .any(|e| e.to_string().ends_with("(block 91) (escaped)")),
+                "the first data block's copy is escaped"
+            );
+            let name = format!("ext3-replay-escaped-{}", phase.as_str());
+            let theirs = e2fsck_recovered(&fs, &name).unwrap();
+            fs.recover().unwrap();
+            assert_images_agree(fs.disk().as_bytes(), &theirs, fs.geometry(), "e2fsck's");
+            assert_eq!(theirs[1111 * 1024..1111 * 1024 + 4], MAGIC);
+            assert_eq!(fs.read_file("/magic").unwrap(), data);
+        }
+    }
+
+    #[test]
+    fn e2fsck_replays_a_foreign_log_of_two_transactions_to_the_bytes_recover_writes() {
+        if tool("e2fsck").is_none() {
+            return;
+        }
+        let fs = ext3(JournalMode::Ordered);
+        let uuid = fs.superblock().uuid;
+        let mut image = fs.disk().as_bytes().to_vec();
+        let mut put = |index: usize, block: &[u8]| {
+            let at = (82 + index) * 1024;
+            image[at..at + 1024].copy_from_slice(block);
+        };
+        let tag = |block, flags| Tag { block, flags };
+        let mut escaped = [0xC3; 1024];
+        escaped[..4].fill(0);
+        // Transaction 7 wraps from journal block 1021 to its commit at 1;
+        // transaction 8 rewrites block 2001 and escapes 2002; transaction 9
+        // never commits.
+        put(
+            1021,
+            &encode_descriptor(7, &uuid, &[tag(2000, 0), tag(2001, 0)]),
+        );
+        put(1022, &[0xA1; 1024]);
+        put(1023, &[0xB1; 1024]);
+        put(1, &encode_commit(7, 1));
+        put(
+            2,
+            &encode_descriptor(8, &uuid, &[tag(2001, 0), tag(2002, TAG_ESCAPE)]),
+        );
+        put(3, &[0xB2; 1024]);
+        put(4, &escaped);
+        put(5, &encode_commit(8, 1));
+        put(6, &encode_descriptor(9, &uuid, &[tag(2003, 0)]));
+        put(7, &[0xD1; 1024]);
+        let jsb = 82 * 1024 + 0x18;
+        image[jsb..jsb + 8].copy_from_slice(&[0, 0, 0, 7, 0, 0, 0x03, 0xFD]);
+        image[1024 + 0x60] = 0x06;
+        let mut fs = ExtFs::from_image(image).unwrap();
+        let theirs = e2fsck_recovered(&fs, "ext3-replay-foreign").unwrap();
+        fs.recover().unwrap();
+        assert_images_agree(fs.disk().as_bytes(), &theirs, fs.geometry(), "e2fsck's");
+        assert_eq!(theirs[jsb..jsb + 8], [0, 0, 0, 10, 0, 0, 0, 0]);
+        assert_eq!(theirs[2002 * 1024..2002 * 1024 + 4], MAGIC);
     }
 }

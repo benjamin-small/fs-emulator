@@ -4,8 +4,10 @@
 //! the wasm boundary share. Everything here is a pure function over byte
 //! slices; every JBD2 field is big-endian. `state` holds the journal of a
 //! mounted volume: opening it, the format-time writer, and `JournalInfo`;
-//! `txn` turns each mutation into one transaction (spec section 5).
+//! `txn` turns each mutation into one transaction (spec section 5);
+//! `recovery` scans and replays the log as a mount does (section 6).
 
+pub mod recovery;
 pub mod state;
 pub mod txn;
 

@@ -12,6 +12,7 @@ use crate::group::{self, Geometry, GroupDescriptor, GroupLayout};
 use crate::inode::{
     Inode, MODE_DIR, MODE_LOST_FOUND, MODE_TYPE_DIR, MODE_TYPE_FILE, MODE_TYPE_MASK,
 };
+use crate::journal::recovery;
 use crate::journal::state::{self, JournalInfo, JournalState};
 use crate::journal::{
     CrashPhase, JournalMode, JournalSuperblock, FEATURE_COMPAT_HAS_JOURNAL, JOURNAL_INO,
@@ -897,6 +898,52 @@ impl ExtFs {
             // an error, but not `sb`/`gds`/`geo`/`corrupt`.
             Ok(())
         })
+    }
+
+    /// Replay or discard what the journal holds, as a mount does (spec
+    /// section 6), as the recorded operation `recover`. A volume that does
+    /// not need recovery (ext2 included) records the operation with no
+    /// changes and the one event `journal is clean; nothing to replay`.
+    /// Otherwise the scan runs first, so its `Unsupported` (a revoke block)
+    /// or `CorruptImage` (a bad tag or log) returns with nothing written;
+    /// then every committed copy goes home, the journal is emptied, and
+    /// `needs_recovery` is cleared. Afterwards `sb` and `gds` are re-read
+    /// and validated as the corruption gate does (a failure marks the
+    /// volume corrupt), the next transaction takes `s_sequence` at the
+    /// first log block, and an armed crash still waits for the next
+    /// mutation: `recover` itself never crashes. Fails with the gate error
+    /// while the volume is corrupt.
+    pub fn recover(&mut self) -> Result<OpRecord> {
+        self.ensure_mounted()?;
+        let journal = match &self.journal {
+            Some(j) if j.needs_recovery => j.clone(),
+            other => {
+                let sequence = other.as_ref().map_or(0, |j| j.sequence);
+                return self.run_op("recover".into(), |fs| {
+                    fs.disk.event(Box::new(ExtEvent::RecoveryScanned {
+                        start: 0,
+                        sequence,
+                        committed: 0,
+                        tagged: 0,
+                        range: 0..0,
+                    }));
+                    Ok(())
+                });
+            }
+        };
+        let found = recovery::scan(&self.disk, &journal)?;
+        let mut next_sequence = journal.sequence;
+        let record = self.run_op("recover".into(), |fs| {
+            next_sequence = recovery::replay(&mut fs.disk, &journal, &found)?;
+            Ok(())
+        })?;
+        self.reparse_metadata();
+        if let Some(j) = self.journal.as_mut() {
+            j.sequence = next_sequence;
+            j.head = j.first;
+            j.needs_recovery = false;
+        }
+        Ok(record)
     }
 }
 
