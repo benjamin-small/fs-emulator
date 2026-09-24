@@ -46,8 +46,12 @@ binding for the crates.
   one sanctioned change: the `mkfs --label` description pinned in
   `tests/shell/help-text.test.ts` becomes `volume label (fat16: up to 11
   characters; ext: up to 16 bytes)` because the flag is shared by both
-  families (section 6). The FAT chrome is unchanged pixel for pixel except
-  for the new Filesystem select inside the Format details.
+  families (section 6). Shape-only edits that a new required field forces on an existing
+  assertion (an object literal in a `toEqual`, a stub that must now carry
+  `sector` or `fileParts`, the removed `MkfsSpec.done` pin) are allowed as
+  long as no FAT string, number, or colour in any expectation changes. The
+  FAT chrome is unchanged pixel for pixel except for the new Filesystem
+  select inside the Format details.
 
 ## Non-goals
 
