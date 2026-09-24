@@ -58,6 +58,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "ext"
+version = "0.1.0"
+dependencies = [
+ "fs-core",
+]
+
+[[package]]
 name = "fat"
 version = "0.1.0"
 dependencies = [

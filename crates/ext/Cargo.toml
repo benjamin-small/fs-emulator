@@ -1,0 +1,10 @@
+[package]
+name = "ext"
+description = "Byte-accurate ext2 filesystem emulator on an in-memory disk: revision 1, 1 KiB blocks, the ext3 journal designed in"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+fs-core = { path = "../fs-core" }
