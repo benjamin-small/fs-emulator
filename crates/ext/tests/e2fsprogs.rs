@@ -289,12 +289,13 @@ mod scripted_sequence {
     /// need 14 directory blocks, past the 12 direct pointers.
     const WIDE_ENTRIES: usize = 700;
 
-    #[test]
-    fn e2fsck_is_clean_and_debugfs_agrees_after_a_scripted_sequence() {
-        let mut fs = ExtFs::format(ExtFormatOptions::default()).unwrap();
+    /// The scripted sequence of spec section 9 on `fs`: `/big.bin` and
+    /// `/grow.bin` reach `big` bytes (300 KiB on ext2; a data-mode ext3
+    /// journal takes at most 256 blocks per transaction, so less there).
+    pub(super) fn run_script(fs: &mut ExtFs, big: usize) {
         fs.create_file("/small.txt", &pattern(100)).unwrap();
         fs.create_file("/mid.bin", &pattern(20 * 1024)).unwrap();
-        fs.create_file("/big.bin", &pattern(300 * 1024)).unwrap();
+        fs.create_file("/big.bin", &pattern(big)).unwrap();
         fs.create_file("/indirect.bin", &pattern(20 * 1024))
             .unwrap();
         fs.create_file("/grow.bin", &pattern(1024)).unwrap();
@@ -310,10 +311,11 @@ mod scripted_sequence {
         // bytes shifted so every kept block changes.
         fs.write_file("/mid.bin", &pattern(5 * 1024 + 7)[7..])
             .unwrap();
-        // Growth from one direct block into the double-indirect range.
-        fs.write_file("/grow.bin", &pattern(300 * 1024 + 3)[3..])
-            .unwrap();
-        // A shrink from the double-indirect range to part of one block.
+        // Growth from one direct block into the double-indirect range
+        // (for `big` above 268 KiB).
+        fs.write_file("/grow.bin", &pattern(big + 3)[3..]).unwrap();
+        // A shrink from the double-indirect range (for `big` above 268 KiB)
+        // to part of one block.
         fs.write_file("/big.bin", &pattern(100)).unwrap();
         // A delete that frees a single-indirect block (20 KiB = 20 data blocks).
         fs.delete_file("/indirect.bin").unwrap();
@@ -328,13 +330,17 @@ mod scripted_sequence {
             fs.create_file(&format!("/wide/entry-{i:03}"), b"").unwrap();
         }
         assert!(fs.stat("/wide").unwrap().size > 12 * 1024);
-        assert_eq!(fs.stat("/grow.bin").unwrap().size, 300 * 1024);
+        assert_eq!(fs.stat("/grow.bin").unwrap().size, big as u64);
         assert_eq!(fs.stat("/big.bin").unwrap().size, 100);
+    }
 
+    /// `e2fsck -fn` is clean and `debugfs` lists, reads, and stats what
+    /// `fs` does (skipped without the tools).
+    pub(super) fn assert_tools_agree(fs: &ExtFs, name: &str) {
         let (Some(e2fsck), Some(debugfs)) = (super::tool("e2fsck"), super::tool("debugfs")) else {
             return;
         };
-        let image = super::image_file(&fs, "sequence");
+        let image = super::image_file(fs, name);
         let fsck = super::run(&e2fsck, &["-fn"], &image);
         let listings: Vec<(&str, std::process::Output)> = ["/", "/many", "/wide"]
             .into_iter()
@@ -388,6 +394,13 @@ mod scripted_sequence {
             "debugfs stat /big.bin:\n{}",
             super::both_streams(&big_stat)
         );
+    }
+
+    #[test]
+    fn e2fsck_is_clean_and_debugfs_agrees_after_a_scripted_sequence() {
+        let mut fs = ExtFs::format(ExtFormatOptions::default()).unwrap();
+        run_script(&mut fs, 300 * 1024);
+        assert_tools_agree(&fs, "sequence");
     }
 }
 
@@ -581,5 +594,167 @@ mod ext3_format {
             &["Total journal blocks: 8192", "Total journal size: 8M"],
             "dumpe2fs -h (262144)",
         );
+    }
+}
+
+/// ext3 Task 4: journaled mutations as e2fsck and debugfs see them (ext3
+/// spec section 10.3, second bullet, and the e2fsck half of the third).
+mod ext3_transactions {
+    use super::common::ext3;
+    use super::scripted_sequence::{assert_tools_agree, run_script};
+    use super::{both_streams, image_file, pattern, run, tool};
+    use ext::{decode_descriptor, CrashPhase, ExtFs, JournalMode};
+    use fs_core::OpRecord;
+
+    const BOTH: [JournalMode; 2] = [JournalMode::Ordered, JournalMode::Data];
+    /// Journal index `i` is physical block `82 + i` on the default disk.
+    const JOURNAL_BLOCK_0: usize = 82;
+
+    /// The lines `debugfs -R "logdump -a"` prints for transaction `tid` as
+    /// `rec` wrote it: the descriptor, one line per tag, and the commit.
+    /// The indexes and flags come from the record's bytes: the descriptor
+    /// is the first log write, the copies follow it, the commit follows
+    /// them.
+    fn logdump_lines(rec: &OpRecord, tid: u32, with_commit: bool) -> Vec<String> {
+        let log = |offset: usize| {
+            (offset / 1024)
+                .checked_sub(JOURNAL_BLOCK_0)
+                .filter(|index| (1..1024).contains(index))
+        };
+        let writes: Vec<(usize, &[u8])> = rec
+            .changes
+            .iter()
+            .filter(|c| c.after.len() == 1024)
+            .filter_map(|c| log(c.offset).map(|i| (i, c.after.as_slice())))
+            .collect();
+        let (descriptor, bytes) = writes[0];
+        let tags = decode_descriptor(bytes).unwrap();
+        let mut lines = vec![format!(
+            "Found expected sequence {tid}, type 1 (descriptor block) at block {descriptor}"
+        )];
+        for (tag, (index, _)) in tags.iter().zip(&writes[1..]) {
+            lines.push(format!(
+                "FS block {} logged at journal block {index} (flags 0x{:x})",
+                tag.block, tag.flags
+            ));
+        }
+        if with_commit {
+            lines.push(format!(
+                "Found expected sequence {tid}, type 2 (commit block) at block {}",
+                writes[tags.len() + 1].0
+            ));
+        }
+        lines
+    }
+
+    /// What `debugfs -R "<request>"` prints about transaction `tid`: its
+    /// descriptor line, the tag lines that follow it, and its commit line,
+    /// trimmed. `None` without debugfs.
+    fn logdump(fs: &ExtFs, name: &str, request: &str, tid: u32) -> Option<Vec<String>> {
+        let debugfs = tool("debugfs")?;
+        let image = image_file(fs, name);
+        let output = run(&debugfs, &["-R", request], &image);
+        std::fs::remove_file(&image).unwrap();
+        assert!(
+            output.status.success(),
+            "{request}:\n{}",
+            both_streams(&output)
+        );
+        let descriptor = format!("Found expected sequence {tid}, type 1 (descriptor block)");
+        let commit = format!("Found expected sequence {tid}, type 2 (commit block)");
+        let mut lines = Vec::new();
+        let mut in_tags = false;
+        for line in String::from_utf8_lossy(&output.stdout).lines() {
+            let line = line.trim();
+            if line.starts_with(&descriptor) {
+                lines.push(line.to_string());
+                in_tags = true;
+            } else if in_tags && line.starts_with("FS block ") {
+                lines.push(line.to_string());
+            } else if line.starts_with(&commit) {
+                lines.push(line.to_string());
+                break;
+            } else if !line.starts_with("Dumping descriptor block") {
+                in_tags = false;
+            }
+        }
+        Some(lines)
+    }
+
+    #[test]
+    fn the_scripted_sequence_is_clean_and_debugfs_agrees_in_both_modes() {
+        for (mode, big) in [
+            (JournalMode::Ordered, 300 * 1024),
+            (JournalMode::Data, 200 * 1024),
+        ] {
+            let mut fs = ext3(mode);
+            run_script(&mut fs, big);
+            assert!(!fs.needs_recovery());
+            assert_eq!(fs.journal_info().unwrap().start, 0);
+            assert_tools_agree(&fs, &format!("ext3-sequence-{}", mode.as_str()));
+        }
+    }
+
+    #[test]
+    fn logdump_reads_our_last_transaction_tag_for_tag() {
+        for mode in BOTH {
+            let mut fs = ext3(mode);
+            run_script(&mut fs, 200 * 1024);
+            // A reload restarts the log at index 1 (spec section 4), so the
+            // walk logdump makes from block 1 reaches the next transaction.
+            let mut fs = ExtFs::from_image(fs.disk().as_bytes().to_vec()).unwrap();
+            let tid = fs.journal_info().unwrap().sequence;
+            let mut data = pattern(3000);
+            data[..4].copy_from_slice(&[0xC0, 0x3B, 0x39, 0x98]);
+            let rec = fs.create_file("/logged.bin", &data).unwrap();
+            let want = logdump_lines(&rec, tid, true);
+            let name = format!("ext3-logdump-{}", mode.as_str());
+            let Some(got) = logdump(&fs, &name, "logdump -aO", tid) else {
+                return;
+            };
+            assert_eq!(got, want, "{mode:?}");
+            // Data mode tags the file's first block and escapes it.
+            let escaped = want.iter().any(|l| l.ends_with("(flags 0x3)"));
+            assert_eq!(escaped, mode == JournalMode::Data, "{want:?}");
+        }
+    }
+
+    #[test]
+    fn a_crashed_create_logs_our_tags_and_e2fsck_recovers_it_clean() {
+        let (Some(e2fsck), Some(_)) = (tool("e2fsck"), tool("debugfs")) else {
+            return;
+        };
+        for mode in BOTH {
+            for phase in [
+                CrashPhase::BeforeCommit,
+                CrashPhase::AfterCommit,
+                CrashPhase::DuringCheckpoint,
+            ] {
+                let mut fs = ext3(mode);
+                fs.create_dir("/d").unwrap();
+                let tid = fs.journal_info().unwrap().sequence;
+                fs.arm_crash(phase).unwrap();
+                let rec = fs.create_file("/d/f", &pattern(3000)).unwrap();
+                let name = format!("ext3-crash-{}-{}", mode.as_str(), phase.as_str());
+                // Plain logdump starts at s_start: our transaction.
+                let with_commit = phase != CrashPhase::BeforeCommit;
+                let got = logdump(&fs, &name, "logdump -a", tid).unwrap();
+                assert_eq!(got, logdump_lines(&rec, tid, with_commit), "{name}");
+
+                let image = image_file(&fs, &name);
+                let fix = run(&e2fsck, &["-fy"], &image);
+                let check = run(&e2fsck, &["-fn"], &image);
+                std::fs::remove_file(&image).unwrap();
+                let text = both_streams(&fix);
+                assert!(
+                    matches!(fix.status.code(), Some(0 | 1)),
+                    "e2fsck -fy {name}:\n{text}"
+                );
+                assert!(text.contains("recovering journal"), "{name}:\n{text}");
+                let text = both_streams(&check);
+                assert_eq!(check.status.code(), Some(0), "e2fsck -fn {name}:\n{text}");
+                assert!(!text.contains("Fix?"), "{name}:\n{text}");
+            }
+        }
     }
 }

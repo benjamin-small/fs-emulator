@@ -14,7 +14,7 @@ pub mod journal;
 pub mod superblock;
 
 pub use dir::DirEntry;
-pub use events::{BitmapKind, ExtEvent};
+pub use events::{BitmapKind, ExtEvent, JournalWriteKind};
 pub use fs::{BlockOwner, BlockRole, ExtFs};
 pub use group::{Geometry, GroupDescriptor, GroupLayout};
 pub use inode::Inode;

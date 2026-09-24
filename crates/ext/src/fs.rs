@@ -13,7 +13,9 @@ use crate::inode::{
     Inode, MODE_DIR, MODE_LOST_FOUND, MODE_TYPE_DIR, MODE_TYPE_FILE, MODE_TYPE_MASK,
 };
 use crate::journal::state::{self, JournalInfo, JournalState};
-use crate::journal::{JournalMode, JournalSuperblock, FEATURE_COMPAT_HAS_JOURNAL, JOURNAL_INO};
+use crate::journal::{
+    CrashPhase, JournalMode, JournalSuperblock, FEATURE_COMPAT_HAS_JOURNAL, JOURNAL_INO,
+};
 use crate::superblock::{
     ExtFormatOptions, Superblock, BLOCK_SIZE, EXT2_MAGIC, FIRST_INO, LOST_FOUND_INO, ROOT_INO,
     SUPERBLOCK_OFFSET,
@@ -379,6 +381,30 @@ impl ExtFs {
         self.journal.as_ref().map(|j| j.mode)
     }
 
+    /// Make the next mutation stop at `phase` (spec section 6). Allowed
+    /// while the volume needs recovery (it waits for the next mutation
+    /// after `recover`); `Unsupported` on ext2.
+    pub fn arm_crash(&mut self, phase: CrashPhase) -> Result<()> {
+        let journal = self
+            .journal
+            .as_mut()
+            .ok_or_else(|| Error::Unsupported("this volume has no journal".into()))?;
+        journal.armed = Some(phase);
+        Ok(())
+    }
+
+    /// Clear an armed crash; nothing to do on ext2.
+    pub fn disarm_crash(&mut self) {
+        if let Some(journal) = self.journal.as_mut() {
+            journal.armed = None;
+        }
+    }
+
+    /// The armed crash phase, if any; `None` on ext2.
+    pub fn crash_phase(&self) -> Option<CrashPhase> {
+        self.journal.as_ref().and_then(|j| j.armed)
+    }
+
     pub fn disk(&self) -> &Disk {
         &self.disk
     }
@@ -515,6 +541,17 @@ impl ExtFs {
             None => Ok(()),
             Some(e) => Err(e.clone()),
         }
+    }
+
+    /// The gate every mutation passes right after `ensure_mounted` (ext3
+    /// spec 5.1 step 1): a volume that needs recovery refuses the mutation
+    /// with `NeedsRecovery` before any path, name, existence, or space
+    /// check.
+    fn ensure_recovered(&self) -> Result<()> {
+        if self.needs_recovery() {
+            return Err(Error::NeedsRecovery);
+        }
+        Ok(())
     }
 
     /// Every entry of directory `dir`, in on-disk order, as
@@ -1214,6 +1251,7 @@ mod create {
     use crate::dir::{self, DirEntry, FT_DIR, FT_FILE};
     use crate::events::ExtEvent;
     use crate::inode::{Inode, MODE_DIR};
+    use crate::journal::txn;
     use crate::superblock::BLOCK_SIZE;
     use fs_core::{path, Error, OpRecord, Result};
 
@@ -1257,12 +1295,16 @@ mod create {
         /// descriptors: `run_op` rolls the disk back on error, and this
         /// restores `sb` and `gds` from before the operation, so the cache
         /// matches the disk again. Every mutation runs through this, never
-        /// through bare `run_op`.
+        /// through bare `run_op`. On ext3 the body runs as one journal
+        /// transaction instead (`txn::run_journaled`, spec section 5).
         pub(super) fn run_mutation(
             &mut self,
             op: String,
             body: impl FnOnce(&mut Self) -> Result<()>,
         ) -> Result<OpRecord> {
+            if let Some(journal) = self.journal.clone() {
+                return txn::run_journaled(self, journal, op, body);
+            }
             let saved_sb = self.sb.clone();
             let saved_gds = self.gds.clone();
             let result = self.run_op(op, body);
@@ -1424,10 +1466,11 @@ mod create {
         }
 
         /// The checks both creates share, in the spec's order: the
-        /// corruption gate, `InvalidPath`, `InvalidName`, `NotFound` or
-        /// `NotADirectory` on the parent, `AlreadyExists`.
+        /// corruption gate, `NeedsRecovery`, `InvalidPath`, `InvalidName`,
+        /// `NotFound` or `NotADirectory` on the parent, `AlreadyExists`.
         fn check_new_entry(&self, path: &str) -> Result<NewEntry> {
             self.ensure_mounted()?;
+            self.ensure_recovered()?;
             let (parent_parts, name) = path::split_parent(path)?;
             dir::validate_name(&name)?;
             let (parent_ino, parent, _) = self.resolve_parent(path)?;
@@ -1576,6 +1619,7 @@ impl ExtFs {
     /// allocates the missing ones after the data (spec section 5).
     fn overwrite_file(&mut self, path: &str, data: &[u8]) -> Result<OpRecord> {
         self.ensure_mounted()?;
+        self.ensure_recovered()?;
         let (ino, old) = self.resolve(path)?;
         Self::check_regular_file(&old)?;
         let size = u32::try_from(data.len()).map_err(|_| Error::FileTooLarge)?;
@@ -1712,6 +1756,7 @@ impl ExtFs {
     /// the inode, set `dtime` and `links_count = 0`, stamp the parent.
     fn unlink_file(&mut self, path: &str) -> Result<OpRecord> {
         self.ensure_mounted()?;
+        self.ensure_recovered()?;
         let (ino, inode) = self.resolve(path)?;
         Self::check_regular_file(&inode)?;
         self.mapped_blocks(&inode)?;
@@ -1735,6 +1780,7 @@ impl ExtFs {
     /// inode (and its `bg_used_dirs_count`), drops the parent's link count.
     fn unlink_dir(&mut self, path: &str) -> Result<OpRecord> {
         self.ensure_mounted()?;
+        self.ensure_recovered()?;
         let parts = path::parse(path)?;
         if parts.is_empty() {
             return Err(Error::InvalidPath);
