@@ -564,9 +564,10 @@ Same skip-locally / hard-fail-under-`CI` rule and helpers as slice 2:
   default option; mke2fs would add `user_xattr acl`), `Journal inode: 8`,
   `Journal backup: inode blocks`, `Journal features: (none)`, `Total
   journal size: 1024k`, `Total journal blocks: 1024`, `Journal sequence:
-  0x00000001`, `Journal start: 0` (dumpe2fs 1.47.4 prints no
-  transaction-length line while `s_max_transaction` is 0); `e2fsck -fn`
-  clean.
+  0x00000001`, `Journal start: 0`; dumpe2fs 1.47.4 also prints `Max
+  transaction length: 1024` (it derives the value from `s_maxlen` when
+  `s_max_transaction` is 0) and shows an 8192-block journal as `Total
+  journal size: 8M`; `e2fsck -fn` clean.
 - After a mixed sequence of mutations in each mode (the slice-2 scripted
   sequence): `e2fsck -fn` clean, `debugfs -R "ls -l"` and `stat` agree as in
   slice 2, and `debugfs -R "logdump -O"` lists the last transaction's tags
