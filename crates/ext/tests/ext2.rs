@@ -396,7 +396,7 @@ fn root_lists_only_lost_found_and_stat_reports_both_directories() {
             name: "lost+found".into(),
             is_dir: true,
             size: 12 * 1_024,
-            created: at,
+            created: None,
             modified: at,
             accessed: at,
         }]
@@ -408,7 +408,7 @@ fn root_lists_only_lost_found_and_stat_reports_both_directories() {
             name: "/".into(),
             is_dir: true,
             size: 1_024,
-            created: at,
+            created: None,
             modified: at,
             accessed: at,
         }
@@ -940,7 +940,7 @@ mod create_ops {
         assert_eq!(info.size, 12);
         assert_eq!(
             (info.created, info.modified, info.accessed),
-            (Some(now), Some(now), Some(now))
+            (None, Some(now), Some(now))
         );
         let inode = fs.inode(12).unwrap();
         assert_eq!(

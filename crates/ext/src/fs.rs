@@ -458,7 +458,9 @@ impl ExtFs {
             name,
             is_dir: inode.is_dir(),
             size: u64::from(inode.size),
-            created: Some(date(inode.ctime)),
+            // ext2 has no birth time: `ctime` is a change time, so it is not a
+            // creation date and the field stays None.
+            created: None,
             modified: Some(date(inode.mtime)),
             accessed: Some(date(inode.atime)),
         }
