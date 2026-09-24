@@ -270,10 +270,11 @@ fn emit(disk: &mut Disk, j: &JournalState, txn: &Transaction) -> Outcome {
             return crashed(CrashPhase::DuringCheckpoint, out.last);
         }
     }
-    // 7. The journal is empty again.
-    let range = out.journal_superblock(j, tid + 1, 0);
+    // 7. The journal is empty again. JBD2 tids wrap on overflow.
+    let next_tid = tid.wrapping_add(1);
+    let range = out.journal_superblock(j, next_tid, 0);
     out.event(ExtEvent::JournalEmptied {
-        next_sequence: tid + 1,
+        next_sequence: next_tid,
         range,
     });
     // 8. needs_recovery cleared.
@@ -354,7 +355,7 @@ pub(crate) fn run_journaled(
     match outcome {
         Outcome::Completed { head } => {
             j.head = head;
-            j.sequence = txn.tid + 1;
+            j.sequence = txn.tid.wrapping_add(1);
         }
         Outcome::Crashed { .. } => {
             j.needs_recovery = true;

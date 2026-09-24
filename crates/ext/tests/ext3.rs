@@ -960,6 +960,20 @@ mod transactions {
     }
 
     #[test]
+    fn a_sequence_at_u32_max_wraps_to_zero_instead_of_panicking() {
+        let mut fs = ext3(JournalMode::Ordered);
+        fs.write_raw(JSB_SEQ as u64, &0xFFFF_FFFFu32.to_be_bytes())
+            .unwrap();
+        assert_eq!(fs.journal_info().unwrap().sequence, 0xFFFF_FFFF);
+        let rec = fs.create_file("/w", b"x").unwrap();
+        assert!(texts(&rec)
+            .iter()
+            .any(|t| t == "journal emptied; next transaction 0"));
+        assert_eq!(fs.disk().read(JSB_SEQ, 4), 0u32.to_be_bytes());
+        assert_eq!(fs.journal_info().unwrap().sequence, 0);
+    }
+
+    #[test]
     fn a_three_block_create_in_ordered_mode_writes_the_spec_sequence() {
         let mut fs = ext3(JournalMode::Ordered);
         let rec = fs.create_file("/f", &pattern(3000)).unwrap();
