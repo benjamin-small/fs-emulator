@@ -17,6 +17,7 @@ use crate::group::{Geometry, GroupDescriptor};
 use crate::inode::Inode;
 use crate::superblock::{Superblock, BLOCK_SIZE, FIRST_INO, SUPERBLOCK_OFFSET};
 use fs_core::{Disk, Error, Result};
+use std::collections::BTreeMap;
 
 const BS: usize = BLOCK_SIZE as usize;
 
@@ -228,6 +229,104 @@ pub fn contiguous_runs(blocks: &[u32]) -> Vec<(usize, usize)> {
         }
     }
     runs
+}
+
+/// Return blocks to their groups (spec section 5): clear each block's bit,
+/// raise the descriptor's and the superblock's free counts, and write the
+/// counters. The blocks' bytes stay as they are (remnants). A block outside
+/// the groups, or whose bit is already clear, is skipped, so the counts
+/// never run ahead of the bitmap. Events: one `BitmapUpdated` per group
+/// touched and one `BlocksFreed` per run of consecutive blocks.
+pub fn free_blocks(ctx: &mut AllocCtx, blocks: &[u32]) {
+    let geo = ctx.geo;
+    let mut sorted: Vec<u32> = blocks
+        .iter()
+        .copied()
+        .filter(|b| (geo.first_data_block..geo.total_blocks).contains(b))
+        .collect();
+    sorted.sort_unstable();
+    sorted.dedup();
+    let mut by_group: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
+    for &b in &sorted {
+        by_group.entry(geo.group_of_block(b)).or_default().push(b);
+    }
+    let mut freed = Vec::new();
+    for (g, members) in by_group {
+        let gl = geo.group(g);
+        let base = gl.block_bitmap as usize * BS;
+        let mut bits = ctx.disk.read(base, BS).to_vec();
+        let (mut lo, mut hi) = (usize::MAX, 0);
+        for b in members {
+            let bit = (b - gl.first_block) as usize;
+            if !bitmap::is_set(&bits, bit) {
+                continue;
+            }
+            bitmap::clear(&mut bits, bit);
+            lo = lo.min(bit / 8);
+            hi = hi.max(bit / 8 + 1);
+            freed.push(b);
+            ctx.gds[g as usize].free_blocks_count += 1;
+            ctx.sb.free_blocks_count += 1;
+        }
+        if lo < hi {
+            ctx.disk.write(base + lo, &bits[lo..hi]);
+            ctx.disk.event(Box::new(ExtEvent::BitmapUpdated {
+                group: g,
+                which: BitmapKind::Blocks,
+                range: base + lo..base + hi,
+            }));
+        }
+    }
+    for (start, len) in contiguous_runs(&freed) {
+        let first = freed[start];
+        ctx.disk.event(Box::new(ExtEvent::BlocksFreed {
+            first,
+            count: len as u32,
+            range: first as usize * BS..(first as usize + len) * BS,
+        }));
+    }
+    if !freed.is_empty() {
+        write_counters(ctx);
+    }
+}
+
+/// Return an inode to its group (spec section 5): clear its bit, raise the
+/// free-inode counts, lower `bg_used_dirs_count` for a directory, and write
+/// the counters. The inode's own bytes are the caller's business (delete
+/// leaves them as remnants). An inode whose bit is already clear is left
+/// alone.
+pub fn free_inode(ctx: &mut AllocCtx, ino: u32, is_dir: bool) {
+    let geo = ctx.geo;
+    if !(1..=geo.inodes_count).contains(&ino) {
+        return;
+    }
+    let g = geo.group_of_inode(ino);
+    let bit = ((ino - 1) % geo.inodes_per_group) as usize;
+    let off = geo.group(g).inode_bitmap as usize * BS + bit / 8;
+    let mut byte = [ctx.disk.read(off, 1)[0]];
+    if !bitmap::is_set(&byte, bit % 8) {
+        return;
+    }
+    bitmap::clear(&mut byte, bit % 8);
+    ctx.disk.write(off, &byte);
+    ctx.disk.event(Box::new(ExtEvent::BitmapUpdated {
+        group: g,
+        which: BitmapKind::Inodes,
+        range: off..off + 1,
+    }));
+    let (block, within) = geo.inode_location(ino);
+    let at = block as usize * BS + within;
+    ctx.disk.event(Box::new(ExtEvent::InodeFreed {
+        inode: ino,
+        range: at..at + Inode::SIZE,
+    }));
+    let gd = &mut ctx.gds[g as usize];
+    gd.free_inodes_count += 1;
+    if is_dir {
+        gd.used_dirs_count = gd.used_dirs_count.saturating_sub(1);
+    }
+    ctx.sb.free_inodes_count += 1;
+    write_counters(ctx);
 }
 
 #[cfg(test)]

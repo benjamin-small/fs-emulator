@@ -200,3 +200,130 @@ mod after_creates {
         assert_clean(&fs, "creates-tiny-full");
     }
 }
+
+/// Task 5: the scripted sequence of spec section 9, judged by `e2fsck` and
+/// read back by `debugfs`.
+mod scripted_sequence {
+    use super::pattern;
+    use ext::{ExtFormatOptions, ExtFs};
+
+    /// The `(name, size)` pairs of a `debugfs -R "ls -l DIR"` listing, in
+    /// disk order, without `.`, `..`, and unused entries.
+    ///
+    /// debugfs's long listing (`debugfs/ls.c`) prints one line per
+    /// directory entry: `%c%6u%c %6o (%d)  %5d  %5d   ` (bracket, inode,
+    /// bracket, octal mode, file type, uid, gid), then the size, then the
+    /// modification time as `%2d-%s-%4d %02d:%02d`, then the name:
+    /// `     12  100644 (1)      0      0     100  1-Jan-1980 00:00 small.txt`.
+    /// Split on whitespace, token 0 is the inode, token 5 the size, and the
+    /// last token the name (this test's names contain no spaces; the date's
+    /// shape does not matter). The brackets are spaces unless `-d` is
+    /// given; they are trimmed anyway. debugfs also lists entries whose
+    /// inode is 0 (unused space, including a removed first-in-block entry
+    /// that kept its name), with a blank date; they are dropped by their
+    /// inode token.
+    fn parse_ls_l(listing: &str) -> Vec<(String, u64)> {
+        listing
+            .lines()
+            .filter_map(|line| {
+                let tokens: Vec<&str> = line.split_whitespace().collect();
+                if tokens.len() < 7 {
+                    return None;
+                }
+                let inode = tokens[0].trim_matches(|c| c == '<' || c == '>');
+                let name = *tokens.last()?;
+                if inode == "0" || name == "." || name == ".." {
+                    return None;
+                }
+                Some((name.to_string(), tokens[5].parse().ok()?))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn parse_ls_l_reads_the_documented_columns() {
+        let listing = "      2   40755 (2)      0      0    1024  1-Jan-1980 00:00 .\n\
+                       \x20     2   40755 (2)      0      0    1024  1-Jan-1980 00:00 ..\n\
+                       \x20    11   40700 (2)      0      0   12288  1-Jan-1980 00:00 lost+found\n\
+                       \x20    12  100644 (1)      0      0     100  1-Jan-1980 00:00 small.txt\n\
+                       \x20     0       0 (1)      0      0       0                   gone.txt\n";
+        assert_eq!(
+            parse_ls_l(listing),
+            vec![
+                ("lost+found".to_string(), 12288),
+                ("small.txt".to_string(), 100)
+            ]
+        );
+    }
+
+    #[test]
+    fn e2fsck_is_clean_and_debugfs_agrees_after_a_scripted_sequence() {
+        let (Some(e2fsck), Some(debugfs)) = (super::tool("e2fsck"), super::tool("debugfs")) else {
+            return;
+        };
+        let mut fs = ExtFs::format(ExtFormatOptions::default()).unwrap();
+        fs.create_file("/small.txt", &pattern(100)).unwrap();
+        fs.create_file("/mid.bin", &pattern(20 * 1024)).unwrap();
+        fs.create_file("/big.bin", &pattern(300 * 1024)).unwrap();
+        fs.create_dir("/many").unwrap();
+        for i in 0..60 {
+            fs.create_file(
+                &format!("/many/entry-{i:02}.txt"),
+                format!("entry {i}\n").as_bytes(),
+            )
+            .unwrap();
+        }
+        // An overwrite that shrinks out of the single-indirect range, with
+        // bytes shifted so every kept block changes.
+        fs.write_file("/mid.bin", &pattern(5 * 1024 + 7)[7..])
+            .unwrap();
+        // Deletes: the first entry of /many's second block, and one merged into its predecessor.
+        fs.delete_file("/many/entry-50.txt").unwrap();
+        fs.delete_file("/many/entry-07.txt").unwrap();
+        fs.create_dir("/scratch").unwrap();
+        fs.remove_dir("/scratch").unwrap();
+
+        let image = super::image_file(&fs, "sequence");
+        let fsck = super::run(&e2fsck, &["-fn"], &image);
+        let listings: Vec<(&str, std::process::Output)> = ["/", "/many"]
+            .into_iter()
+            .map(|dir| {
+                let request = format!("ls -l {dir}");
+                (dir, super::run(&debugfs, &["-R", request.as_str()], &image))
+            })
+            .collect();
+        let big = super::run(&debugfs, &["-R", "cat /big.bin"], &image);
+        let mid = super::run(&debugfs, &["-R", "cat /mid.bin"], &image);
+        std::fs::remove_file(&image).unwrap();
+
+        let report = super::both_streams(&fsck);
+        assert_eq!(fsck.status.code(), Some(0), "e2fsck -fn:\n{report}");
+        assert!(
+            !report.contains("Fix?") && !report.contains("FIXED"),
+            "e2fsck -fn:\n{report}"
+        );
+        for (dir, output) in listings {
+            assert!(
+                output.status.success(),
+                "debugfs ls -l {dir}:\n{}",
+                super::both_streams(&output)
+            );
+            let listed = parse_ls_l(&String::from_utf8_lossy(&output.stdout));
+            let expected: Vec<(String, u64)> = fs
+                .list_dir(dir)
+                .unwrap()
+                .into_iter()
+                .map(|e| (e.name, e.size))
+                .collect();
+            assert_eq!(listed, expected, "debugfs ls -l {dir}");
+        }
+        assert!(
+            big.stdout == fs.read_file("/big.bin").unwrap(),
+            "debugfs cat /big.bin"
+        );
+        assert!(
+            mid.stdout == fs.read_file("/mid.bin").unwrap(),
+            "debugfs cat /mid.bin"
+        );
+    }
+}

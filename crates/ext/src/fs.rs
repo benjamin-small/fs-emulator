@@ -3,9 +3,11 @@
 //! corruption gate after a raw write; bitmaps, inodes, directories, and data
 //! are read from the disk bytes every time.
 
+use crate::alloc;
 use crate::bitmap;
 use crate::blockmap;
 use crate::dir::{self, DirEntry, FT_DIR};
+use crate::events::ExtEvent;
 use crate::group::{self, Geometry, GroupDescriptor, GroupLayout};
 use crate::inode::{
     Inode, MODE_DIR, MODE_LOST_FOUND, MODE_TYPE_DIR, MODE_TYPE_FILE, MODE_TYPE_MASK,
@@ -380,9 +382,6 @@ impl ExtFs {
     }
 }
 
-/// Message of the mutation stubs until the write path lands.
-const MUTATIONS_PENDING: &str = "ext2 mutations arrive in a later task";
-
 /// ext's 32-bit seconds as a calendar date (UTC).
 fn date(secs: u32) -> DateTime {
     DateTime::from_unix_seconds(i64::from(secs))
@@ -513,24 +512,16 @@ impl ExtFs {
         Ok(out)
     }
 
-    /// The stub every mutation returns until the write path lands: the gate
-    /// and the path checks run, then `Unsupported`.
-    fn mutation_pending(&self, path: &str) -> Result<OpRecord> {
-        self.ensure_mounted()?;
-        self.resolve_parent(path)?;
-        Err(Error::Unsupported(MUTATIONS_PENDING.into()))
-    }
-
     pub fn create_file(&mut self, path: &str, data: &[u8]) -> Result<OpRecord> {
         self.create_file_op(path, data)
     }
 
-    pub fn write_file(&mut self, path: &str, _data: &[u8]) -> Result<OpRecord> {
-        self.mutation_pending(path)
+    pub fn write_file(&mut self, path: &str, data: &[u8]) -> Result<OpRecord> {
+        self.overwrite_file(path, data)
     }
 
     pub fn delete_file(&mut self, path: &str) -> Result<OpRecord> {
-        self.mutation_pending(path)
+        self.unlink_file(path)
     }
 
     pub fn create_dir(&mut self, path: &str) -> Result<OpRecord> {
@@ -538,7 +529,7 @@ impl ExtFs {
     }
 
     pub fn remove_dir(&mut self, path: &str) -> Result<OpRecord> {
-        self.mutation_pending(path)
+        self.unlink_dir(path)
     }
 
     /// Which inode and path every directory, data, and indirect block
@@ -829,7 +820,8 @@ impl ExtFs {
                 return self.annotate_inode_table(block, gl);
             }
         }
-        Vec::new()
+        self.annotate_owned_block(sector, &self.block_owners())
+            .unwrap_or_default()
     }
 
     fn block_bytes(&self, block: u32) -> &[u8] {
@@ -1172,15 +1164,17 @@ mod create {
                             self.disk
                                 .write(base + offset + 4, &(used as u16).to_le_bytes());
                         }
-                        slot = Some((block, offset + used, (rec_len - used) as u16));
+                        // `offset` is the predecessor's start when it was
+                        // split (`used > 0`), or our own start otherwise.
+                        slot = Some((block, offset, used, (rec_len - used) as u16));
                         break 'scan;
                     }
                 }
             }
-            let (block, offset, fresh) = match slot {
-                Some((block, offset, rec_len)) => {
+            let (block, offset, event_start, fresh) = match slot {
+                Some((block, pred_offset, used, rec_len)) => {
                     entry.rec_len = rec_len;
-                    (block, offset, false)
+                    (block, pred_offset + used, pred_offset, false)
                 }
                 None => {
                     let goal = self.geo.group_of_inode(dir_ino);
@@ -1190,7 +1184,7 @@ mod create {
                     dir_inode.size += BLOCK_SIZE;
                     self.map_file_blocks(dir_ino, dir_inode, &all)?;
                     entry.rec_len = BLOCK_SIZE as u16;
-                    (new_block, 0, true)
+                    (new_block, 0, 0, true)
                 }
             };
             let mut scratch = [0u8; BS];
@@ -1202,12 +1196,15 @@ mod create {
             } else {
                 self.disk.write(base + offset, &scratch[..len]);
             }
-            let start = base + offset;
+            // When a used predecessor was split, the range starts at its
+            // (now shrunk) offset too, so the explorer highlights both
+            // entries; otherwise it is just our own entry's bytes.
+            let start = base + event_start;
             self.disk.event(Box::new(ExtEvent::DirEntryWritten {
                 dir_inode: dir_ino,
                 name: name.to_string(),
                 block,
-                range: start..start + len,
+                range: start..base + offset + len,
             }));
             dir_inode.mtime = now;
             dir_inode.ctime = now;
@@ -1324,5 +1321,476 @@ mod create {
                 Ok(())
             })
         }
+    }
+}
+
+/// Overwrite, delete and remove_dir (spec section 4), and the directory
+/// and pointer-block annotations (spec section 7).
+impl ExtFs {
+    /// Write `s_wtime` and the counters to the primary superblock and
+    /// descriptor table, the last step of every operation (spec section 10).
+    fn stamp_superblock(&mut self, now: u32) {
+        self.sb.wtime = now;
+        alloc::write_counters(&mut self.ctx());
+    }
+
+    /// Write `data` into `blocks` in logical order, zero-padding the last
+    /// block. Only bytes that differ are journaled; one `DataWritten` per
+    /// run of physically consecutive blocks (`alloc::contiguous_runs`).
+    fn overwrite_data(&mut self, ino: u32, blocks: &[u32], data: &[u8]) {
+        for (index, run) in alloc::contiguous_runs(blocks) {
+            let from = index * BS;
+            let to = ((index + run) * BS).min(data.len());
+            let mut content = data[from..to].to_vec();
+            content.resize(run * BS, 0);
+            let at = blocks[index] as usize * BS;
+            write_changed(&mut self.disk, at, &content);
+            self.disk.event(Box::new(ExtEvent::DataWritten {
+                inode: ino,
+                bytes: to - from,
+                block: blocks[index],
+                range: at..at + content.len(),
+            }));
+        }
+    }
+
+    /// `write_file` (spec section 4, decision 4): keep the file's blocks in
+    /// logical order, free the tail when it shrinks, allocate more (goal:
+    /// the inode's group) when it grows, write the whole new content, and
+    /// update `i_size`, `i_blocks`, `mtime`, `ctime`. Growth checks the free
+    /// count for the data and pointer blocks before the operation opens, so
+    /// `DiskFull` writes nothing; the new data blocks come first, then
+    /// `map_file_blocks` reuses the pointer blocks the file holds and
+    /// allocates the missing ones after the data (spec section 5).
+    fn overwrite_file(&mut self, path: &str, data: &[u8]) -> Result<OpRecord> {
+        self.ensure_mounted()?;
+        let (ino, old) = self.resolve(path)?;
+        if old.is_dir() {
+            return Err(Error::IsADirectory);
+        }
+        let size = u32::try_from(data.len()).map_err(|_| Error::FileTooLarge)?;
+        let new_n = blockmap::blocks_needed(data.len() as u64);
+        if new_n > blockmap::MAX_FILE_BLOCKS {
+            return Err(Error::FileTooLarge);
+        }
+        let old_blocks = blockmap::file_blocks(&self.disk, &old);
+        let old_n = old_blocks.len() as u32;
+        if new_n > old_n {
+            let extra = (new_n - old_n) + blockmap::indirect_blocks_needed(new_n)
+                - blockmap::indirect_blocks_needed(old_n);
+            if self.sb.free_blocks_count < extra {
+                return Err(Error::DiskFull);
+            }
+        }
+        let own_path = create::display_path(&path::parse(path)?);
+        let goal = self.geo.group_of_inode(ino);
+        let now = self.now_stamp();
+        self.run_mutation(format!("write_file {path}"), |fs| {
+            let mut inode = old;
+            let blocks = if new_n > old_n {
+                // `map_file_blocks` reads `i_size` when it reports the pointer blocks.
+                inode.size = size;
+                let fresh = alloc::alloc_blocks(&mut fs.ctx(), goal, new_n - old_n)?;
+                let blocks = [old_blocks, fresh].concat();
+                fs.map_file_blocks(ino, &mut inode, &blocks)?;
+                blocks
+            } else {
+                // `unmap_tail` walks the old mapping, which the old `i_size` bounds.
+                blockmap::unmap_tail(&mut fs.ctx(), &mut inode, new_n)?;
+                inode.size = size;
+                old_blocks[..new_n as usize].to_vec()
+            };
+            fs.overwrite_data(ino, &blocks, data);
+            inode.mtime = now;
+            inode.ctime = now;
+            fs.write_inode(ino, &inode, &own_path);
+            fs.stamp_superblock(now);
+            Ok(())
+        })
+    }
+
+    /// Remove `name` from directory `dir_ino` (spec section 4,
+    /// Directories): the first entry of a block gets inode 0 and keeps its
+    /// `rec_len`; any other entry's `rec_len` is added to its predecessor's.
+    /// The directory's blocks are never freed here. `NotFound` when no live
+    /// entry has that name.
+    fn dir_remove(&mut self, dir_ino: u32, name: &str) -> Result<()> {
+        let dir_inode = self.inode(dir_ino)?;
+        for block in blockmap::file_blocks(&self.disk, &dir_inode) {
+            let base = block as usize * BS;
+            let entries = dir::entries_in_block(self.disk.read(base, BS))?;
+            let Some(k) = entries
+                .iter()
+                .position(|(_, e)| e.inode != 0 && e.name == name.as_bytes())
+            else {
+                continue;
+            };
+            let (off, rec_len) = (entries[k].0, entries[k].1.rec_len);
+            if k == 0 {
+                self.disk.write(base + off, &0u32.to_le_bytes());
+            } else {
+                let (prev_off, prev) = &entries[k - 1];
+                let merged = prev.rec_len + rec_len;
+                self.disk.write(base + prev_off + 4, &merged.to_le_bytes());
+            }
+            self.disk.event(Box::new(ExtEvent::DirEntryRemoved {
+                dir_inode: dir_ino,
+                name: name.to_string(),
+                range: base + off..base + off + rec_len as usize,
+            }));
+            return Ok(());
+        }
+        Err(Error::NotFound)
+    }
+
+    /// True when every live entry of the directory is `.` or `..`.
+    fn dir_has_only_dots(&self, dir_inode: &Inode) -> Result<bool> {
+        for block in blockmap::file_blocks(&self.disk, dir_inode) {
+            for (_, e) in dir::entries_in_block(self.disk.read(block as usize * BS, BS))? {
+                if e.inode != 0 && e.name != b"." && e.name != b".." {
+                    return Ok(false);
+                }
+            }
+        }
+        Ok(true)
+    }
+
+    /// Stamp a parent directory's `mtime`/`ctime` and move its link count.
+    fn touch_parent(
+        &mut self,
+        parent_ino: u32,
+        parent_path: &str,
+        links_delta: i16,
+        now: u32,
+    ) -> Result<()> {
+        let mut parent = self.inode(parent_ino)?;
+        parent.mtime = now;
+        parent.ctime = now;
+        parent.links_count = parent.links_count.saturating_add_signed(links_delta);
+        self.write_inode(parent_ino, &parent, parent_path);
+        Ok(())
+    }
+
+    /// Free an inode's data and pointer blocks and the inode itself, then
+    /// write it back with `dtime = now` and `links_count = 0`; its mode,
+    /// size, `i_blocks`, and block pointers stay (remnants, spec section 4).
+    fn release_inode(
+        &mut self,
+        ino: u32,
+        mut inode: Inode,
+        is_dir: bool,
+        path: &str,
+        now: u32,
+    ) -> Result<()> {
+        {
+            let mut ctx = self.ctx();
+            blockmap::unmap_all(&mut ctx, &inode)?;
+            alloc::free_inode(&mut ctx, ino, is_dir);
+        }
+        inode.dtime = now;
+        inode.links_count = 0;
+        self.write_inode(ino, &inode, path);
+        Ok(())
+    }
+
+    /// `delete_file` (spec section 4): remove the entry, free the blocks and
+    /// the inode, set `dtime` and `links_count = 0`, stamp the parent.
+    fn unlink_file(&mut self, path: &str) -> Result<OpRecord> {
+        self.ensure_mounted()?;
+        let (ino, inode) = self.resolve(path)?;
+        if inode.is_dir() {
+            return Err(Error::IsADirectory);
+        }
+        let (parent_ino, _, name) = self.resolve_parent(path)?;
+        let (parent_parts, _) = path::split_parent(path)?;
+        let parent_path = create::display_path(&parent_parts);
+        let own_path = create::display_path(&path::parse(path)?);
+        let now = self.now_stamp();
+        self.run_mutation(format!("delete_file {path}"), |fs| {
+            fs.dir_remove(parent_ino, &name)?;
+            fs.release_inode(ino, inode, false, &own_path, now)?;
+            fs.touch_parent(parent_ino, &parent_path, 0, now)?;
+            fs.stamp_superblock(now);
+            Ok(())
+        })
+    }
+
+    /// `remove_dir` (spec section 4): `InvalidPath` for `/`,
+    /// `NotADirectory` for a file, `DirectoryNotEmpty` while any entry
+    /// other than `.` and `..` is live; frees the directory's blocks and
+    /// inode (and its `bg_used_dirs_count`), drops the parent's link count.
+    fn unlink_dir(&mut self, path: &str) -> Result<OpRecord> {
+        self.ensure_mounted()?;
+        let parts = path::parse(path)?;
+        if parts.is_empty() {
+            return Err(Error::InvalidPath);
+        }
+        let (ino, inode) = self.resolve(path)?;
+        if !inode.is_dir() {
+            return Err(Error::NotADirectory);
+        }
+        if !self.dir_has_only_dots(&inode)? {
+            return Err(Error::DirectoryNotEmpty);
+        }
+        let (parent_ino, _, name) = self.resolve_parent(path)?;
+        let parent_path = create::display_path(&parts[..parts.len() - 1]);
+        let own_path = create::display_path(&parts);
+        let now = self.now_stamp();
+        self.run_mutation(format!("remove_dir {path}"), |fs| {
+            fs.dir_remove(parent_ino, &name)?;
+            fs.release_inode(ino, inode, true, &own_path, now)?;
+            fs.touch_parent(parent_ino, &parent_path, -1, now)?;
+            fs.stamp_superblock(now);
+            Ok(())
+        })
+    }
+
+    /// The annotations of a directory block (per entry: inode, `rec_len`,
+    /// `name_len`, file type, name, slack; or `unused` for a zero inode)
+    /// or of a pointer block (runs of `pointer[i]`), or `None` for any
+    /// other block, which `annotate_sector` then leaves unannotated.
+    pub fn annotate_owned_block(
+        &self,
+        sector: u64,
+        owners: &BTreeMap<u32, BlockOwner>,
+    ) -> Option<Vec<Annotation>> {
+        let block = u32::try_from(sector).ok()?;
+        let owner = owners.get(&block)?;
+        let start = block as usize * BS;
+        if start + BS > self.disk.len() {
+            return None;
+        }
+        match owner.role {
+            BlockRole::Data => None,
+            BlockRole::Directory => Some(annotate_dir_block(self.disk.read(start, BS))),
+            BlockRole::Indirect => Some(annotate_pointer_block(&blockmap::read_pointers(
+                &self.disk, block,
+            ))),
+        }
+    }
+}
+
+/// Write only the runs of `new` that differ from the disk, so the journal
+/// records exactly the bytes that changed (spec section 4, `write_file`).
+fn write_changed(disk: &mut Disk, offset: usize, new: &[u8]) {
+    let old = disk.read(offset, new.len()).to_vec();
+    let mut i = 0;
+    while i < new.len() {
+        if old[i] == new[i] {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < new.len() && old[i] != new[i] {
+            i += 1;
+        }
+        disk.write(offset + start, &new[start..i]);
+    }
+}
+
+fn file_type_text(file_type: u8) -> String {
+    let word = match file_type {
+        dir::FT_FILE => "file",
+        dir::FT_DIR => "directory",
+        dir::FT_UNKNOWN => "unknown",
+        _ => "other",
+    };
+    format!("{file_type} ({word})")
+}
+
+/// Spec section 7: per live entry its inode, `rec_len`, `name_len`, file
+/// type, name, and the slack after the name; an entry with inode 0 is one
+/// `unused` annotation over its whole `rec_len`. A block that does not
+/// parse is one annotation saying why.
+fn annotate_dir_block(bytes: &[u8]) -> Vec<Annotation> {
+    let entries = match dir::entries_in_block(bytes) {
+        Ok(entries) => entries,
+        Err(e) => {
+            return vec![note(
+                0..bytes.len(),
+                "directory block",
+                format!("does not parse: {e}"),
+            )]
+        }
+    };
+    let mut out = Vec::new();
+    for (k, (off, e)) in entries.into_iter().enumerate() {
+        let end = off + e.rec_len as usize;
+        if e.inode == 0 {
+            out.push(note(
+                off..end,
+                format!("entry {k}"),
+                format!("unused ({} bytes)", e.rec_len),
+            ));
+            continue;
+        }
+        let name_end = off + dir::DirEntry::HEADER + e.name.len();
+        out.push(note(
+            off..off + 4,
+            format!("entry {k} inode"),
+            e.inode.to_string(),
+        ));
+        out.push(note(
+            off + 4..off + 6,
+            format!("entry {k} rec_len"),
+            e.rec_len.to_string(),
+        ));
+        out.push(note(
+            off + 6..off + 7,
+            format!("entry {k} name_len"),
+            e.name_len.to_string(),
+        ));
+        out.push(note(
+            off + 7..off + 8,
+            format!("entry {k} file type"),
+            file_type_text(e.file_type),
+        ));
+        if !e.name.is_empty() {
+            out.push(note(
+                off + dir::DirEntry::HEADER..name_end,
+                format!("entry {k} name"),
+                String::from_utf8_lossy(&e.name).into_owned(),
+            ));
+        }
+        if name_end < end {
+            out.push(note(
+                name_end..end,
+                format!("entry {k} slack"),
+                format!("unused ({} bytes)", end - name_end),
+            ));
+        }
+    }
+    out
+}
+
+/// Spec section 7: maximal runs of pointers, either consecutive block
+/// numbers (`pointer[0..7]` = `blocks 4096..4103`, ranges inclusive) or
+/// zeros (`unused`).
+fn annotate_pointer_block(ptrs: &[u32; 256]) -> Vec<Annotation> {
+    let continues = |prev: u32, next: u32| {
+        if prev == 0 {
+            next == 0
+        } else {
+            prev.checked_add(1) == Some(next)
+        }
+    };
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < ptrs.len() {
+        let mut j = i + 1;
+        while j < ptrs.len() && continues(ptrs[j - 1], ptrs[j]) {
+            j += 1;
+        }
+        let label = if j - i == 1 {
+            format!("pointer[{i}]")
+        } else {
+            format!("pointer[{i}..{}]", j - 1)
+        };
+        let value = match (ptrs[i], j - i) {
+            (0, _) => "unused".to_string(),
+            (b, 1) => format!("block {b}"),
+            (b, n) => format!("blocks {b}..{}", b + (n as u32 - 1)),
+        };
+        out.push(note(i * 4..j * 4, label, value));
+        i = j;
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn write_changed_journals_only_the_differing_runs() {
+        let mut disk = Disk::new(1024, 1);
+        disk.write(0, b"abcdefg");
+        disk.begin_op("t");
+        write_changed(&mut disk, 0, b"abXdeYY");
+        let rec = disk.end_op();
+        let changes: Vec<(usize, Vec<u8>)> = rec
+            .changes
+            .into_iter()
+            .map(|c| (c.offset, c.after))
+            .collect();
+        assert_eq!(changes, vec![(2, b"X".to_vec()), (5, b"YY".to_vec())]);
+        assert_eq!(disk.read(0, 7), b"abXdeYY");
+    }
+
+    #[test]
+    fn pointer_runs_group_consecutive_blocks_and_zeros() {
+        let mut ptrs = [0u32; 256];
+        for (i, p) in ptrs.iter_mut().enumerate().take(4) {
+            *p = 500 + i as u32;
+        }
+        ptrs[4] = 900;
+        let got: Vec<(String, String, Range<usize>)> = annotate_pointer_block(&ptrs)
+            .into_iter()
+            .map(|a| (a.label, a.value, a.range))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                (
+                    "pointer[0..3]".to_string(),
+                    "blocks 500..503".to_string(),
+                    0..16
+                ),
+                ("pointer[4]".to_string(), "block 900".to_string(), 16..20),
+                (
+                    "pointer[5..255]".to_string(),
+                    "unused".to_string(),
+                    20..1024
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn directory_entries_are_annotated_field_by_field() {
+        let notes = annotate_dir_block(&dir::dot_entries_block(12, 2));
+        let labels: Vec<&str> = notes.iter().map(|a| a.label.as_str()).collect();
+        assert_eq!(
+            labels,
+            [
+                "entry 0 inode",
+                "entry 0 rec_len",
+                "entry 0 name_len",
+                "entry 0 file type",
+                "entry 0 name",
+                "entry 0 slack",
+                "entry 1 inode",
+                "entry 1 rec_len",
+                "entry 1 name_len",
+                "entry 1 file type",
+                "entry 1 name",
+                "entry 1 slack",
+            ]
+        );
+        assert_eq!(notes[0].value, "12");
+        assert_eq!(notes[1].value, "12");
+        assert_eq!(notes[3].value, "2 (directory)");
+        assert_eq!(
+            (notes[4].value.as_str(), notes[4].range.clone()),
+            (".", 8..9)
+        );
+        assert_eq!(notes[5].range, 9..12);
+        assert_eq!(notes[6].value, "2");
+        assert_eq!(notes[7].value, "1012");
+        assert_eq!(
+            (notes[10].value.as_str(), notes[10].range.clone()),
+            ("..", 20..22)
+        );
+        assert_eq!(
+            (notes[11].value.as_str(), notes[11].range.clone()),
+            ("unused (1002 bytes)", 22..1024)
+        );
+
+        let empty = annotate_dir_block(&dir::empty_block());
+        assert_eq!(empty.len(), 1);
+        assert_eq!(
+            (empty[0].label.as_str(), empty[0].value.as_str()),
+            ("entry 0", "unused (1024 bytes)")
+        );
     }
 }

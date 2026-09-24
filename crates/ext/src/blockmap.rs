@@ -2,9 +2,11 @@
 //! pointers, the single-indirect block, and the double-indirect block. This
 //! is the read side; allocation and freeing join it in later tasks.
 
+use crate::alloc::{self, AllocCtx};
 use crate::inode::{Inode, DIND_BLOCK, DIRECT_BLOCKS, IND_BLOCK};
 use crate::superblock::BLOCK_SIZE;
 use fs_core::Disk;
+use fs_core::Result;
 
 /// Block pointers in one 1 KiB indirect block.
 pub const PTRS_PER_BLOCK: u32 = 256;
@@ -244,6 +246,93 @@ fn write_pointer_block(disk: &mut fs_core::Disk, block: u32, pointers: &[u32]) {
         chunk.copy_from_slice(&p.to_le_bytes());
     }
     disk.write(block as usize * 1024, &bytes);
+}
+
+/// Zero pointers `from..256` of pointer block `block`, writing only the
+/// span up to the last non-zero pointer; the kept pointers stay.
+fn clear_pointers_from(disk: &mut Disk, block: u32, from: usize) {
+    if !followable(disk, block) {
+        return;
+    }
+    let ptrs = read_pointers(disk, block);
+    let Some(last) = (from..ptrs.len()).rev().find(|&i| ptrs[i] != 0) else {
+        return;
+    };
+    disk.fill(
+        block as usize * BLOCK_SIZE as usize + from * 4,
+        (last + 1 - from) * 4,
+        0,
+    );
+}
+
+/// Shrink a file's mapping to its first `keep` data blocks (`write_file`,
+/// spec section 4): free the data blocks past `keep` and every pointer
+/// block no longer needed, zero the pointers to them (in the inode and in
+/// the pointer blocks that stay), and set `inode.blocks`. Call it before
+/// changing `inode.size`, which still describes the old mapping. Freed
+/// blocks keep their bytes (remnants). Returns the freed blocks.
+pub fn unmap_tail(ctx: &mut AllocCtx, inode: &mut Inode, keep: u32) -> Result<Vec<u32>> {
+    let data = file_blocks(ctx.disk, inode);
+    if keep as usize >= data.len() {
+        return Ok(Vec::new());
+    }
+    let mut freed: Vec<u32> = data[keep as usize..].to_vec();
+    for ptr in inode
+        .block
+        .iter_mut()
+        .take(DIRECT_BLOCKS)
+        .skip(keep as usize)
+    {
+        *ptr = 0;
+    }
+    let ind = inode.block[IND_BLOCK];
+    if followable(ctx.disk, ind) {
+        if keep <= IND_FIRST {
+            freed.push(ind);
+            inode.block[IND_BLOCK] = 0;
+        } else {
+            clear_pointers_from(ctx.disk, ind, (keep - IND_FIRST) as usize);
+        }
+    }
+    let dind = inode.block[DIND_BLOCK];
+    if followable(ctx.disk, dind) {
+        let per = PTRS_PER_BLOCK as usize;
+        let kept = keep.saturating_sub(DIND_FIRST) as usize;
+        for (j, mid) in read_pointers(ctx.disk, dind).into_iter().enumerate() {
+            let first = j * per;
+            if !followable(ctx.disk, mid) || kept >= first + per {
+                continue;
+            }
+            if kept <= first {
+                freed.push(mid);
+            } else {
+                clear_pointers_from(ctx.disk, mid, kept - first);
+            }
+        }
+        if kept == 0 {
+            freed.push(dind);
+            inode.block[DIND_BLOCK] = 0;
+        } else {
+            clear_pointers_from(ctx.disk, dind, kept.div_ceil(per));
+        }
+    }
+    alloc::free_blocks(ctx, &freed);
+    inode.blocks = (keep + indirect_blocks_needed(keep)) * 2;
+    Ok(freed)
+}
+
+/// Free every data and pointer block of `inode` (`delete_file`,
+/// `remove_dir`), leaving the inode's pointers and the blocks' bytes in
+/// place (remnants). Returns the freed blocks.
+pub fn unmap_all(ctx: &mut AllocCtx, inode: &Inode) -> Result<Vec<u32>> {
+    let mut freed = file_blocks(ctx.disk, inode);
+    freed.extend(
+        indirect_blocks(ctx.disk, inode)
+            .into_iter()
+            .map(|(block, _)| block),
+    );
+    alloc::free_blocks(ctx, &freed);
+    Ok(freed)
 }
 
 #[cfg(test)]
