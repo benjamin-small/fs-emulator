@@ -490,6 +490,26 @@ impl ExtFs {
         Ok(Self::entry_info(name, &inode))
     }
 
+    /// The inode number `path` names, through the corruption gate: 2 for
+    /// `/`; `NotFound` or `NotADirectory` as the walk finds them.
+    pub fn lookup(&self, path: &str) -> Result<u32> {
+        self.ensure_mounted()?;
+        Ok(self.resolve(path)?.0)
+    }
+
+    /// Every entry of the directory `path` names, in disk order, as
+    /// `(block, byte offset in the block, entry)`, including unused
+    /// (`inode == 0`) entries and `.`/`..`. `NotADirectory` when `path` is
+    /// not a directory.
+    pub fn dir_entries(&self, path: &str) -> Result<Vec<(u32, usize, DirEntry)>> {
+        self.ensure_mounted()?;
+        let (_, dir) = self.resolve(path)?;
+        if !dir.is_dir() {
+            return Err(Error::NotADirectory);
+        }
+        self.scan_dir(&dir)
+    }
+
     /// `IsADirectory` for a directory, `Unsupported` for any other inode
     /// that is not a regular file (a symbolic link or device node from a
     /// foreign image, whose `i_block` is not a block map), so `read_file`,

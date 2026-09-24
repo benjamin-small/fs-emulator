@@ -460,6 +460,50 @@ fn read_file_reports_an_inode_that_maps_too_few_blocks() {
 }
 
 #[test]
+fn lookup_returns_inode_numbers_through_the_gate() {
+    let mut fs = default_fs();
+    assert_eq!(fs.lookup("/"), Ok(2));
+    assert_eq!(fs.lookup("/lost+found"), Ok(11));
+    fs.create_file("/made.txt", b"made").unwrap();
+    let ino = fs.lookup("/made.txt").unwrap();
+    assert_eq!(ino, 12);
+    assert_eq!(fs.inode(ino).unwrap().size, 4);
+    assert_eq!(fs.lookup("/missing"), Err(Error::NotFound));
+    assert_eq!(fs.lookup("/made.txt/x"), Err(Error::NotADirectory));
+    assert_eq!(fs.lookup("relative"), Err(Error::InvalidPath));
+    fs.write_raw(1024 + 56, &[0, 0]).unwrap();
+    assert!(matches!(fs.lookup("/"), Err(Error::CorruptImage(_))));
+}
+
+#[test]
+fn dir_entries_lists_every_entry_with_its_block_and_offset() {
+    let mut fs = default_fs();
+    let root = fs.dir_entries("/").unwrap();
+    let got: Vec<(u32, usize, u32, Vec<u8>)> = root
+        .iter()
+        .map(|(block, offset, e)| (*block, *offset, e.inode, e.name.clone()))
+        .collect();
+    assert_eq!(
+        got,
+        vec![
+            (69, 0, 2, b".".to_vec()),
+            (69, 12, 2, b"..".to_vec()),
+            (69, 24, 11, b"lost+found".to_vec()),
+        ]
+    );
+    assert_eq!(root[2].2.rec_len, 1000);
+    // lost+found: `.` and `..`, then 11 unused block-long entries.
+    let lost = fs.dir_entries("/lost+found").unwrap();
+    assert_eq!(lost.len(), 13);
+    assert!(lost[2..]
+        .iter()
+        .all(|(_, offset, e)| *offset == 0 && e.inode == 0));
+    fs.create_file("/f.txt", b"").unwrap();
+    assert_eq!(fs.dir_entries("/f.txt"), Err(Error::NotADirectory));
+    assert_eq!(fs.dir_entries("/missing"), Err(Error::NotFound));
+}
+
+#[test]
 fn block_owners_names_directory_data_and_indirect_blocks() {
     let owners = default_fs().block_owners();
     assert_eq!(owners.len(), 13);
