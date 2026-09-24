@@ -317,6 +317,12 @@ impl Superblock {
                 self.inode_size
             )));
         }
+        if self.feature_compat != 0 {
+            return Err(Error::Unsupported(format!(
+                "compat features are not supported (0x{:08X})",
+                self.feature_compat
+            )));
+        }
         let incompat = self.feature_incompat & !FEATURE_INCOMPAT_FILETYPE;
         if incompat != 0 {
             return Err(Error::Unsupported(format!(
@@ -324,12 +330,22 @@ impl Superblock {
                 feature_names(incompat, &INCOMPAT_NAMES)
             )));
         }
+        if self.feature_incompat != FEATURE_INCOMPAT_FILETYPE {
+            return Err(Error::Unsupported(
+                "the filetype feature is required".into(),
+            ));
+        }
         let ro_compat = self.feature_ro_compat & !FEATURE_RO_COMPAT_SPARSE_SUPER;
         if ro_compat != 0 {
             return Err(Error::Unsupported(format!(
                 "read-only-compatible feature {}",
                 feature_names(ro_compat, &RO_COMPAT_NAMES)
             )));
+        }
+        if self.feature_ro_compat != FEATURE_RO_COMPAT_SPARSE_SUPER {
+            return Err(Error::Unsupported(
+                "the sparse_super feature is required".into(),
+            ));
         }
         if self.first_data_block != 1 {
             return Err(Error::CorruptImage(format!(
@@ -558,13 +574,44 @@ mod tests {
             ..good.clone()
         });
         assert!(msg.contains("block size"), "{msg}");
-        // A superblock without FILETYPE or SPARSE_SUPER is still accepted.
+        // A superblock without FILETYPE or SPARSE_SUPER is rejected: the
+        // derived layout depends on both being set exactly.
         let bare = Superblock {
             feature_incompat: 0,
             feature_ro_compat: 0,
             ..good
         };
-        assert_eq!(bare.validate(16_384), Ok(()));
+        assert!(matches!(bare.validate(16_384), Err(Error::Unsupported(_))));
+    }
+
+    #[test]
+    fn validate_requires_exactly_the_filetype_incompat_feature() {
+        let good = default_superblock();
+        let msg = unsupported_message(&Superblock {
+            feature_incompat: 0,
+            ..good
+        });
+        assert_eq!(msg, "the filetype feature is required");
+    }
+
+    #[test]
+    fn validate_requires_exactly_the_sparse_super_ro_compat_feature() {
+        let good = default_superblock();
+        let msg = unsupported_message(&Superblock {
+            feature_ro_compat: 0,
+            ..good
+        });
+        assert_eq!(msg, "the sparse_super feature is required");
+    }
+
+    #[test]
+    fn validate_rejects_any_compat_feature() {
+        let good = default_superblock();
+        let msg = unsupported_message(&Superblock {
+            feature_compat: 0x0004,
+            ..good
+        });
+        assert_eq!(msg, "compat features are not supported (0x00000004)");
     }
 
     #[test]

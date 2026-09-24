@@ -6,12 +6,14 @@ pub mod bitmap;
 pub mod blockmap;
 pub mod dir;
 pub mod events;
+pub mod fs;
 pub mod group;
 pub mod inode;
 pub mod superblock;
 
 pub use dir::DirEntry;
 pub use events::{BitmapKind, ExtEvent};
+pub use fs::{BlockOwner, BlockRole, ExtFs};
 pub use group::{Geometry, GroupDescriptor, GroupLayout};
 pub use inode::Inode;
 pub use superblock::{
