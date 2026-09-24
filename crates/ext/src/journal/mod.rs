@@ -5,8 +5,10 @@
 //! slices; every JBD2 field is big-endian. `state` holds the journal of a
 //! mounted volume: opening it, the format-time writer, and `JournalInfo`;
 //! `txn` turns each mutation into one transaction (spec section 5);
-//! `recovery` scans and replays the log as a mount does (section 6).
+//! `recovery` scans and replays the log as a mount does (section 6);
+//! `inspect` classifies every journal block and annotates it (section 7).
 
+pub mod inspect;
 pub mod recovery;
 pub mod state;
 pub mod txn;

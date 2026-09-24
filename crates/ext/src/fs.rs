@@ -12,6 +12,7 @@ use crate::group::{self, Geometry, GroupDescriptor, GroupLayout};
 use crate::inode::{
     Inode, MODE_DIR, MODE_LOST_FOUND, MODE_TYPE_DIR, MODE_TYPE_FILE, MODE_TYPE_MASK,
 };
+use crate::journal::inspect::{self, JournalBlock};
 use crate::journal::recovery;
 use crate::journal::state::{self, JournalInfo, JournalState};
 use crate::journal::{
@@ -375,6 +376,17 @@ impl ExtFs {
             needs_recovery: j.needs_recovery,
             max_transaction: j.max_transaction(),
         })
+    }
+
+    /// Every journal index in order with what it holds, its transaction,
+    /// and whether that transaction is stale (spec section 7); empty on
+    /// ext2. Reads the raw journal, so it works while the volume needs
+    /// recovery or is corrupt.
+    pub fn journal_blocks(&self) -> Vec<JournalBlock> {
+        self.journal
+            .as_ref()
+            .map(|j| inspect::classify(&self.disk, j))
+            .unwrap_or_default()
     }
 
     /// The journal mode; `None` on ext2.
@@ -948,7 +960,11 @@ impl ExtFs {
 }
 
 /// One labelled byte range of a block.
-fn note(range: Range<usize>, label: impl Into<String>, value: impl Into<String>) -> Annotation {
+pub(crate) fn note(
+    range: Range<usize>,
+    label: impl Into<String>,
+    value: impl Into<String>,
+) -> Annotation {
     Annotation {
         range,
         label: label.into(),
@@ -971,7 +987,7 @@ fn text(bytes: &[u8]) -> String {
 }
 
 /// The 16 UUID bytes in the usual 8-4-4-4-12 hex form.
-fn uuid(bytes: &[u8]) -> String {
+pub(crate) fn uuid(bytes: &[u8]) -> String {
     let hex = |r: Range<usize>| {
         bytes[r]
             .iter()
@@ -1853,9 +1869,11 @@ impl ExtFs {
     }
 
     /// The annotations of a directory block (per entry: inode, `rec_len`,
-    /// `name_len`, file type, name, slack; or `unused` for a zero inode)
-    /// or of a pointer block (runs of `pointer[i]`), or `None` for any
-    /// other block, which `annotate_sector` then leaves unannotated.
+    /// `name_len`, file type, name, slack; or `unused` for a zero inode),
+    /// of a pointer block (runs of `pointer[i]`, the journal's included), or
+    /// of a journal data block (by what `journal_blocks` says it holds), or
+    /// `None` for any other block, which `annotate_sector` then leaves
+    /// unannotated.
     pub fn annotate_owned_block(
         &self,
         sector: u64,
@@ -1868,12 +1886,25 @@ impl ExtFs {
             return None;
         }
         match owner.role {
-            BlockRole::Data | BlockRole::Journal => None,
+            BlockRole::Data => None,
+            BlockRole::Journal => self.annotate_journal_block(block),
             BlockRole::Directory => Some(annotate_dir_block(self.disk.read(start, BS))),
             BlockRole::Indirect => Some(annotate_pointer_block(&blockmap::read_pointers(
                 &self.disk, block,
             ))),
         }
+    }
+
+    /// Spec section 7: a journal data block, annotated by what it holds.
+    /// `None` when `block` is not one of this volume's journal blocks.
+    /// Each call classifies the whole journal (one header read per journal
+    /// block) to learn what this one block holds, so a caller that needs
+    /// many journal blocks should call `journal_blocks()` once instead.
+    fn annotate_journal_block(&self, block: u32) -> Option<Vec<Annotation>> {
+        let j = self.journal.as_ref()?;
+        let index = j.blocks.iter().position(|&b| b == block)?;
+        let entry = inspect::classify(&self.disk, j).swap_remove(index);
+        Some(inspect::annotate(self.block_bytes(block), &entry))
     }
 }
 

@@ -18,6 +18,7 @@ pub use events::{BitmapKind, ExtEvent, JournalWriteKind};
 pub use fs::{BlockOwner, BlockRole, ExtFs};
 pub use group::{Geometry, GroupDescriptor, GroupLayout};
 pub use inode::Inode;
+pub use journal::inspect::{JournalBlock, JournalBlockKind};
 pub use journal::state::{JournalInfo, JournalState};
 pub use journal::{
     decode_commit, decode_descriptor, default_journal_blocks, descriptor_blocks_needed,

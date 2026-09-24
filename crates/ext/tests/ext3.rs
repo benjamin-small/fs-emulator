@@ -627,7 +627,7 @@ mod transactions {
     /// `s_sequence` and `s_start` of the journal superblock (block 82).
     pub(super) const JSB_SEQ: usize = 82 * 1024 + 0x18;
     /// Journal index `i` is physical block `82 + i` on the default disk.
-    const JOURNAL_BLOCK_0: u32 = 82;
+    pub(super) const JOURNAL_BLOCK_0: u32 = 82;
     pub(super) const MAGIC: [u8; 4] = [0xC0, 0x3B, 0x39, 0x98];
     /// The event kinds a transaction adds to the body's own.
     const JOURNAL_KINDS: [&str; 7] = [
@@ -2068,5 +2068,398 @@ mod recovery {
         );
         assert!(!fs.needs_recovery());
         assert_eq!(fs.journal_info().unwrap().sequence, 0);
+    }
+}
+
+/// Task 6: what every journal block holds (spec section 7).
+mod inspect {
+    use super::common::{ext3, pattern};
+    use super::transactions::{BOTH, JOURNAL_BLOCK_0, MAGIC};
+    use ext::JournalBlockKind::{Commit, Descriptor, Superblock, Unused};
+    use ext::{
+        BlockRole, CrashPhase, ExtFormatOptions, ExtFs, JournalBlock, JournalBlockKind, JournalMode,
+    };
+    use fs_core::DateTime;
+    use std::collections::BTreeSet;
+    use std::ops::Range;
+
+    /// What an ordered 3-block `create_file` on a fresh volume tags: the
+    /// superblock, descriptors, both bitmaps, two inode table blocks, and
+    /// the root directory's block.
+    const CREATE_TAGS: [u32; 7] = [1, 2, 3, 4, 5, 6, 69];
+
+    type Entry = (JournalBlockKind, Option<u32>, bool);
+
+    fn copy(home: u32) -> JournalBlockKind {
+        JournalBlockKind::Copy {
+            home,
+            escaped: false,
+        }
+    }
+
+    /// `(kind, tid, stale)` per journal index.
+    fn entries(fs: &ExtFs) -> Vec<Entry> {
+        fs.journal_blocks()
+            .into_iter()
+            .map(|b| (b.kind, b.tid, b.stale))
+            .collect()
+    }
+
+    const UNUSED: Entry = (Unused, None, false);
+
+    /// Transaction `tid`'s blocks: its descriptor, one copy per home, and
+    /// its commit when `commit`.
+    fn transaction(tid: u32, homes: &[u32], commit: bool, stale: bool) -> Vec<Entry> {
+        let mut out = vec![(Descriptor, Some(tid), stale)];
+        out.extend(homes.iter().map(|&h| (copy(h), Some(tid), stale)));
+        if commit {
+            out.push((Commit, Some(tid), stale));
+        }
+        out
+    }
+
+    #[test]
+    fn a_fresh_journal_is_its_superblock_then_unused_blocks() {
+        for mode in BOTH {
+            let fs = ext3(mode);
+            let blocks = fs.journal_blocks();
+            assert_eq!(blocks.len(), 1024);
+            assert_eq!(
+                blocks[0],
+                JournalBlock {
+                    index: 0,
+                    block: 82,
+                    kind: Superblock,
+                    tid: None,
+                    stale: false,
+                }
+            );
+            for (i, b) in blocks.iter().enumerate().skip(1) {
+                let want = JournalBlock {
+                    index: i as u32,
+                    block: JOURNAL_BLOCK_0 + i as u32,
+                    kind: Unused,
+                    tid: None,
+                    stale: false,
+                };
+                assert_eq!(b, &want, "{mode:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_finished_transaction_stays_in_the_log_as_stale_blocks() {
+        let mut fs = ext3(JournalMode::Ordered);
+        fs.create_file("/f", &pattern(3000)).unwrap();
+        assert_eq!(fs.journal_info().unwrap().start, 0);
+        let e = entries(&fs);
+        assert_eq!(e[1..10], transaction(1, &CREATE_TAGS, true, true));
+        assert!(e[10..].iter().all(|&x| x == UNUSED));
+        // Data mode logs the three data blocks too.
+        let mut fs = ext3(JournalMode::Data);
+        fs.create_file("/f", &pattern(3000)).unwrap();
+        let homes = [1, 2, 3, 4, 5, 6, 69, 1111, 1112, 1113];
+        let e = entries(&fs);
+        assert_eq!(e[1..13], transaction(1, &homes, true, true));
+        assert!(e[13..].iter().all(|&x| x == UNUSED));
+    }
+
+    #[test]
+    fn a_crashed_transaction_is_live_and_the_one_before_it_stale() {
+        for phase in [
+            CrashPhase::BeforeCommit,
+            CrashPhase::AfterCommit,
+            CrashPhase::DuringCheckpoint,
+        ] {
+            let mut fs = ext3(JournalMode::Ordered);
+            fs.create_file("/f", &pattern(3000)).unwrap();
+            fs.arm_crash(phase).unwrap();
+            fs.create_file("/g", &pattern(3000)).unwrap();
+            // Transaction 2 is live from journal block 10, where `s_start`
+            // points; `s_sequence` names it.
+            let info = fs.journal_info().unwrap();
+            assert_eq!((info.start, info.sequence), (10, 2), "{phase:?}");
+            let e = entries(&fs);
+            assert_eq!(e[1..10], transaction(1, &CREATE_TAGS, true, true));
+            assert_eq!(e[info.start as usize].1, Some(info.sequence));
+            let committed = phase != CrashPhase::BeforeCommit;
+            let live = transaction(2, &CREATE_TAGS, committed, false);
+            assert_eq!(e[10..10 + live.len()], live, "{phase:?}");
+            assert!(e[10 + live.len()..].iter().all(|&x| x == UNUSED));
+        }
+    }
+
+    /// An ordered volume whose log is filled with empty-file creates up to
+    /// the last 8 blocks: transactions 1 to 127, the last ending at journal
+    /// block 1017, so the next one starts at 1018 and must wrap.
+    fn nearly_full() -> ExtFs {
+        let mut fs = ext3(JournalMode::Ordered);
+        let mut i = 0;
+        while fs.journal_info().unwrap().head < 1024 - 8 {
+            fs.create_file(&format!("/f{i:03}"), b"").unwrap();
+            i += 1;
+        }
+        let info = fs.journal_info().unwrap();
+        assert_eq!((i, info.head, info.sequence), (127, 1018, 128));
+        fs
+    }
+
+    /// A `create_dir` at journal block 1018: the descriptor, five copies up
+    /// to block 1023, three more at 1..=3, the commit at 4.
+    const WRAPPED_TAGS: [u32; 8] = [1, 2, 3, 4, 5, 22, 1111, 1112];
+
+    #[test]
+    fn a_live_transaction_across_the_end_of_the_log_keeps_every_block() {
+        let mut fs = nearly_full();
+        fs.arm_crash(CrashPhase::AfterCommit).unwrap();
+        fs.create_dir("/wrapped").unwrap();
+        assert_eq!(fs.journal_info().unwrap().start, 1018);
+        let e = entries(&fs);
+        let live = transaction(128, &WRAPPED_TAGS, true, false);
+        let at: Vec<usize> = (1018..1024).chain(1..5).collect();
+        let got: Vec<Entry> = at.iter().map(|&i| e[i]).collect();
+        assert_eq!(got, live);
+        // Nothing else is live: the rest is stale or unused.
+        for (i, &(kind, _, stale)) in e.iter().enumerate().skip(1) {
+            if !at.contains(&i) {
+                assert!(stale || kind == Unused, "index {i}: {kind:?}");
+            }
+        }
+        // Transaction 1 lost its descriptor and first copies to the wrap
+        // (its remaining copies at 5..=7 are unclaimed), but its commit at
+        // 8 is still there; transactions 2 to 127 are whole.
+        assert_eq!(e[5..8], [UNUSED; 3]);
+        assert_eq!(e[8], (Commit, Some(1), true));
+        let descriptors: BTreeSet<u32> = e
+            .iter()
+            .filter(|x| x.0 == Descriptor && x.2)
+            .map(|x| x.1.unwrap())
+            .collect();
+        assert_eq!(descriptors, (2..=127).collect());
+    }
+
+    #[test]
+    fn a_finished_transaction_across_the_end_of_the_log_is_claimed_whole() {
+        let mut fs = nearly_full();
+        fs.create_dir("/wrapped").unwrap();
+        assert_eq!(fs.journal_info().unwrap().start, 0);
+        let e = entries(&fs);
+        let at = (1018..1024).chain(1..5);
+        let got: Vec<Entry> = at.map(|i| e[i]).collect();
+        assert_eq!(got, transaction(128, &WRAPPED_TAGS, true, true));
+    }
+
+    #[test]
+    fn an_escaped_copy_reports_it() {
+        let mut fs = ext3(JournalMode::Data);
+        let mut data = pattern(1024);
+        data[..4].copy_from_slice(&MAGIC);
+        fs.create_file("/magic", &data).unwrap();
+        let blocks = fs.journal_blocks();
+        let escaped: Vec<&JournalBlock> = blocks
+            .iter()
+            .filter(|b| matches!(b.kind, JournalBlockKind::Copy { escaped: true, .. }))
+            .collect();
+        assert_eq!(
+            escaped,
+            [&JournalBlock {
+                index: 9,
+                block: 91,
+                kind: JournalBlockKind::Copy {
+                    home: 1111,
+                    escaped: true,
+                },
+                tid: Some(1),
+                stale: true,
+            }]
+        );
+    }
+
+    #[test]
+    fn ext2_has_no_journal_blocks() {
+        let fs = ExtFs::format(ExtFormatOptions::default()).unwrap();
+        assert!(fs.journal_blocks().is_empty());
+    }
+
+    /// `(label, value, range)` of every annotation of `block`.
+    fn notes(fs: &ExtFs, block: u32) -> Vec<(String, String, Range<usize>)> {
+        fs.annotate_sector(u64::from(block))
+            .into_iter()
+            .map(|a| (a.label, a.value, a.range))
+            .collect()
+    }
+
+    fn want(list: &[(&str, &str, Range<usize>)]) -> Vec<(String, String, Range<usize>)> {
+        list.iter()
+            .map(|(l, v, r)| (l.to_string(), v.to_string(), r.clone()))
+            .collect()
+    }
+
+    #[test]
+    fn the_journal_superblock_is_annotated_field_by_field() {
+        let mut fs = ext3(JournalMode::Ordered);
+        let mut fields = vec![
+            ("magic", "0xC03B3998", 0..4),
+            ("block type", "4", 4..8),
+            ("block size", "1024", 12..16),
+            ("maxlen", "1024", 16..20),
+            ("first", "1", 20..24),
+            ("sequence", "1", 24..28),
+            ("start", "0", 28..32),
+            ("uuid", "e2f5ee00-2026-4923-8000-000000000001", 48..64),
+            ("users", "1", 64..68),
+        ];
+        assert_eq!(notes(&fs, 82), want(&fields));
+        // A crashed second transaction: the disk says sequence 2 from 10.
+        fs.create_file("/f", &pattern(3000)).unwrap();
+        fs.arm_crash(CrashPhase::AfterCommit).unwrap();
+        fs.create_file("/g", &pattern(3000)).unwrap();
+        fields[5].1 = "2";
+        fields[6].1 = "10";
+        assert_eq!(notes(&fs, 82), want(&fields));
+    }
+
+    #[test]
+    fn a_descriptor_shows_its_header_and_every_tag() {
+        let mut fs = ext3(JournalMode::Ordered);
+        fs.create_file("/f", &pattern(3000)).unwrap();
+        assert_eq!(
+            notes(&fs, 83),
+            want(&[
+                ("magic", "0xC03B3998", 0..4),
+                ("block type", "1", 4..8),
+                ("sequence", "1", 8..12),
+                ("tag 1", "block 1, flags none", 12..20),
+                ("uuid", "e2f5ee00-2026-4923-8000-000000000001", 20..36),
+                ("tag 2", "block 2, flags same_uuid", 36..44),
+                ("tag 3", "block 3, flags same_uuid", 44..52),
+                ("tag 4", "block 4, flags same_uuid", 52..60),
+                ("tag 5", "block 5, flags same_uuid", 60..68),
+                ("tag 6", "block 6, flags same_uuid", 68..76),
+                ("tag 7", "block 69, flags same_uuid | last", 76..84),
+            ])
+        );
+    }
+
+    #[test]
+    fn a_commit_block_shows_its_header_and_commit_time() {
+        let mut fs = ext3(JournalMode::Ordered);
+        fs.create_file("/f", &pattern(3000)).unwrap();
+        let header = [
+            ("magic", "0xC03B3998", 0..4),
+            ("block type", "2", 4..8),
+            ("sequence", "1", 8..12),
+        ];
+        let mut list = header.to_vec();
+        list.push(("commit time", "315532800 (1980-01-01 00:00:00)", 48..56));
+        assert_eq!(notes(&fs, 91), want(&list));
+        // The second transaction commits at journal block 18 (block 100).
+        fs.set_now(DateTime::new(2026, 9, 24, 12, 30, 5));
+        fs.create_file("/g", &pattern(3000)).unwrap();
+        let mut list = header.to_vec();
+        list[2].1 = "2";
+        list.push(("commit time", "1790253005 (2026-09-24 12:30:05)", 48..56));
+        assert_eq!(notes(&fs, 100), want(&list));
+    }
+
+    #[test]
+    fn a_copy_names_its_home_and_whether_it_is_stale_or_escaped() {
+        let copy = |value: &str| want(&[("journal copy", value, 0..1024)]);
+        let mut fs = ext3(JournalMode::Ordered);
+        fs.create_file("/f", &pattern(3000)).unwrap();
+        assert_eq!(
+            notes(&fs, 84),
+            copy("copy of block 1 for transaction 1 (stale)")
+        );
+        assert_eq!(
+            notes(&fs, 90),
+            copy("copy of block 69 for transaction 1 (stale)")
+        );
+        // The live transaction's copies are not stale.
+        fs.arm_crash(CrashPhase::AfterCommit).unwrap();
+        fs.create_file("/g", &pattern(3000)).unwrap();
+        assert_eq!(notes(&fs, 93), copy("copy of block 1 for transaction 2"));
+        assert_eq!(
+            notes(&fs, 84),
+            copy("copy of block 1 for transaction 1 (stale)")
+        );
+        // An escaped copy says so, and so does its tag.
+        let mut fs = ext3(JournalMode::Data);
+        let mut data = pattern(1024);
+        data[..4].copy_from_slice(&MAGIC);
+        fs.create_file("/magic", &data).unwrap();
+        assert_eq!(
+            notes(&fs, 91),
+            copy("copy of block 1111 for transaction 1 (stale) (escaped)")
+        );
+        assert!(notes(&fs, 83).contains(&(
+            "tag 8".to_string(),
+            "block 1111, flags escape | same_uuid | last".to_string(),
+            84..92
+        )));
+    }
+
+    #[test]
+    fn unused_revoke_and_foreign_blocks_are_annotated() {
+        let mut fs = ext3(JournalMode::Ordered);
+        let unused = want(&[("journal", "unused journal block", 0..1024)]);
+        assert_eq!(notes(&fs, 83), unused);
+        assert_eq!(notes(&fs, 1105), unused);
+        // A revoke block (planted: the emulator never writes one) shows its
+        // header only; a superblock header inside the log is unused.
+        let header = |blocktype: u32, sequence: u32| {
+            [
+                MAGIC.to_vec(),
+                blocktype.to_be_bytes().to_vec(),
+                sequence.to_be_bytes().to_vec(),
+            ]
+            .concat()
+        };
+        fs.write_raw(87 * 1024, &header(5, 7)).unwrap();
+        fs.write_raw(88 * 1024, &header(4, 0)).unwrap();
+        assert!(fs.corruption().is_none());
+        let blocks = fs.journal_blocks();
+        assert_eq!(
+            (blocks[5].kind, blocks[5].tid, blocks[5].stale),
+            (JournalBlockKind::Revoke, Some(7), true)
+        );
+        assert_eq!(blocks[6].kind, Unused);
+        assert_eq!(
+            notes(&fs, 87),
+            want(&[
+                ("magic", "0xC03B3998", 0..4),
+                ("block type", "5", 4..8),
+                ("sequence", "7", 8..12),
+            ])
+        );
+        assert_eq!(notes(&fs, 88), unused);
+    }
+
+    #[test]
+    fn the_journal_pointer_blocks_keep_the_indirect_annotations() {
+        let fs = ext3(JournalMode::Ordered);
+        let owner = &fs.block_owners()[&1106];
+        assert_eq!(
+            (owner.inode, owner.path.as_str(), owner.role),
+            (8, "<journal>", BlockRole::Indirect)
+        );
+        assert_eq!(
+            notes(&fs, 1106),
+            want(&[("pointer[0..255]", "blocks 94..349", 0..1024)])
+        );
+        assert_eq!(
+            notes(&fs, 1107),
+            want(&[
+                ("pointer[0..2]", "blocks 1108..1110", 0..12),
+                ("pointer[3..255]", "unused", 12..1024),
+            ])
+        );
+        assert_eq!(
+            notes(&fs, 1110),
+            want(&[
+                ("pointer[0..243]", "blocks 862..1105", 0..976),
+                ("pointer[244..255]", "unused", 976..1024),
+            ])
+        );
     }
 }
