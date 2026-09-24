@@ -2041,11 +2041,14 @@ mod recovery {
     }
 
     /// Amendment to Task 4's review (`tid + 1` panicking in debug builds at
-    /// `u32::MAX`): every sequence increment recovery makes uses
-    /// `wrapping_add`, so a volume whose `s_sequence` is already
-    /// `u32::MAX` (reachable only with a raw write) recovers instead of
-    /// panicking, with `s_sequence` wrapping to 0 for a discarded or empty
-    /// scan (section 6 step 4: `expected + 1`, here `0xFFFF_FFFF + 1`).
+    /// `u32::MAX`): `replay`'s `next_sequence` uses `wrapping_add`, so a
+    /// volume whose `s_sequence` is already `u32::MAX` over an empty
+    /// journal (reachable only with a raw write) recovers instead of
+    /// panicking, with `s_sequence` wrapping to 0 (section 6 step 4:
+    /// `expected + 1`, here `0xFFFF_FFFF + 1`). The log walker's own
+    /// `expected` wrap, and `replay`'s `wrapping_add(committed)` with a
+    /// nonzero `committed`, are covered separately by
+    /// `journal::recovery::tests::the_sequence_wraps_past_u32_max_instead_of_panicking`.
     #[test]
     fn s_sequence_at_u32_max_recovers_by_wrapping_instead_of_panicking() {
         let mut fs = ext3(JournalMode::Ordered);

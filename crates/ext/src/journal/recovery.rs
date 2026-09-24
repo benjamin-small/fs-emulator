@@ -623,4 +623,27 @@ mod tests {
         );
         assert_eq!(rec.events[3].region(), Some(25 * BS..26 * BS));
     }
+
+    #[test]
+    fn the_sequence_wraps_past_u32_max_instead_of_panicking() {
+        // Transaction u32::MAX commits, so the walker's own `expected` must
+        // wrap to 0 to find the second transaction; `replay` then wraps
+        // `s_sequence` past u32::MAX too.
+        let (mut disk, j) = journal(16, u32::MAX, 1);
+        put(&mut disk, &j, 1, &descriptor(u32::MAX, &[40]));
+        put(&mut disk, &j, 3, &encode_commit(u32::MAX, 1));
+        put(&mut disk, &j, 4, &descriptor(0, &[41]));
+        put(&mut disk, &j, 6, &encode_commit(0, 1));
+        let found = scan(&disk, &j).unwrap();
+        assert_eq!(found.len(), 2);
+        assert_eq!(found[0].tid, u32::MAX);
+        assert!(found[0].committed);
+        assert_eq!(found[1].tid, 0);
+        assert!(found[1].committed);
+        disk.begin_op("recover");
+        let next = replay(&mut disk, &j, &found).unwrap();
+        let _ = disk.end_op();
+        assert_eq!(next, 2);
+        assert_eq!(disk.read(20 * BS + 0x18, 8), &[0, 0, 0, 2, 0, 0, 0, 0][..]);
+    }
 }
