@@ -280,14 +280,35 @@ fn from_image_rejects_short_unsigned_and_truncated_images() {
 #[test]
 fn from_image_names_each_unsupported_reason() {
     let image = default_fs().disk().as_bytes().to_vec();
-    let cases: [(&str, usize, u32, usize); 5] = [
-        ("revision 0", 76, 0, 4),
-        ("2 KiB blocks", 24, 1, 4),
-        ("256-byte inodes", 88, 256, 2),
-        ("extents (incompat 0x40)", 96, 0x0002 | 0x0040, 4),
-        ("large_file (ro_compat 0x2)", 100, 0x0001 | 0x0002, 4),
+    let cases: [(&str, usize, u32, usize, &str); 8] = [
+        ("revision 0", 76, 0, 4, "revision 0"),
+        ("2 KiB blocks", 24, 1, 4, "block size"),
+        ("256-byte inodes", 88, 256, 2, "inode size 256"),
+        ("extents (incompat 0x40)", 96, 0x0002 | 0x0040, 4, "extent"),
+        (
+            "large_file (ro_compat 0x2)",
+            100,
+            0x0001 | 0x0002,
+            4,
+            "large_file",
+        ),
+        ("resize_inode (compat 0x10)", 92, 0x0010, 4, "resize_inode"),
+        (
+            "missing filetype (incompat 0)",
+            96,
+            0,
+            4,
+            "filetype feature is required",
+        ),
+        (
+            "missing sparse_super (ro_compat 0)",
+            100,
+            0,
+            4,
+            "sparse_super feature is required",
+        ),
     ];
-    for (what, offset, value, len) in cases {
+    for (what, offset, value, len, want) in cases {
         let mut bad = image.clone();
         let at = 1_024 + offset;
         if len == 2 {
@@ -296,7 +317,12 @@ fn from_image_names_each_unsupported_reason() {
             put_u32(&mut bad, at, value);
         }
         match ExtFs::from_image(bad) {
-            Err(Error::Unsupported(msg)) => assert!(!msg.is_empty(), "{what}"),
+            Err(Error::Unsupported(msg)) => {
+                assert!(
+                    msg.contains(want),
+                    "{what}: {msg:?} does not contain {want:?}"
+                );
+            }
             other => panic!("{what}: expected Unsupported, got {:?}", other.err()),
         }
     }

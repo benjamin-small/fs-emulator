@@ -46,6 +46,16 @@ const INCOMPAT_NAMES: [(u32, &str); 16] = [
     (0x2_0000, "casefold"),
 ];
 
+/// Names of the compat feature bits, for `Unsupported` messages.
+const COMPAT_NAMES: [(u32, &str); 6] = [
+    (0x0001, "dir_prealloc"),
+    (0x0002, "imagic_inodes"),
+    (0x0004, "has_journal"),
+    (0x0008, "ext_attr"),
+    (0x0010, "resize_inode"),
+    (0x0020, "dir_index"),
+];
+
 /// Names of the ro_compat feature bits, for `Unsupported` messages.
 const RO_COMPAT_NAMES: [(u32, &str); 12] = [
     (0x0001, "sparse_super"),
@@ -319,8 +329,8 @@ impl Superblock {
         }
         if self.feature_compat != 0 {
             return Err(Error::Unsupported(format!(
-                "compat features are not supported (0x{:08X})",
-                self.feature_compat
+                "compat features are not supported: {}",
+                feature_names(self.feature_compat, &COMPAT_NAMES)
             )));
         }
         let incompat = self.feature_incompat & !FEATURE_INCOMPAT_FILETYPE;
@@ -608,10 +618,18 @@ mod tests {
     fn validate_rejects_any_compat_feature() {
         let good = default_superblock();
         let msg = unsupported_message(&Superblock {
-            feature_compat: 0x0004,
+            feature_compat: 0x0008 | 0x0010 | 0x0020,
+            ..good.clone()
+        });
+        assert_eq!(
+            msg,
+            "compat features are not supported: ext_attr resize_inode dir_index"
+        );
+        let msg = unsupported_message(&Superblock {
+            feature_compat: 0x4000_0000,
             ..good
         });
-        assert_eq!(msg, "compat features are not supported (0x00000004)");
+        assert_eq!(msg, "compat features are not supported: 0x40000000");
     }
 
     #[test]
