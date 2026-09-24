@@ -106,6 +106,32 @@ bytes and FAT images whose `55 AA` is gone, which used to reach the FAT parser
 and throw `CorruptImage`. An image over 256 MiB throws `BadArgument` before
 detection.
 
+### Loading an ext2 image
+
+The ext2 loader takes revision 1 images with 1 KiB blocks, 128-byte inodes,
+exactly the `filetype` and `sparse_super` features, and no compat features;
+anything else there throws `Unsupported` naming the reason. It also needs
+8,192 blocks per group (otherwise `CorruptImage`).
+The intended `mke2fs` form for an image it can load (not yet run against this
+crate by hand; CI's e2fsprogs checks go the other way, judging the
+emulator's images) is:
+
+```
+mke2fs -t ext2 -b 1024 -I 128 -O none,filetype,sparse_super <image>
+```
+
+The last group must hold its own metadata (a backup superblock and
+descriptor table when it has them, both bitmaps, and its inode table). With
+512 inodes per group (the default 16 MiB volume's), group 1 needs 68 blocks,
+so `formatExt2` with `totalBlocks` from 8,194 to 8,260 throws
+`InvalidGeometry` (`group 1 has N blocks but its metadata needs 68`), and
+`fromImage` throws `CorruptImage` with the same text for an image whose
+`s_blocks_count` falls there; with the default inode ratio at that size (256
+inodes per group, 36 metadata blocks) the range is 8,194 to 8,229. Every
+group boundary has the same shape: a last group of 1 block up to one short of
+its metadata. `mke2fs` never writes such an image, because it drops a last
+group that small from the block count.
+
 ## Build and test
 
 ```

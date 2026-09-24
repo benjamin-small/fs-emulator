@@ -65,7 +65,8 @@ with `Unsupported`. Still to do:
 ## In progress: `crates/ext`
 
 Decided 2026-09-23, in four slices, each with its spec under
-`docs/superpowers/specs/`. Slices 1 and 2 have landed:
+`docs/superpowers/specs/`. Slice 1 has landed; slice 2 is in review on
+`feat/ext2`:
 
 - **Slice 1, the adapter seam** (`2026-09-23-fs-adapter-design.md`): every
   FAT assumption in `web/ui` sits behind `FsAdapter`; see "What stays
@@ -113,6 +114,16 @@ already stores it).
 Known and accepted; not bugs.
 
 **`crates/fat`**: NT lowercase bits in short entries are not set.
+
+**`crates/ext`**: `s_wtime` (every operation) and the zeroed tails of the
+pointer blocks a shrinking `write_file` keeps change bytes with no event, so
+slice 4's attribution will see bytes no event explains. `fs_core::run_op` has
+no caller yet (FAT and ext keep their own `run_op`). A last block group too
+small for its metadata throws `InvalidGeometry` from `formatExt2` and
+`CorruptImage` from `fromImage` (for example 8,194 to 8,260 blocks with 512
+inodes per group); `crates/wasm/README.md` gives the range and the intended
+`mke2fs -t ext2 -b 1024 -I 128 -O none,filetype,sparse_super` recipe for a
+loadable image, which has not yet been run against the loader.
 
 **`crates/wasm`**: `init` is exported by wasm-bindgen despite being private.
 `vite-plugin-top-level-await` and its `@swc/core` pin may be removable from
