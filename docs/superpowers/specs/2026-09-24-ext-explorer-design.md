@@ -42,9 +42,12 @@ binding for the crates.
   arms a crash phase, and recovers; the terminal does the same with `crash`
   and `recover`; the status line explains `NeedsRecovery`.
 - Three lessons run end to end on ext3 and pin their numbers by test.
-- Every existing FAT test passes with no expectation edited, and the FAT
-  chrome is unchanged pixel for pixel except for the new Filesystem select
-  inside the Format details.
+- Every existing FAT test passes with no expectation edited, with exactly
+  one sanctioned change: the `mkfs --label` description pinned in
+  `tests/shell/help-text.test.ts` becomes `volume label (fat16: up to 11
+  characters; ext: up to 16 bytes)` because the flag is shared by both
+  families (section 6). The FAT chrome is unchanged pixel for pixel except
+  for the new Filesystem select inside the Format details.
 
 ## Non-goals
 
@@ -294,7 +297,10 @@ phase mapping), `metadata.ts` (`CORRUPT_NOTE`, `NOTES`, `touchesMetadata`),
 - `mkfs`: gains `--type fat16|ext2|ext3` (default: the mounted volume's own
   type, `host.vol.fsType()` lower-cased: `FAT16` is `fat16`), and its flag list is the union of the families'
   `mkfs.flags` deduplicated by `long`; a flag shared by two families merges
-  descriptions as `${descA} (fat16); ${descB} (ext)`. At run time a flag that
+  descriptions as `${base} (fat16: ${restA}; ext: ${restB})` where each
+  family's description is split at its first comma; for `--label` that is
+  `volume label (fat16: up to 11 characters; ext: up to 16 bytes)`, the one
+  sanctioned FAT expectation change. At run time a flag that
   the chosen family does not list is `ShellError("--${long} is not a ${type}
   option")`. ext's `MKFS.flags`: `--blocks` (`totalBlocks`, "total 1 KiB
   blocks (default 16384 = 16 MB)"), `--inodes-per-group`, `--label` ("volume
