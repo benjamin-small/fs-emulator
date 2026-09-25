@@ -188,9 +188,12 @@ reject a journal that overlaps group metadata or maps a block twice; a
 crafted foreign image would then have transactions write over metadata.
 The explorer now loads foreign images, and the check (`CorruptImage`, as
 e2fsck reports) is still to add; slice 4 left the loader alone (a spec
-non-goal). The ignored ext3 mount test in
-`crates/ext/tests/mount_linux.rs`
-(`linux_replays_a_crashed_ext3_image_like_recover`) has not been run.
+non-goal). The ignored ext3 mount tests in
+`crates/ext/tests/mount_linux.rs` were run on 2026-09-25 (Linux 7.0 in a
+privileged Docker container; `docs/testing.md` has the command): the kernel
+reads the image back and replays the crashed image byte for byte like
+`recover()`, apart from `s_overhead_clusters`, which a read-write mount
+fills in when it is zero and the comparison now ignores.
 
 **`crates/wasm`**: `init` is exported by wasm-bindgen despite being private.
 `vite-plugin-top-level-await` and its `@swc/core` pin may be removable from
