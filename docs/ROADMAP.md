@@ -62,10 +62,10 @@ with `Unsupported`. Still to do:
   JavaScript copy of the cluster-count formula, must follow the Rust one (or
   be replaced by a wasm call).
 
-## In progress: `crates/ext`
+## Landed: `crates/ext` and the ext explorer
 
 Decided 2026-09-23, in four slices, each with its spec under
-`docs/superpowers/specs/`. Slices 1 to 3 have landed:
+`docs/superpowers/specs/`. All four have landed:
 
 - **Slice 1, the adapter seam** (`2026-09-23-fs-adapter-design.md`): every
   FAT assumption in `web/ui` sits behind `FsAdapter`; see "What stays
@@ -85,7 +85,8 @@ Decided 2026-09-23, in four slices, each with its spec under
   signature (an image with neither throws `Unsupported`), `fsType()` of
   `"ext2"`, and the `NotFat` / `NotExt` codes (`blockGroupCount`, the one
   ext-only method the spec names for this slice: decision 3, section 8). The
-  explorer refuses an ext image with the status `no adapter for ext2`.
+  explorer refused an ext image with the status `no adapter for ext2`
+  until slice 4.
 - **Slice 3, the ext3 journal** (`2026-09-24-ext3-journal-design.md`, plan
   `docs/superpowers/plans/2026-09-24-ext3-journal.md`): a JBD2 version-2
   journal on the reserved inode 8 (`crates/ext/src/journal/`), in ordered or
@@ -108,23 +109,28 @@ Decided 2026-09-23, in four slices, each with its spec under
   ext-only (`NotExt` elsewhere); the `NeedsRecovery` error code; the
   `journal` region kind in the `RegionKind` union. `fromImage` detection is
   unchanged, with the FAT fallback for an image that carries the ext magic
-  but only parses as FAT. The explorer refuses an ext3 image with `no
-  adapter for ext3`.
-
-Still to do:
-
-- **Slice 4, the explorer:** an ext adapter under `web/ui/src/fs/`, ext-only
-  wasm DTOs (superblock, inodes, block owners), a block-group map that
-  replaces the FAT map through `PANELS`, an inode inspector, the terminal's
-  ext vocabulary, and scenarios that show indirect blocks and, for ext3, a
-  journaled write replaying. For ext3 it adds a journal panel over
-  `journalInfo()` and `journalBlocks()`, the `journal` layout region, the
-  `<journal>` owner of the journal's blocks, and the crash and recovery
-  methods (`armCrash`, `disarmCrash`, `crashPhase`, `needsRecovery`,
-  `recover`). It inherits the `web/ui` seams listed under "Deferred, by
-  area", decides whether an ext volume's labels say "block" instead of
-  "sector", and gives `Unsupported` from `fromImage` its own status text (an
-  unrecognised image now shows the generic "That isn't supported yet.").
+  but only parses as FAT.
+- **Slice 4, the explorer** (`2026-09-24-ext-explorer-design.md`): seven
+  ext-only wasm DTO methods (`extGeometry`, `extSuperblock`, `blockOwners`,
+  `inodeNumber`, `extInode`, `dirEntries`, `fileBlocks`); one `ext` family
+  under `web/ui/src/fs/ext/` binding both ext2 and ext3 (`fsTypes` on the
+  family, the adapter's `name` the volume's type), with journal blocks never
+  units and indirect blocks as owner rows; the seam's sector noun beside the
+  unit noun (ext says block for both: `b:69`, and `i:12` for an inode), the
+  Lesson card's `fileParts`, owner roles and fixed colours, `extras` panels,
+  and the optional journal capability (`FsAdapter.journal`,
+  `needsRecovery`). The explorer mounts ext2 and ext3 volumes, formatted from
+  the Actions panel's Filesystem select or `mkfs --type ext2|ext3`, or loaded
+  from an mke2fs image: a block-group map replaces the FAT map, the Inspector
+  explains inodes, indirect blocks, and journal blocks, and `stat`, `df`, and
+  `seek i:N` speak ext. On ext3 a Journal panel shows the ring with live and
+  stale transactions, arms a crash phase, and recovers; the terminal's
+  `crash` and `recover` do the same, registered only while the volume has a
+  journal (the terminal re-registers its commands when the family changes);
+  the status line explains `NeedsRecovery` and shows `Unsupported`'s own
+  wasm text. Three ext3 lessons (the fundamentals (ext), a journaled write,
+  crash and recover) pin their numbers by test, and the lesson picker groups
+  lessons by filesystem. FAT16 is unchanged and still the default volume.
 
 ## Core API additions
 
@@ -141,18 +147,20 @@ Known and accepted; not bugs.
 
 **`crates/ext`**: `s_wtime` (every operation) and the zeroed tails of the
 pointer blocks a shrinking `write_file` keeps change bytes with no event, so
-slice 4's attribution will see bytes no event explains. `fs_core::run_op` has
+the explorer's attribution sees bytes no event explains. `fs_core::run_op` has
 no caller yet (FAT and ext keep their own `run_op`). A last block group too
 small for its metadata throws `InvalidGeometry` from `formatExt2` and
 `CorruptImage` from `fromImage` (for example 8,194 to 8,260 blocks with 512
-inodes per group); `crates/wasm/README.md` gives the range and the intended
+inodes per group); `crates/wasm/README.md` gives the range and the
 `mke2fs -t ext2 -b 1024 -I 128 -O none,filetype,sparse_super` recipe for a
-loadable image, which has not yet been run against the loader.
+loadable image, checked against the loader and loaded into the explorer by
+the slice-4 browser pass (e2fsprogs 1.47.4, 16,384 blocks).
 
 **`crates/ext`, the journal** (slice 3): `annotate_sector` on a journal
 block classifies the whole journal on every call (about a thousand header
-reads on the default disk), so slice 4's panel should call `journalBlocks()`
-once and reuse it rather than annotating block by block. One mutation is
+reads on the default disk); the Journal panel calls `journalBlocks()` once
+per `volume.epoch` and reuses it, but the Inspector still annotates a journal
+block this way. One mutation is
 one transaction and is never split: a transaction that would tag more than
 `maxlen / 4` blocks (256 on the default 1,024-block journal) throws
 `Unsupported`, so in data mode a single write above roughly 250 KiB fails on
@@ -163,21 +171,24 @@ checksums, 64-bit tags, and writeback mode are `Unsupported`; fast commit,
 async commit, and an external journal device are not implemented either.
 One transaction is in the journal at a time and there is no lazy
 checkpointing: every operation checkpoints immediately and leaves a cleanly
-unmounted volume, the largest departure from a kernel, which a slice-4
-lesson has to explain. Mounts are not modelled (mount count, orphan list,
-`s_state`). Event fields reach JS only inside `text`: the wasm
-`EventRecord` is `{ kind, text, region }`, and the clean `recovery_scanned`
-event has the empty region `{ start: 0, end: 0 }`, so slice 4 either parses
-`text` or adds the event fields to `EventRecord`. `crates/wasm/README.md`
+unmounted volume, the largest departure from a kernel, which the "A
+journaled write" lesson explains at its checkpoint step. Mounts are not
+modelled (mount count, orphan list, `s_state`). Event fields reach JS only
+inside `text`: the wasm `EventRecord` is `{ kind, text, region }`, and the
+clean `recovery_scanned` event has the empty region `{ start: 0, end: 0 }`.
+Slice 4 kept it that way (a spec non-goal): the explorer shows the `text`,
+and the lesson tests parse it to pin journal positions. Adding the event
+fields to `EventRecord` is still open. `crates/wasm/README.md`
 gives the `mke2fs -t ext3 -b 1024 -I 128 -O
 none,has_journal,filetype,sparse_super -J size=1` recipe for a loadable ext3
 image, checked by hand against the loader; the leading `none,` matters,
 since without it mke2fs adds `ext_attr`, `resize_inode`, `dir_index`, and
 `large_file`, which the loader refuses. `JournalState::open` does not yet
 reject a journal that overlaps group metadata or maps a block twice; a
-crafted foreign image would then have transactions write over metadata;
-slice 4, which loads foreign images, should add the check (`CorruptImage`,
-as e2fsck reports). The ignored ext3 mount test in
+crafted foreign image would then have transactions write over metadata.
+The explorer now loads foreign images, and the check (`CorruptImage`, as
+e2fsck reports) is still to add; slice 4 left the loader alone (a spec
+non-goal). The ignored ext3 mount test in
 `crates/ext/tests/mount_linux.rs`
 (`linux_replays_a_crashed_ext3_image_like_recover`) has not been run.
 
@@ -194,24 +205,31 @@ minimum region width, so tiny regions can vanish at narrow widths;
 pre-existing blanket `catch` around `rawDirEntries` on purpose, so a corrupt
 volume falls back to "no range" or "skip this entry" instead of throwing.
 
-**`web/ui`, seams the ext slice inherits**: (a) the free-space model in
+**`web/ui`, after the ext slice** (the slice-4 browser pass): the `.warn`
+text (the Format check line) is hard to read in dark mode in both Format
+forms. By design, clicking one of the journal's pointer blocks (`<journal>`,
+1106 to 1110 on the default disk) on the block-group map only jumps the dump:
+`<journal>` is a pseudo-owner (`isPseudoOwner`), not a tree path, so there is
+nothing to select.
+
+**`web/ui`, seams the ext slice inherited**: (a) the free-space model in
 generic code assumes allocation units exist only in `data` regions and that
-an unowned unit is free, at `web/ui/src/core/attribution.ts` (the
-`region.kind !== "data"` early return and the `free` marking),
-`web/ui/src/components/Inspector.svelte` (the "free" owner fact) and
-`web/ui/src/components/Ribbon.svelte` (`freeLabel` counting unowned units);
-ext blocks span metadata regions and allocated-but-unowned blocks exist (the
-journal, indirect blocks), so the ext slice needs an adapter `isFree(unit)`
-and a `df()`-based free label; (b) the terminal's command help and the
-`mkfs` flags are captured once in `createCommands`, so a family change must
-re-register commands (the spec's non-goal); (c) `entrySlots(path)` returns
-one `Interval`, while an ext path has a directory entry and an inode, so
-slice 4 widens it to `Interval[]`; (d) `addrHelp` and the dump's `g` prompt
-cannot advertise a family's extra address forms such as `i:N`; (e)
-`Ribbon.metaLabel` maps a `directory` region to "root", true only for FAT;
-(f) `hexAddr`/`hex` formatting is duplicated in `fs/fat16/adapter.ts`,
-`shell/commands.ts`, `components/Inspector.svelte`, and `core/lesson.ts` (a
-`core/hex.ts` would serve all four).
+an unowned unit is free. Slice 4 keeps journal blocks out of the units and
+owns the indirect and journal pointer blocks, so the map and the Inspector
+are right, and the ribbon's free label reads the family's `freeUnits()`: FAT
+keeps its count of the clusters no owner row claims, and ext answers `df()`'s
+free count (a fresh ext3 disk reads `14.8 MB free`, 15,205 free blocks, where
+counting unowned blocks would say `16.0 MB free`). (b) Resolved: the terminal re-registers its commands
+when the family changes. (c) `entrySlots(path)`
+stays one `Interval` (on ext the inode's slot); the Inspector's trace names
+the directory entry. (d) Resolved: `extraAddrHelp` feeds `addrHelp` and the
+dump's `g` prompt. (e) `Ribbon.metaLabel` maps a `directory` region to
+"root", true only for FAT; ext has no such region, and its legend shows
+`boot` for the boot block, the superblock, and the backup superblock alike.
+(f) Hex formatting is still repeated: `fs/base.ts`'s `hexAddr` serves the
+adapters and the shell, while `components/StringsPanel.svelte`,
+`components/Inspector.svelte`, and `core/lesson.ts` each keep a `hex` of their
+own.
 
 **`web/ui` terminal** (decided 2026-09-22): the working directory is one
 value per page, not per shell session, because `setPrompt` is engine-wide and
