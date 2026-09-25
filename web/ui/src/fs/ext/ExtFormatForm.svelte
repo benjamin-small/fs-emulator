@@ -18,7 +18,10 @@
 
   function formatDisk() {
     volume.format("ext", options);
-    selection.select(null);
+    // On success VolumeStore.format already cleared status and reset the selection; on
+    // failure it set status and left the disk alone, so selection.select(null) must not run
+    // here (it would wipe that status unconditionally, same as storeHost.format's guard).
+    if (!volume.status) selection.select(null);
   }
 </script>
 
@@ -37,7 +40,7 @@
 </label>
 <label class="field">
   Inodes per group
-  <input class="mono" type="number" min="16" step="8" placeholder={String(defaultInodesPerGroup(totalBlocks))} bind:value={inodesPerGroup} />
+  <input class="mono" type="number" min="16" max="8192" step="8" placeholder={String(defaultInodesPerGroup(totalBlocks))} bind:value={inodesPerGroup} />
 </label>
 <label class="field">
   Label

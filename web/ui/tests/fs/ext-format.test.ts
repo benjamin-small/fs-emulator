@@ -53,10 +53,20 @@ describe("checkFormat", () => {
     expect(checkFormat({ label: "é".repeat(9) }).problem).toBe("label is longer than 16 bytes"); // counted in bytes, not characters
   });
 
+  it("names the inodes-per-group problem the core refuses (a multiple of 8 in 16..8192)", () => {
+    expect(checkFormat({ inodesPerGroup: 17 }).problem).toBe("inodes per group must be a multiple of 8 between 16 and 8192");
+    expect(checkFormat({ inodesPerGroup: 8 }).problem).toBe("inodes per group must be a multiple of 8 between 16 and 8192"); // below 16
+    expect(checkFormat({ inodesPerGroup: 8200 }).problem).toBe("inodes per group must be a multiple of 8 between 16 and 8192"); // above 8192
+    expect(checkFormat({ inodesPerGroup: 256 }).problem).toBeNull();
+    expect(checkFormat({ inodesPerGroup: 16 }).problem).toBeNull();
+    expect(checkFormat({ inodesPerGroup: 8192 }).problem).toBeNull();
+    expect(checkFormat({ inodesPerGroup: undefined }).problem).toBeNull(); // absent means "the default"
+  });
+
   it("finds nothing wrong with the defaults, and every problem it names the formatter refuses too", () => {
     expect(checkFormat({})).toEqual({ problem: null });
     expect(checkFormat(DEFAULTS)).toEqual({ problem: null });
-    const bad: ExtFamilyOptions[] = [{ totalBlocks: 63 }, { totalBlocks: 262145 }, { totalBlocks: 2047 }, { journalBlocks: 1023 }, { label: "a".repeat(17) }];
+    const bad: ExtFamilyOptions[] = [{ totalBlocks: 63 }, { totalBlocks: 262145 }, { totalBlocks: 2047 }, { journalBlocks: 1023 }, { label: "a".repeat(17) }, { inodesPerGroup: 17 }];
     for (const o of bad) {
       expect(checkFormat(o).problem, JSON.stringify(o)).not.toBeNull();
       expect(() => formatWith(o), JSON.stringify(o)).toThrow();

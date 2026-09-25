@@ -32,6 +32,12 @@ export const DEFAULTS: Required<Pick<ExtFamilyOptions, "variant" | "totalBlocks"
 // MIN_VOLUME_BLOCKS_FOR_JOURNAL and MIN_JOURNAL_BLOCKS), for the rules below.
 const MIN_BLOCKS = 64, MAX_BLOCKS = 262144, BLOCKS_PER_GROUP = 8192, BLOCK_SIZE = 1024;
 const MIN_VOLUME_BLOCKS_FOR_JOURNAL = 2048, MIN_JOURNAL_BLOCKS = 1024, LABEL_BYTES = 16;
+const MIN_INODES_PER_GROUP = 16, MAX_INODES_PER_GROUP = 8192;
+
+/** The core's `inodes_per_group_is_valid`: a multiple of 8 in 16..=8192 (`crates/ext/src/superblock.rs`). */
+function inodesPerGroupIsValid(ipg: number): boolean {
+  return ipg >= MIN_INODES_PER_GROUP && ipg <= MAX_INODES_PER_GROUP && ipg % 8 === 0;
+}
 
 /** The core's `default_inodes_per_group`: mke2fs's one inode per 16 KiB of the volume, split
  *  evenly over the groups (block 0 is outside every group, so a volume has
@@ -53,15 +59,15 @@ export function defaultJournalBlocks(totalBlocks: number): number | null {
 }
 
 /** The problem the Format form names beside its button (and disables it on), or null. Absent
- *  options take the form's defaults. The core refuses a few more (an inode count that is not a
- *  multiple of 8, a journal too big for the volume, a malformed UUID) and says so in its own
- *  words through the status line. */
+ *  options take the form's defaults. The core refuses a couple more (a journal too big for the
+ *  volume, a malformed UUID) and says so in its own words through the status line. */
 export function checkFormat(o: ExtFamilyOptions): { problem: string | null } {
   const variant = o.variant ?? DEFAULTS.variant;
   const total = o.totalBlocks ?? DEFAULTS.totalBlocks;
   let problem: string | null = null;
   if (total < MIN_BLOCKS) problem = "too few blocks (minimum 64)";
   else if (total > MAX_BLOCKS) problem = "too many blocks (maximum 262,144)";
+  else if (o.inodesPerGroup !== undefined && !inodesPerGroupIsValid(o.inodesPerGroup)) problem = "inodes per group must be a multiple of 8 between 16 and 8192";
   else if (variant === "ext3" && total < MIN_VOLUME_BLOCKS_FOR_JOURNAL) problem = "a journal needs at least 2048 blocks";
   else if (variant === "ext3" && o.journalBlocks !== undefined && o.journalBlocks < MIN_JOURNAL_BLOCKS) problem = "the journal must be at least 1024 blocks";
   else if (new TextEncoder().encode(o.label ?? "").length > LABEL_BYTES) problem = "label is longer than 16 bytes";

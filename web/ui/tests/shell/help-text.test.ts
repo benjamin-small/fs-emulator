@@ -76,4 +76,8 @@ describe("the help text on an ext3 host", () => {
     expect(spec("write").flags?.find((f) => f.long === "at")?.desc).toBe("disk address for /dev/hda (addresses: 0x1f (hex), 512 (decimal), b:65 (block), i:11 (inode))");
     expect(spec("xxd").flags?.find((f) => f.long === "offset")?.desc).toBe("start address (addresses: 0x1f (hex), 512 (decimal), b:65 (block), i:11 (inode))");
   });
+
+  it("pins seek's addr argument description: the block form once, plus i:N, no leftover 'sector' noun", () => {
+    expect(spec("seek").required?.[0]?.desc).toBe("0x1f, 512, b:65 (block), i:11 (inode)");
+  });
 });

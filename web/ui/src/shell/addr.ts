@@ -24,6 +24,17 @@ export function addrHelp(space: AddrSpace): string {
   return `addresses: 0x1f (hex), 512 (decimal), ${sector.letter}:65 (${sector.singular})${unitForm}${space.extraAddrHelp ?? ""}`;
 }
 
+/** The address forms for a single positional argument (`seek`'s `addr`): the same forms as
+ *  `addrHelp`, minus the `addresses:` prefix and with the last form joined by "or" instead of
+ *  a bare comma. For FAT this reads `0x1f, 512, s:65 (sector), or c:3 (cluster)`; for ext
+ *  `0x1f, 512, b:65 (block), i:11 (inode)` (the unit and the sector coincide, so there is
+ *  nothing to join with "or", and `i:N` comes from `extraAddrHelp`). */
+export function posAddrHelp(space: AddrSpace): string {
+  const { sector, unit } = space;
+  const unitForm = unitIsSector(space) ? "" : `, or ${unit.letter}:3 (${unit.singular})`;
+  return `0x1f, 512, ${sector.letter}:65 (${sector.singular})${unitForm}${space.extraAddrHelp ?? ""}`;
+}
+
 /** `<letter>:N` with the family's letter, case-insensitively like `s:N`; `undefined` otherwise. */
 function letterIndex(v: string, letter: string): number | undefined {
   const prefix = `${letter}:`;

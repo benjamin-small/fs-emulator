@@ -3,7 +3,7 @@ import type { DateTime, EntryInfo, Volume } from "../lib/wasm";
 import { FAMILIES } from "../fs";
 import type { FsAdapter, FsFamily, MkfsFlag } from "../fs/adapter";
 import { hexAddr } from "../fs/base";
-import { SIZE_HELP, addrHelp, parseAddr, parseSize } from "./addr";
+import { SIZE_HELP, addrHelp, parseAddr, parseSize, posAddrHelp } from "./addr";
 import { decodeText, hasInput, toBytes } from "./bytes";
 import { DD_MAX_BYTES, parseDd, runDd } from "./dd";
 import { CORRUPT_HELP, ShellError, fsCall, wrapFs } from "./errors";
@@ -364,7 +364,7 @@ export function readCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
     spec: {
       name: "seek",
       summary: "Move the hex dump to an address",
-      required: [P("addr", `0x1f, 512, s:65 (sector), or ${host.adapter.unit.letter}:3 (${host.adapter.unit.singular})`)],
+      required: [P("addr", posAddrHelp(host.adapter))],
     },
     fn: (args) => {
       const vol = host.vol;

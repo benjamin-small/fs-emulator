@@ -468,6 +468,46 @@ describe("ExtAdapter: what the shell and the Inspector print", () => {
   });
 });
 
+describe("ExtAdapter: a corrupt volume", () => {
+  it("survives a zeroed superblock magic and sees the volume again once repaired", () => {
+    const { vol, fs } = fixture();
+    const ownersBefore = fs.owners;
+    const chainBefore = fs.chain("/hello.txt");
+    const slotsBefore = fs.entrySlots("/hello.txt");
+    const startBefore = fs.dataStart("/hello.txt");
+    const saved = vol.readRaw(1 * BLOCK + 0x38, 2);
+
+    expect(vol.corruption()).toBeNull();
+    vol.writeRaw(1 * BLOCK + 0x38, new Uint8Array(2)); // zero the superblock magic
+    expect(vol.corruption()).toContain("superblock or group descriptors no longer parse after a raw write");
+    expect(() => fs.refresh()).not.toThrow();
+
+    // block_owners() walks the tree through self.inode(), which reads the inode table
+    // directly by its cached location rather than passing the corruption gate, so the owner
+    // rows come back unaffected: neither [] (the review's guess) nor stale in the sense of
+    // wrong, just not gated. Only the path-based wasm calls (fileBlocks, inodeNumber,
+    // dirEntries) pass the gate and answer "nothing" while the volume is corrupt.
+    expect(fs.owners).toEqual(ownersBefore);
+    expect(fs.chain("/hello.txt")).toEqual([]);
+    expect(fs.entrySlots("/hello.txt")).toBeNull();
+    expect(fs.dataStart("/hello.txt")).toBeNull();
+    expect(fs.trace("/hello.txt")).toEqual([{ label: "no data blocks", offset: null }]);
+    // describeUnit reads the (unaffected) owners cache, so it still names /docs's block
+    // rather than falling back to "free" as the review guessed.
+    expect(fs.describeUnit(1111)).toBe("directory block 0 of /docs");
+    // journalInfo() reads the disk directly too, so the journal capability is unaffected.
+    expect(fs.journal?.state()).toMatchObject({ mode: "ordered", needsRecovery: false });
+
+    vol.writeRaw(1 * BLOCK + 0x38, saved);
+    expect(vol.corruption()).toBeNull();
+    fs.refresh();
+    expect(fs.owners).toEqual(ownersBefore);
+    expect(fs.chain("/hello.txt")).toEqual(chainBefore);
+    expect(fs.entrySlots("/hello.txt")).toEqual(slotsBefore);
+    expect(fs.dataStart("/hello.txt")).toBe(startBefore);
+  });
+});
+
 describe("ExtAdapter: caches and the journal capability", () => {
   it("answers from the last refresh() until the next one", () => {
     const { vol, fs } = fixture();
