@@ -106,8 +106,10 @@ optional part of the adapter that exposes the ext3 journal.
   ColorIndex`; FAT rows leave both undefined. `buildAttribution` colours an
   indirect row with its path's hue like a data row, and uses `color` verbatim
   when a row carries it; `Attr` gains `role?` copied from the owner.
-- `FsAdapter` gains `readonly needsRecovery: boolean` (FAT and ext2: always
-  false) and `readonly journal?: JournalCapability`:
+- `FsAdapter` gains `freeUnits(): number` (the ribbon's free-space count:
+  FAT keeps its count of units without an owner row, ext answers the
+  superblock's free count through `df()`), `readonly needsRecovery: boolean`
+  (FAT and ext2: always false), and `readonly journal?: JournalCapability`:
 
   ```ts
   export type CrashPhase = "before_commit" | "after_commit" | "during_checkpoint";
@@ -130,8 +132,9 @@ optional part of the adapter that exposes the ext3 journal.
 - `MkfsSpec` loses `done` and `summary` (the shell composes the done line
   `formatted /dev/hda as ${host.vol.fsType()}; the timeline was cleared`,
   which for FAT is the string it prints today, and `mkfs` has one summary
-  for every family, section 6), so it is `{ flags: MkfsFlag[] }`. `MkfsFlag`
-  is unchanged.
+  for every family, section 6), so by the end of the plan it is `{ flags:
+  MkfsFlag[] }`; `summary` may survive until the task that gives `mkfs` its
+  single summary. `MkfsFlag` is unchanged.
 - `FsAdapter` gains `readonly extraAddrHelp?: string` (ext: `", i:11 (inode)"`),
   `AddrSpace` picks it up beside `parseAddr`, and `addrHelp` composes `addresses: 0x1f (hex), 512 (decimal),
   ${sector.letter}:65 (${sector.singular})` + (unit distinct from sector ?
