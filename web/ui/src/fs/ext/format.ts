@@ -78,10 +78,10 @@ const MKFS_FLAGS: (MkfsFlag & { option: keyof ExtFamilyOptions })[] = [
   { long: "journal-mode", desc: "ordered or data, ext3 only", kind: "str", option: "journalMode" },
 ];
 
-/** The shell's `mkfs` for this family: its summary and the six flags. The done line is the
- *  shell's, composed from the new volume's `fsType()` (`ext2` or `ext3`). */
+/** The shell's `mkfs` for this family: the six flags. The summary and the done line are the
+ *  shell's (one `mkfs` for every family; the done line names the new volume's `fsType()`,
+ *  `ext2` or `ext3`). */
 export const MKFS: MkfsSpec = {
-  summary: "Format /dev/hda as ext2 or ext3 (clears the timeline)",
   flags: MKFS_FLAGS,
 };
 

@@ -1,5 +1,6 @@
 import type { OpRecord, Volume } from "../lib/wasm";
-import type { FsAdapter, FsFamilyId } from "../fs/adapter";
+import type { CrashPhase, FsAdapter, FsFamilyId } from "../fs/adapter";
+import type { CommandCtx } from "./types";
 import { canonicalize } from "./vfs";
 
 /**
@@ -22,6 +23,10 @@ export interface ShellHost {
   /** Replace the volume with a fresh one of `family`, formatted with that family's options;
    *  the store discards the history. Throws `{ message, code? }` on failure. */
   format(family: FsFamilyId, options?: unknown): void;
+  /** Arm a crash in the mounted journal (`null` disarms). Not an op: no timeline step. The app
+   *  arms through the store (`volume.setArmedPhase`), so the Journal panel shows the phase at
+   *  once. Throws `{ message, code? }` on failure. */
+  setArmedPhase(phase: CrashPhase | null): void;
   select(path: string | null): void;
   jumpTo(offset: number): void;
   /**
@@ -34,6 +39,15 @@ export interface ShellHost {
 }
 
 export const atLatest = (h: ShellHost): boolean => h.cursor === h.historyLength - 1;
+
+/** The one warning every read command emits while the timeline is rewound. */
+export function rewoundWarning(host: ShellHost): string {
+  return `showing the latest state, not step ${host.cursor + 1} of ${host.historyLength}; click "Back to now" or run a write command`;
+}
+
+export function warnIfRewound(host: ShellHost, ctx: CommandCtx): void {
+  if (!atLatest(host)) ctx.err(rewoundWarning(host));
+}
 
 /**
  * `vol.corruption()`, or `null` when the call itself throws. `corruption()` is on the

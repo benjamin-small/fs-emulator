@@ -1,6 +1,6 @@
 import { Volume, type OpRecord } from "../../src/lib/wasm";
 import { FAMILIES, adapterFor } from "../../src/fs";
-import type { FsAdapter, FsFamilyId } from "../../src/fs/adapter";
+import type { CrashPhase, FsAdapter, FsFamilyId } from "../../src/fs/adapter";
 import type { ShellHost } from "../../src/shell/host";
 import type { CommandDef } from "../../src/shell/commands";
 import type { CommandCtx, Value } from "@benjamin-small/browser-terminal";
@@ -21,6 +21,8 @@ export class TestHost implements ShellHost {
   jumps: number[] = [];
   prompts: string[] = [];
   formats: { family: FsFamilyId; options: unknown }[] = [];
+  /** Every `setArmedPhase` call that succeeded, in order (`null` for a disarm). */
+  crashes: (CrashPhase | null)[] = [];
   closed = false;
 
   constructor(vol: Volume) {
@@ -50,6 +52,15 @@ export class TestHost implements ShellHost {
     this.history = [];
     this.cursor = -1;
     this.formats.push({ family, options });
+  }
+
+  /** Arms the capability directly (the app goes through the store, which does the same and
+   *  also records the phase for the Journal panel); nothing to arm without a journal. */
+  setArmedPhase(phase: CrashPhase | null): void {
+    const journal = this.adapter.journal;
+    if (phase === null) journal?.disarm();
+    else journal?.arm(phase);
+    this.crashes.push(phase);
   }
 
   select(path: string | null): void {

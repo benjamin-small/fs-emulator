@@ -88,7 +88,7 @@ describe("the form's choices and the shell's mkfs", () => {
   });
 
   it("keeps the six mkfs flags with their descriptions", () => {
-    expect(MKFS.summary).toBe("Format /dev/hda as ext2 or ext3 (clears the timeline)");
+    expect(MKFS).not.toHaveProperty("summary"); // the shell's mkfs has one summary for every family
     expect(MKFS.flags).toEqual([
       { long: "blocks", desc: "total 1 KiB blocks (default 16384 = 16 MB)", kind: "int", option: "totalBlocks" },
       { long: "inodes-per-group", desc: "inodes per block group (default one per 16 KiB)", kind: "int", option: "inodesPerGroup" },

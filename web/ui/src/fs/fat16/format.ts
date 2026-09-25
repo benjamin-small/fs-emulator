@@ -54,9 +54,8 @@ const MKFS_FLAGS: (MkfsFlag & { option: keyof FormatOptions })[] = [
   { long: "reserved", desc: "reserved sectors (default 1)", kind: "int", option: "reservedSectors" },
 ];
 
-/** The shell's `mkfs` for this family: its summary and the six flags. The done line is the
- *  shell's, composed from the new volume's `fsType()`. */
+/** The shell's `mkfs` for this family: the six flags. The summary and the done line are the
+ *  shell's (one `mkfs` for every family; the done line from the new volume's `fsType()`). */
 export const MKFS: MkfsSpec = {
-  summary: "Format /dev/hda as FAT16 (clears the timeline)",
   flags: MKFS_FLAGS,
 };

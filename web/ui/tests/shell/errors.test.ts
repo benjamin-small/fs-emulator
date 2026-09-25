@@ -63,7 +63,7 @@ describe("host helpers", () => {
     const vol = Volume.formatFat16(undefined);
     return {
       vol, adapter: adapterFor(vol), cursor, historyLength,
-      run: () => { throw new Error("unused"); }, format: () => {}, select: () => {}, jumpTo: () => {}, setPrompt: () => {}, closeTerminal: () => {},
+      run: () => { throw new Error("unused"); }, format: () => {}, setArmedPhase: () => {}, select: () => {}, jumpTo: () => {}, setPrompt: () => {}, closeTerminal: () => {},
     };
   };
   it("atLatest is true before any op and at the last step only", () => {

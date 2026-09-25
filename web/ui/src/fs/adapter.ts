@@ -108,10 +108,11 @@ export type StatFacts = Record<string, string | number | number[]>;
 export interface DfFacts { unitSize: number; units: number; used: number; free: number }
 
 export interface MkfsFlag { long: string; desc: string; kind: "int" | "str"; option: string }
-/** The shell's `mkfs` for one family. It has no done line: the shell composes
- *  `formatted /dev/hda as ${vol.fsType()}; the timeline was cleared` from the new volume, so a
+/** The shell's `mkfs` flags for one family. There is one `mkfs` for every family, so its summary
+ *  is the shell's (it names every type `--type` takes), and so is its done line: `formatted
+ *  /dev/hda as ${vol.fsType()}; the timeline was cleared`, composed from the new volume, so a
  *  family with two types (ext2, ext3) names the one it made. */
-export interface MkfsSpec { summary: string; flags: MkfsFlag[] }
+export interface MkfsSpec { flags: MkfsFlag[] }
 
 /** Where an armed crash stops the next journaled change: before its commit block is written,
  *  after the commit but before the checkpoint, or part way through the checkpoint. The strings

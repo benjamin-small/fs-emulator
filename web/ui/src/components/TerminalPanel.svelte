@@ -9,7 +9,7 @@
   import type { BrowserTerminal } from "@benjamin-small/browser-terminal";
   import type { Volume } from "../lib/wasm";
   import { themeFromTokens } from "../core/terminalTheme";
-  import { createCommands } from "../shell/commands";
+  import { commandSetOf, registerCommands } from "../shell/commands";
   import type { ShellHost } from "../shell/host";
   import { createRedirectHandler } from "../shell/redirect";
   import { createStoreHost } from "../shell/storeHost.svelte";
@@ -27,6 +27,10 @@
   const vfs = new Vfs();
   // The registered commands' host, kept so the volume watcher below can reach `setPrompt`.
   let host: ShellHost | null = null;
+  // The names the terminal holds and the command set they were built for (`commandSetOf`),
+  // so the family watcher below can swap them all. Plain fields, not state.
+  let registered: string[] = [];
+  let registeredSet: string | null = null;
 
   /** Close the drawer and hand focus to the topbar button, since the element that had
    *  focus (the active pane's terminal input) is about to be hidden. `exit`, the Close
@@ -74,10 +78,12 @@
       // columns in a 220px drawer; the library's own default is 13.
       const term = await BrowserTerminal.create({ mount, terminal: { theme: xtermTheme, fontFamily, fontSize: 12 } });
       try {
-        // Commands read live store fields through the host on every call, so registering
-        // once is enough (same pattern as browser-terminal's Svelte demo).
+        // Commands read live store fields through the host on every call; only what is fixed
+        // at registration (the command set, its summaries and flag descriptions) follows the
+        // family, through the re-registration effect below.
         const created = createStoreHost(close, (prefix) => term.setPrompt(prefix));
-        for (const { spec, fn } of createCommands(created, vfs)) term.registerCommand(spec, fn);
+        registered = registerCommands(term, created, vfs);
+        registeredSet = commandSetOf(volume.adapter);
         // `>`, `>>` and `<` resolve through the same VFS the commands do, so
         // `echo hi > /mnt/A.TXT` is the journaled write `echo hi | write /mnt/A.TXT` is.
         term.setRedirectHandler(createRedirectHandler(created, vfs));
@@ -132,10 +138,31 @@
     untrack(() => host?.setPrompt(promptFor(vfs.cwd)));
   });
 
+  // Re-register when the mounted family (or its journal) changes. Every command reads the
+  // live adapter when it runs, but browser-terminal keeps each spec as it was registered: the
+  // summaries and flag descriptions that name the family's nouns (`df`'s "Cluster usage",
+  // the `b:65 (block)` address help) and whether `crash` and `recover` exist at all are fixed
+  // then. So swap the whole set: unregister every name, register `createCommands` again over
+  // the same `vfs` (the working directory survives), and re-set the prompt. `volume.adapter`
+  // is the only tracked read; the terminal and the names are plain fields, and the work is
+  // untracked. Before the terminal exists there is nothing to swap: creation registers the
+  // set of the family mounted then.
+  $effect(() => {
+    const set = commandSetOf(volume.adapter);
+    untrack(() => {
+      if (!bt || !host || set === registeredSet) return;
+      registered = registerCommands(bt, host, vfs, registered);
+      registeredSet = set;
+      host.setPrompt(promptFor(vfs.cwd));
+    });
+  });
+
   function disposeTerminal() {
     bt?.dispose();
     bt = null;
     host = null;
+    registered = [];
+    registeredSet = null;
   }
   // HMR replaces this module: dispose first or the next create() throws "one instance
   // per page". The unmount cleanup covers the non-HMR teardown. dispose() is idempotent.
