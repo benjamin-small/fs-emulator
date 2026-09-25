@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Volume } from "../../src/lib/wasm";
-import { commandSetOf, createCommands, registerCommands, type CommandRegistry } from "../../src/shell/register";
+import { commandSetOf, createCommands, registerCommands, registrationChange, tabBanner, type CommandRegistry } from "../../src/shell/register";
 import type { CommandDef } from "../../src/shell/types";
 import { journalCommands } from "../../src/shell/journalCommands";
 import { Vfs } from "../../src/shell/vfs";
@@ -213,5 +213,54 @@ describe("re-registration when the family changes", () => {
 
     expect(registerCommands(term, host, vfs, ext2)).toEqual(fat);
     expect(registered.has("crash")).toBe(false);
+  });
+
+  it("keeps each tab's working directory: a switch registers over that tab's own vfs", async () => {
+    const fat = { host: makeHost(), vfs: new Vfs() };
+    const ext = { host: makeHost(Volume.formatExt3(undefined)), vfs: new Vfs() };
+    const { term, registered } = fakeTerminal();
+    const pwd = async () => (await call([{ spec: { name: "pwd", summary: "" }, fn: registered.get("pwd")! }], "pwd")).value;
+
+    let names = registerCommands(term, fat.host, fat.vfs);
+    await call(createCommands(fat.host, fat.vfs), "mkdir", { positionals: ["/mnt/D"] });
+    fat.vfs.cwd = "/mnt/D";
+    expect(await pwd()).toBe("/mnt/D");
+
+    names = registerCommands(term, ext.host, ext.vfs, names);
+    expect(await pwd()).toBe("/mnt"); // the ext tab's shell starts at the mount point
+    expect(registered.has("crash")).toBe(true);
+
+    registerCommands(term, fat.host, fat.vfs, names);
+    expect(await pwd()).toBe("/mnt/D"); // back on FAT16, where it was left
+    expect(registered.has("crash")).toBe(false);
+  });
+});
+
+describe("one terminal following the active tab", () => {
+  const fatTab = { id: "fat16" };
+  const extTab = { id: "ext" };
+
+  it("registers on first creation without a banner", () => {
+    expect(registrationChange(null, { ws: fatTab, set: "fat16" })).toEqual({ register: true, banner: false });
+  });
+
+  it("re-registers and prints the banner when the tab changes, whatever the sets", () => {
+    expect(registrationChange({ ws: fatTab, set: "fat16" }, { ws: extTab, set: "ext+journal" })).toEqual({ register: true, banner: true });
+    expect(registrationChange({ ws: extTab, set: "ext+journal" }, { ws: fatTab, set: "fat16" })).toEqual({ register: true, banner: true });
+    expect(registrationChange({ ws: fatTab, set: "ext" }, { ws: extTab, set: "ext" })).toEqual({ register: true, banner: true });
+  });
+
+  it("re-registers without a banner when the tab's own set changes (ext3 formatted as ext2)", () => {
+    expect(registrationChange({ ws: extTab, set: "ext+journal" }, { ws: extTab, set: "ext" })).toEqual({ register: true, banner: false });
+  });
+
+  it("leaves the registration alone when neither changed (a format of the same type, a load)", () => {
+    expect(registrationChange({ ws: fatTab, set: "fat16" }, { ws: fatTab, set: "fat16" })).toEqual({ register: false, banner: false });
+  });
+
+  it("names the tab and the type its disk reports in the banner", () => {
+    expect(tabBanner("ext", "ext3")).toBe("-- ext tab: /dev/hda is ext3 --");
+    expect(tabBanner("ext", "ext2")).toBe("-- ext tab: /dev/hda is ext2 --");
+    expect(tabBanner("fat16", "FAT16")).toBe("-- FAT16 tab: /dev/hda is FAT16 --");
   });
 });

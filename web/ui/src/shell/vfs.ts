@@ -17,8 +17,9 @@ export const DEVICE_HELP = "devices: /dev/hda (the whole disk), /dev/zero, /dev/
 
 /**
  * The virtual tree the shell shows: `/` holds `dev` and `mnt`. Normalization is client-side
- * because fs-core rejects `.` and `..`. One cwd per page: commands cannot learn their session
- * from browser-terminal's ctx, and there is one terminal instance anyway.
+ * because fs-core rejects `.` and `..`. One cwd per tab (each workspace owns a `Vfs`), shared by
+ * every session of the page's one terminal: commands cannot learn their session from
+ * browser-terminal's ctx.
  */
 export class Vfs {
   cwd = MOUNT;

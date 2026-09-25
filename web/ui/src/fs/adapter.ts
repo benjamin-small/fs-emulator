@@ -108,8 +108,8 @@ export type StatFacts = Record<string, string | number | number[]>;
 export interface DfFacts { unitSize: number; units: number; used: number; free: number }
 
 export interface MkfsFlag { long: string; desc: string; kind: "int" | "str"; option: string }
-/** The shell's `mkfs` flags for one family. There is one `mkfs` for every family, so its summary
- *  is the shell's (it names every type `--type` takes), and so is its done line: `formatted
+/** The shell's `mkfs` flags for one family. Each tab's `mkfs` lists its own family's flags; its
+ *  summary is the shell's (it names the types `--type` takes), and so is its done line: `formatted
  *  /dev/hda as ${vol.fsType()}; the timeline was cleared`, composed from the new volume, so a
  *  family with two types (ext2, ext3) names the one it made. */
 export interface MkfsSpec { flags: MkfsFlag[] }
