@@ -127,9 +127,11 @@ optional part of the adapter that exposes the ext3 journal.
 
   These types are declared in `fs/adapter.ts` (structural twins of the
   wasm DTOs) so nothing outside `src/fs/ext/` imports an ext-only wasm type.
-- `MkfsSpec` loses `done`; the shell composes `formatted /dev/hda as
-  ${host.vol.fsType()}; the timeline was cleared`, which for FAT is the
-  string it prints today. `MkfsFlag` is unchanged.
+- `MkfsSpec` loses `done` and `summary` (the shell composes the done line
+  `formatted /dev/hda as ${host.vol.fsType()}; the timeline was cleared`,
+  which for FAT is the string it prints today, and `mkfs` has one summary
+  for every family, section 6), so it is `{ flags: MkfsFlag[] }`. `MkfsFlag`
+  is unchanged.
 - `FsAdapter` gains `readonly extraAddrHelp?: string` (ext: `", i:11 (inode)"`),
   `AddrSpace` picks it up beside `parseAddr`, and `addrHelp` composes `addresses: 0x1f (hex), 512 (decimal),
   ${sector.letter}:65 (${sector.singular})` + (unit distinct from sector ?
