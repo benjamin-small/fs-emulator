@@ -4,7 +4,7 @@
   import { layers } from "../../state/layers.svelte";
   import { selection } from "../../state/selection.svelte";
   import { volume } from "../../state/volume.svelte";
-  import { CELL, FILL_FREE, GAP, HEADER, MAX_HEIGHT, bandHeader, blockAt, blockCaption, blockFills, blocksTouched, cellOf, clickPath, indirectBlocks, layoutBands, mapHeading, visibleRows, wrapHeader } from "./blockMap";
+  import { CELL, FILL_FREE, GAP, HEADER, MAX_HEIGHT, bandHeader, blockAt, blockCaption, blockFills, blocksTouched, cellOf, clampScroll, clickPath, indirectBlocks, layoutBands, mapHeading, visibleRows, wrapHeader } from "./blockMap";
   import { asExt } from "./index";
 
   let canvas = $state<HTMLCanvasElement>();
@@ -37,9 +37,14 @@
   // far taller than a browser's canvas-size limit, so `.bgmap-spacer` (below) carries the full
   // scroll height and the canvas paints only what is in view, sticky at the top of it.
   const viewportHeight = $derived(Math.max(1, Math.min(map.height, MAX_HEIGHT)));
+  // The scroll position to actually paint and hit-test at: the raw `scrollTop` clamped to the
+  // current map, shared by `paint()` and `onMove` so a click always targets what is on screen,
+  // even right after a format that shrinks the disk (before the next real scroll event corrects
+  // `scrollTop` itself).
+  const scrollOffset = $derived(clampScroll(scrollTop, map.height, viewportHeight));
 
   $effect(() => {
-    volume.epoch; layers.chain; layers.diff; selection.hoverOffset; headers; map; fills; scrollTop;
+    volume.epoch; layers.chain; layers.diff; selection.hoverOffset; headers; map; fills; scrollOffset;
     paint();
   });
 
@@ -83,10 +88,8 @@
       return c;
     };
 
-    // The visible slice of the whole map, in world (unscrolled) coordinates. Clamped so a
-    // format that shrinks the disk cannot leave `scrollTop` pointing past the new, shorter map
-    // before the next real scroll event corrects it.
-    const top = Math.max(0, Math.min(scrollTop, Math.max(0, map.height - h)));
+    // The visible slice of the whole map, in world (unscrolled) coordinates.
+    const top = scrollOffset;
     const bottom = top + h;
     const isVisible = (y: number) => y + CELL > top && y < bottom;
 
@@ -152,7 +155,7 @@
   function onMove(e: MouseEvent) {
     if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
-    hoverBlock = blockAt(map, e.clientX - rect.left, e.clientY - rect.top + scrollTop);
+    hoverBlock = blockAt(map, e.clientX - rect.left, e.clientY - rect.top + scrollOffset);
   }
   function onLeave() { hoverBlock = null; }
   function onClick() {

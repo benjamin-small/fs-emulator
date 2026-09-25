@@ -4,7 +4,7 @@ import { COLOR_BOOT, COLOR_DIR, COLOR_JOURNAL, COLOR_TABLE, colorIndexForPath } 
 import { asExt, ext } from "../../src/fs/ext";
 import {
   BAND_GAP, CELL, FILL_FREE, HEADER, MAX_HEIGHT, PITCH,
-  bandHeader, blockAt, blockCaption, blockFills, blocksTouched, cellOf, clickPath, indirectBlocks, layoutBands, mapHeading, visibleRows, wrapHeader,
+  bandHeader, blockAt, blockCaption, blockFills, blocksTouched, cellOf, clampScroll, clickPath, indirectBlocks, layoutBands, mapHeading, visibleRows, wrapHeader,
 } from "../../src/fs/ext/blockMap";
 
 const BLOCK = 1024;
@@ -122,6 +122,14 @@ describe("the block-group map's geometry", () => {
     expect(visibleRows(band, 50, 80)).toEqual({ first: 6, last: 9 });   // partially visible at the bottom edge
     expect(visibleRows(band, 0, 100)).toEqual({ first: 0, last: 9 });   // the whole band fits inside the range
     expect(visibleRows(band, 21, 26)).toEqual({ first: 1, last: 1 });   // a range that exactly spans one row
+  });
+
+  it("clamps a scroll position to what the map can actually show", () => {
+    expect(clampScroll(-50, 1000, 260)).toBe(0);           // never negative
+    expect(clampScroll(300, 1000, 260)).toBe(300);         // within range: unchanged
+    expect(clampScroll(900, 1000, 260)).toBe(740);         // past the end: mapHeight - viewportHeight
+    expect(clampScroll(5000, 1000, 260)).toBe(740);        // far past the end: still clamped to the same max
+    expect(clampScroll(50, 200, 260)).toBe(0);              // the map is shorter than the viewport: always 0
   });
 });
 

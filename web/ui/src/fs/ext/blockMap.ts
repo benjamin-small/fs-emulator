@@ -83,6 +83,16 @@ export function blockAt(m: MapLayout, x: number, y: number): number | null {
   return null;
 }
 
+/** The scroll offset to actually paint and hit-test at, clamped to `[0, mapHeight -
+ *  viewportHeight]` (or 0 when the map is shorter than the viewport). A raw scroll position can
+ *  point past the map right after a format that shrinks the disk (a 256 MB map scrolled near its
+ *  bottom, reformatted to 16 MB) and before the next real scroll event corrects the state; every
+ *  caller that converts between canvas coordinates and map coordinates uses this, not the raw
+ *  scroll state, so a click always targets what the map is actually showing. */
+export function clampScroll(scrollTop: number, mapHeight: number, viewportHeight: number): number {
+  return Math.max(0, Math.min(scrollTop, Math.max(0, mapHeight - viewportHeight)));
+}
+
 /** The row indices (0-based within `band`) whose cells intersect the vertical range
  *  `[top, bottom)`; null when the band's cell rows do not intersect it at all. A large disk
  *  (256 MB: 32 groups, tens of thousands of CSS px tall) is painted one screenful at a time, so
