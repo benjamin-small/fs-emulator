@@ -142,6 +142,18 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .bgmap-wrap canvas { display: block; cursor: pointer; position: sticky; top: 0; }
 .bgmap-caption { margin: 6px 0 0; font-size: 11px; min-height: 14px; }
 
+/* Journal panel (ext3) */
+.journal .facts { margin: 0 0 6px; }
+.journal .facts dd { margin: 0; }
+.journal-flag { margin: 0 0 6px; font-size: 12px; color: var(--diff-ink); }
+.journal-wrap { overflow-y: auto; overflow-x: hidden; }
+.journal-wrap canvas { display: block; cursor: pointer; }
+.journal-caption { margin: 6px 0 0; font-size: 11px; min-height: 14px; }
+.journal-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; font-size: 12px; }
+.journal-controls select { flex: 1 1 100%; min-width: 0; }
+.journal-armed { flex-basis: 100%; }
+.journal-none { margin: 0; font-size: 12px; }
+
 /* Step panel */
 /* Step strip (under the top bar): one wrapping row of heading, counter, op, sector buttons,
    and events. It scrolls past about six rows of buttons (210 px), which the FAT actions never

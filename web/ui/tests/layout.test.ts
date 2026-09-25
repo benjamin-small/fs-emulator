@@ -53,6 +53,21 @@ describe("app.css layout guards", () => {
     expect(rule(".bgmap-wrap canvas")).toContain("display: block");
   });
 
+  it("scrolls the Journal panel's ring inside its own box, never sideways", () => {
+    // The same two faults as the block-group map's: a canvas sized from the last measured width
+    // can briefly be wider than the column, and a 256 MB disk's 8,192-block ring is taller than
+    // the 260 px box it scrolls in.
+    const wrap = rule(".journal-wrap");
+    expect(wrap).toContain("overflow-y: auto");
+    expect(wrap).toContain("overflow-x: hidden");
+    expect(rule(".journal-wrap canvas")).toContain("display: block");
+    // The phase select (or, while armed, the armed line) takes a full row of the 220 px column
+    // and Arm/Disarm and Recover wrap onto the row under it, rather than pushing the column
+    // sideways; the select may shrink.
+    expect(rule(".journal-controls")).toContain("flex-wrap: wrap");
+    expect(rule(".journal-controls select")).toContain("min-width: 0");
+  });
+
   it("lets the Format details' inputs and selects fill the Actions column", () => {
     // The ext form's number inputs and the Filesystem select would otherwise keep their intrinsic
     // widths: ragged against the other fields, and able to overflow the 220 px left column, which

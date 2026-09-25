@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Volume } from "../../src/lib/wasm";
-import { isPseudoOwner, unitIsSector } from "../../src/fs/adapter";
+import { CRASH_PHASES, isPseudoOwner, unitIsSector, type JournalRingBlock } from "../../src/fs/adapter";
 import { defaultColorForRegion } from "../../src/core/attribution";
 import { COLOR_BOOT, COLOR_FREE, COLOR_JOURNAL, COLOR_TABLE } from "../../src/core/palette";
 import { EXT_SECTOR, EXT_UNIT } from "../../src/fs/ext/geometry";
@@ -10,6 +10,9 @@ import { buildTree } from "../../src/core/tree";
 import { freeSpaceLabel } from "../../src/core/freeSpace";
 import { ExtJournal } from "../../src/fs/ext/journal";
 import { CORRUPT_NOTE, NOTES, touchesMetadata } from "../../src/fs/ext/metadata";
+import {
+  NEEDS_RECOVERY, NO_JOURNAL, RING_COLORS, STALE_ALPHA, armedText, journalFacts, journalHeading, ringCaption, ringFill,
+} from "../../src/fs/ext/journalRing";
 import { geo, layout, space } from "../fixtures/extGeometry";
 
 const BLOCK = 1024;
@@ -522,5 +525,69 @@ describe("ExtAdapter: caches and the journal capability", () => {
     expect(fs.needsRecovery).toBe(false);
     expect(journal.state().needsRecovery).toBe(false);
     expect(fs.ownerOf("/crash.txt")?.firstUnit).toBe(1127);
+  });
+});
+
+describe("the Journal panel's model", () => {
+  /** A ring block with the fields a test does not name filled in as an unused block's. */
+  const blk = (over: Partial<JournalRingBlock>): JournalRingBlock => ({ index: 0, block: 82, kind: "unused", tid: null, home: null, escaped: null, stale: false, ...over });
+
+  it("heads the panel with the mode and lists the header facts", () => {
+    const fs = asExt(ext.bind(ext.format()));
+    expect(journalHeading(fs.journal!.state())).toBe("Journal · ordered mode");
+    expect(journalFacts(fs.journal!.state())).toEqual([["sequence", "1"], ["head", "1"], ["start", "0"], ["blocks", "1,024"]]);
+    const data = asExt(ext.bind(ext.format({ totalBlocks: 4096, journalMode: "data" })));
+    expect(journalHeading(data.journal!.state())).toBe("Journal · data mode");
+  });
+
+  it("words the no-journal line, the needs-recovery line, and the armed line for each phase", () => {
+    expect(NO_JOURNAL).toBe("This volume has no journal.");
+    expect(NEEDS_RECOVERY).toBe("Needs recovery: the journal holds an unfinished transaction.");
+    expect(CRASH_PHASES.map(armedText)).toEqual([
+      "Armed: the next change stops before commit",
+      "Armed: the next change stops after commit",
+      "Armed: the next change stops during checkpoint",
+    ]);
+  });
+
+  it("colours each kind by its token, stale blocks at 35 % alpha and live ones full", () => {
+    expect(RING_COLORS).toEqual({ superblock: `--own-${COLOR_BOOT}`, descriptor: `--own-${COLOR_TABLE}`, copy: "--ink", commit: "--focus", revoke: "--diff", unused: "--hairline" });
+    expect(STALE_ALPHA).toBe(0.35);
+    expect(ringFill(blk({ kind: "superblock" }))).toEqual({ token: "--own-1", alpha: 1 });
+    expect(ringFill(blk({ kind: "descriptor", tid: 1, stale: true }))).toEqual({ token: "--own-2", alpha: 0.35 });
+    expect(ringFill(blk({ kind: "copy", tid: 1, home: 69, stale: true }))).toEqual({ token: "--ink", alpha: 0.35 });
+    expect(ringFill(blk({ kind: "copy", tid: 2, home: 69, stale: false }))).toEqual({ token: "--ink", alpha: 1 });
+    expect(ringFill(blk({ kind: "commit", tid: 2 }))).toEqual({ token: "--focus", alpha: 1 });
+    expect(ringFill(blk({ kind: "revoke", tid: 3, stale: true }))).toEqual({ token: "--diff", alpha: 0.35 });
+    expect(ringFill(blk({ kind: "unused" }))).toEqual({ token: "--hairline", alpha: 1 });
+  });
+
+  it("captions each kind: the home of a copy, the transaction and its staleness when there is one", () => {
+    expect(ringCaption(blk({ index: 0, block: 82, kind: "superblock" }))).toBe("journal block 0 (block 82) · superblock");
+    expect(ringCaption(blk({ index: 1, block: 83, kind: "descriptor", tid: 1, stale: true }))).toBe("journal block 1 (block 83) · descriptor · transaction 1 · stale");
+    expect(ringCaption(blk({ index: 2, block: 84, kind: "copy", tid: 1, home: 1, escaped: false, stale: true }))).toBe("journal block 2 (block 84) · copy · copy of block 1 · transaction 1 · stale");
+    expect(ringCaption(blk({ index: 17, block: 99, kind: "copy", tid: 2, home: 69, escaped: false }))).toBe("journal block 17 (block 99) · copy · copy of block 69 · transaction 2 · live");
+    expect(ringCaption(blk({ index: 18, block: 100, kind: "commit", tid: 2 }))).toBe("journal block 18 (block 100) · commit · transaction 2 · live");
+    expect(ringCaption(blk({ index: 12, block: 94, kind: "revoke", tid: 3, stale: true }))).toBe("journal block 12 (block 94) · revoke · transaction 3 · stale");
+    expect(ringCaption(blk({ index: 1023, block: 1105, kind: "unused" }))).toBe("journal block 1023 (block 1105) · unused");
+  });
+
+  it("draws a checkpointed transaction stale and a crashed one live", () => {
+    const vol = ext.format();
+    const fs = asExt(ext.bind(vol));
+    const drawn = () => fs.journal!.blocks().filter((b) => b.kind !== "unused").map((b) => `${b.index} ${ringFill(b).token} ${ringFill(b).alpha}`);
+    expect(drawn()).toEqual(["0 --own-1 1"]); // an empty ring: the journal superblock alone
+    vol.createFile("/hello.txt", enc("Hello, ext3!"));
+    expect(drawn()).toEqual(["0 --own-1 1", "1 --own-2 0.35", ...range(2, 8).map((i) => `${i} --ink 0.35`), "9 --focus 0.35"]);
+    fs.journal!.arm("after_commit");
+    vol.createFile("/crash.txt", new Uint8Array(2 * BLOCK));
+    fs.refresh();
+    expect(fs.needsRecovery).toBe(true);
+    expect(drawn().slice(10)).toEqual(["10 --own-2 1", ...range(11, 17).map((i) => `${i} --ink 1`), "18 --focus 1"]);
+    expect(ringCaption(fs.journal!.blocks()[18])).toBe("journal block 18 (block 100) · commit · transaction 2 · live");
+    fs.journal!.recover();
+    fs.refresh();
+    expect(fs.needsRecovery).toBe(false);
+    expect(drawn().slice(10).every((d) => d.endsWith(" 0.35"))).toBe(true);
   });
 });
