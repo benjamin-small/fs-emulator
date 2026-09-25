@@ -1,0 +1,8 @@
+overrides:
+  "@swc/core": 1.12.14
+
+# Neither package needs its install script: the platform binaries arrive as
+# optional dependencies. pnpm 12 fails the install until each is reviewed.
+allowBuilds:
+  "@swc/core": false
+  esbuild: false
