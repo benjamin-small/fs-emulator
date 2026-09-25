@@ -63,6 +63,14 @@ describe("checkFormat", () => {
     expect(checkFormat({ inodesPerGroup: undefined }).problem).toBeNull(); // absent means "the default"
   });
 
+  it("leaves the journal's upper bound to the core, whose refusal names the problem", () => {
+    // The bound depends on the free-block count after layout, which only the formatter knows;
+    // the form's button stays enabled and the core's message reaches the status line instead.
+    const o: ExtFamilyOptions = { variant: "ext3", journalBlocks: 8200 }; // more than half of the 16,234 free blocks
+    expect(checkFormat(o).problem).toBeNull();
+    expect(() => formatWith(o)).toThrow("journal size too big for the volume");
+  });
+
   it("finds nothing wrong with the defaults, and every problem it names the formatter refuses too", () => {
     expect(checkFormat({})).toEqual({ problem: null });
     expect(checkFormat(DEFAULTS)).toEqual({ problem: null });
