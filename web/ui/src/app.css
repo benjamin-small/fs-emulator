@@ -137,6 +137,11 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .fatmap-wrap canvas { display: block; cursor: pointer; }
 .fatmap-caption { margin: 6px 0 0; font-size: 11px; min-height: 14px; }
 
+/* Block-group map (ext) */
+.bgmap-wrap { overflow-y: auto; overflow-x: hidden; }
+.bgmap-wrap canvas { display: block; cursor: pointer; }
+.bgmap-caption { margin: 6px 0 0; font-size: 11px; min-height: 14px; }
+
 /* Step panel */
 /* Step strip (under the top bar): one wrapping row of heading, counter, op, sector buttons,
    and events. It scrolls past about six rows of buttons (210 px), which the FAT actions never
@@ -203,6 +208,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .actions .format summary { cursor: pointer; font: 500 12px var(--font-display); margin-bottom: 6px; }
 .actions .format .field { margin-bottom: 6px; }
 .actions .cluster-count { margin: 0 0 6px; font-size: 12px; }
+.actions .format-check { margin: 0 0 6px; font-size: 12px; }
 .actions .warn { color: var(--diff-ink); }
 .actions .using-bytes { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 12px; }
 

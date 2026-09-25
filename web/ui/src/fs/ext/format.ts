@@ -103,3 +103,27 @@ export function toWasmOptions(o: ExtFamilyOptions):
   }
   return { variant: "ext3", options: defined({ ...common, journalBlocks, journalMode }) };
 }
+
+/** The Format form's fields as its inputs bind them: a number input left blank reads as `null`
+ *  or `undefined`. */
+export interface ExtFormFields {
+  variant: "ext2" | "ext3";
+  totalBlocks: number;
+  inodesPerGroup: number | null | undefined;
+  label: string;
+  journalMode: "ordered" | "data";
+  journalBlocks: number | null | undefined;
+}
+
+/** The family options the Format form's fields mean: a blank (or unreadable) number is the
+ *  default, and the journal fields count only on ext3, so a form switched to ext2 with journal
+ *  fields filled in formats ext2 rather than tripping `toWasmOptions`'s error. */
+export function formOptions(f: ExtFormFields): ExtFamilyOptions {
+  const num = (v: number | null | undefined) => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
+  const o: ExtFamilyOptions = { variant: f.variant, totalBlocks: f.totalBlocks, inodesPerGroup: num(f.inodesPerGroup), label: f.label };
+  if (f.variant === "ext3") {
+    o.journalMode = f.journalMode;
+    o.journalBlocks = num(f.journalBlocks);
+  }
+  return o;
+}

@@ -1,7 +1,8 @@
 /**
  * The filesystem adapter seam. Every filesystem-specific fact the explorer, the shell and
- * the lessons need lives behind these interfaces, with one implementation per
- * `Volume.fsType()` family (`fs/fat16/` today); `fs/index.ts` picks the implementation.
+ * the lessons need lives behind these interfaces, with one implementation per family:
+ * `fs/fat16/` for `FAT16` and `fs/ext/` for `ext2` and `ext3` (a family lists the
+ * `Volume.fsType()` strings it binds in `fsTypes`); `fs/index.ts` picks the implementation.
  *
  * Two layers. `UnitSpace` is pure arithmetic over one geometry and can be built from a
  * fixture without a `Volume`. `FsAdapter` is bound to one `Volume` and caches owners,
@@ -38,7 +39,7 @@ import type { Interval } from "../core/intervals";
 import type { ColorIndex } from "../core/palette";
 import type { ByteChangeLike } from "../core/patch";
 
-export type FsFamilyId = "fat16";                       // ext adds "ext"
+export type FsFamilyId = "fat16" | "ext";
 
 /** A noun and its shell address letter: how the chrome names one disk sector. */
 export interface AddrVocab {
@@ -60,7 +61,24 @@ export interface UnitVocab {
  *  the unit holds for its path where the family tells them apart (ext: a data block, a
  *  directory block, or an indirect pointer block); FAT leaves it undefined. An indirect row
  *  takes its path's hue like a data row. */
-export interface UnitOwner { unit: number; path: string; isDir: boolean; firstUnit: number; role?: "data" | "directory" | "indirect" }
+export interface UnitOwner {
+  unit: number;
+  path: string;
+  isDir: boolean;
+  firstUnit: number;
+  role?: "data" | "directory" | "indirect";
+  /** A fixed colour override for special owners such as the journal's pointer blocks (ext:
+   *  `COLOR_JOURNAL`); attribution uses it verbatim instead of the directory colour or the
+   *  path's hue. FAT rows leave it undefined. */
+  color?: ColorIndex;
+}
+
+/** An owner that names no file in the tree, such as ext's `<journal>` (its pointer blocks): the
+ *  path is in angle brackets, which no volume path starts with. The map and the Inspector name
+ *  it but never select it. */
+export function isPseudoOwner(path: string): boolean {
+  return path.startsWith("<");
+}
 
 /** Pure unit arithmetic over one geometry. Buildable without a Volume. */
 export interface UnitSpace {

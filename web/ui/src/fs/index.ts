@@ -1,9 +1,11 @@
 import type { Volume } from "../lib/wasm";
 import type { FsAdapter, FsFamily, FsFamilyId } from "./adapter";
+import { ext } from "./ext";
 import { fat16 } from "./fat16";
 
-/** Every registered family, by id. A new family is added here and in `fs/panels.ts`. */
-export const FAMILIES: Record<FsFamilyId, FsFamily> = { fat16 };
+/** Every registered family, by id, in the order the Format details' Filesystem select lists
+ *  them. A new family is added here and in `fs/panels.ts`. */
+export const FAMILIES: Record<FsFamilyId, FsFamily> = { fat16, ext };
 export const DEFAULT_FAMILY: FsFamilyId = "fat16";
 
 /** The family whose `fsTypes` lists this `Volume.fsType()` string ("FAT16" -> "fat16"; one

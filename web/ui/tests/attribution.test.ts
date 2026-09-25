@@ -93,9 +93,15 @@ describe("attribution", () => {
     for (const table of [te, claimed]) {
       expect(attrAtSector(table, 90)).toEqual({ regionKind: "journal", regionName: "journal", sector: 90, free: false, colorIndex: COLOR_JOURNAL });
     }
-    // The journal's pointer blocks 1106..1110 lie in the data region after it; the adapter keeps
-    // them out of `owners` (they are in `journalBlocks`), so attribution calls them free.
+    // The journal's pointer blocks 1106..1110 lie in the data region after it. A table without
+    // their owner rows would call them free; the adapter keeps them in `owners` (next test).
     expect(attrAtSector(te, 1107)).toMatchObject({ regionName: "data (group 0)", unit: 1107, free: true, colorIndex: COLOR_FREE });
+  });
+  it("on ext: the journal's pointer blocks are owned by <journal> in the journal colour", () => {
+    const pointers: UnitOwner[] = [1106, 1107, 1108, 1109, 1110].map((unit) => ({ unit, path: "<journal>", isDir: false, firstUnit: unit, role: "indirect", color: COLOR_JOURNAL }));
+    const te = buildAttribution(extSpace, extLayout, [...extOwners.slice(0, 1), ...pointers, ...extOwners.slice(1)]);
+    expect(attrAtSector(te, 1107)).toEqual({ regionKind: "data", regionName: "data (group 0)", sector: 1107, unit: 1107, ownerPath: "<journal>", isDir: false, role: "indirect", free: false, colorIndex: COLOR_JOURNAL });
+    expect(attrAtSector(te, 1113)).toMatchObject({ ownerPath: "/bigger.txt", colorIndex: colorIndexForPath("/bigger.txt") }); // rows without `color` are unchanged
   });
   it("on ext: an indirect block takes its file's hue and reports its role", () => {
     const te = buildAttribution(extSpace, extLayout, extOwners);
@@ -105,6 +111,20 @@ describe("attribution", () => {
     expect(attrAtOffset(te, 1127 * 1024 + 5)).toMatchObject({ unit: 1127, free: true, colorIndex: COLOR_FREE });
     expect(attrAtOffset(te, 1127 * 1024 + 5).role).toBeUndefined();
   });
+  it("uses an owner row's fixed colour verbatim, over the directory colour and the path's hue", () => {
+    const fixed: UnitOwner[] = [
+      { unit: 2, path: "/DOCS", isDir: true, firstUnit: 2, color: COLOR_BOOT },
+      { unit: 3, path: "/DOCS/N.TXT", isDir: false, firstUnit: 3, color: COLOR_JOURNAL },
+      { unit: 4, path: "/DOCS/N.TXT", isDir: false, firstUnit: 3 },
+    ];
+    const tf = buildAttribution(space, layout, fixed);
+    expect(tf.colorByUnit[2]).toBe(COLOR_BOOT);
+    expect(tf.colorByUnit[3]).toBe(COLOR_JOURNAL);
+    expect(tf.colorByUnit[4]).toBe(colorIndexForPath("/DOCS/N.TXT"));
+    expect(attrAtSector(tf, 101)).toMatchObject({ unit: 3, ownerPath: "/DOCS/N.TXT", colorIndex: COLOR_JOURNAL });
+    expect(attrAtSector(tf, 97)).toMatchObject({ unit: 2, isDir: true, colorIndex: COLOR_BOOT });
+  });
+
   it("file hues are stable and in range", () => {
     const i = colorIndexForPath("/A.TXT");
     expect(i).toBeGreaterThanOrEqual(4);

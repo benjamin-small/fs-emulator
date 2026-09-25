@@ -40,4 +40,23 @@ describe("app.css layout guards", () => {
       expect(css).toContain(`.row.own-${i} .b { background: color-mix(in srgb, var(--own-${i}) 14%, transparent); }`);
     }
   });
+
+  it("scrolls the block-group map inside its own box, never sideways", () => {
+    // The canvas is sized from the last measured width, so between a resize and the observer's
+    // next paint it can be wider than the column; hidden overflow keeps that from showing a
+    // horizontal scrollbar, and the vertical scroll is what keeps a 256 MB disk's bands to 260 px.
+    const wrap = rule(".bgmap-wrap");
+    expect(wrap).toContain("overflow-y: auto");
+    expect(wrap).toContain("overflow-x: hidden");
+    // An inline canvas sits on the text baseline, leaving a strip under the last band that makes
+    // the box scroll a few pixels even when the bands fit.
+    expect(rule(".bgmap-wrap canvas")).toContain("display: block");
+  });
+
+  it("lets the Format details' inputs and selects fill the Actions column", () => {
+    // The ext form's number inputs and the Filesystem select would otherwise keep their intrinsic
+    // widths: ragged against the other fields, and able to overflow the 220 px left column, which
+    // then scrolls sideways.
+    expect(rule(".actions .field input, .actions .field textarea, .actions .field select")).toContain("width: 100%");
+  });
 });

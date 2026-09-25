@@ -2,7 +2,7 @@
   import { volume } from "../state/volume.svelte";
   import { selection } from "../state/selection.svelte";
   import { attrAtOffset } from "../core/attribution";
-  import { unitIsSector } from "../fs/adapter";
+  import { isPseudoOwner, unitIsSector } from "../fs/adapter";
   import type { Annotation } from "../lib/wasm";
   import { describeRange, formatRange, formatValue } from "../core/annotationFormat";
 
@@ -49,7 +49,8 @@
       <dt>Offset</dt><dd class="mono">{hex(offset)} · {offset.toLocaleString()}</dd>
       <dt>{cap(volume.adapter.sector.singular)}</dt><dd class="mono">{attr.sector} · {attr.regionName}{#if oneNoun && unitNote}{" "}· {unitNote}{/if}</dd>
       {#if attr.unit !== undefined && !oneNoun}<dt>{cap(volume.adapter.unit.singular)}</dt><dd class="mono">{attr.unit}{#if unitNote}{" "}· {unitNote}{/if}</dd>{/if}
-      {#if attr.ownerPath}<dt>Owner</dt><dd><button class="link" onclick={() => selection.select(attr.ownerPath!)}>{attr.ownerPath}</button></dd>{:else if attr.regionKind === "data"}<dt>Owner</dt><dd class="muted">free</dd>{/if}
+      <!-- A pseudo-owner (ext's journal pointer blocks) names no file in the tree: plain text, not a button. -->
+      {#if attr.ownerPath && isPseudoOwner(attr.ownerPath)}<dt>Owner</dt><dd>{attr.ownerPath}</dd>{:else if attr.ownerPath}<dt>Owner</dt><dd><button class="link" onclick={() => selection.select(attr.ownerPath!)}>{attr.ownerPath}</button></dd>{:else if attr.regionKind === "data"}<dt>Owner</dt><dd class="muted">free</dd>{/if}
     </dl>
     {#if !volume.atLatest}<p class="muted">Annotations describe the latest state, not the step you are viewing.</p>{/if}
     <ul class="annotations">

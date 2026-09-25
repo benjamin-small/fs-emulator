@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_FAMILY, FAMILIES, adapterFor, familyIdOf } from "../../src/fs";
 import { fat16 } from "../../src/fs/fat16";
+import { ext } from "../../src/fs/ext";
 import { CRASH_PHASES, CRASH_PHASE_LABELS, unitIsSector, type FsFamily } from "../../src/fs/adapter";
 
 describe("the family registry", () => {
@@ -8,6 +9,20 @@ describe("the family registry", () => {
     expect(familyIdOf("FAT16")).toBe("fat16");
     expect(() => familyIdOf("EXT3")).toThrow("no adapter for EXT3");
     expect(() => familyIdOf("")).toThrow("no adapter for ");
+  });
+
+  it("maps both ext types to the one ext family, matching the type string exactly", () => {
+    expect(familyIdOf("ext2")).toBe("ext");
+    expect(familyIdOf("ext3")).toBe("ext");
+    expect(() => familyIdOf("EXT3")).toThrow("no adapter for EXT3"); // fsType() strings are lower-case
+    expect(() => familyIdOf("ext4")).toThrow("no adapter for ext4");
+    expect(() => familyIdOf("ntfs")).toThrow("no adapter for ntfs");
+  });
+
+  it("registers fat16 then ext, by id", () => {
+    expect(Object.keys(FAMILIES)).toEqual(["fat16", "ext"]);
+    expect(FAMILIES.ext).toBe(ext);
+    expect(Object.values(FAMILIES).map((f) => [f.id, f.name])).toEqual([["fat16", "FAT16"], ["ext", "ext"]]);
   });
 
   it("registers FAT16 as the default family, whose format() yields a volume of its own name", () => {
@@ -43,6 +58,18 @@ describe("the family registry", () => {
     expect(fs.name).toBe("FAT16");
     expect(fs.family).toBe(fat16);
     expect(fs.vol).toBe(vol);
+  });
+
+  it("adapterFor binds the ext family to an ext3 volume and to an ext2 one", () => {
+    const vol = FAMILIES.ext.format();
+    const fs = adapterFor(vol);
+    expect(fs.id).toBe("ext");
+    expect(fs.name).toBe("ext3");
+    expect(fs.family).toBe(ext);
+    expect(fs.vol).toBe(vol);
+    expect(fs.journal).toBeDefined();
+    const two = adapterFor(FAMILIES.ext.format({ variant: "ext2" }));
+    expect([two.id, two.name, two.journal]).toEqual(["ext", "ext2", undefined]);
   });
 });
 

@@ -19,8 +19,9 @@
   import { theme } from "./state/theme.svelte";
   import { volume } from "./state/volume.svelte";
 
-  /** The map panel of the mounted volume's family (the FAT map today), from the panel
-   *  registry; `volume.adapter` is re-bound on every format and load. */
+  /** The map panel of the mounted volume's family (the FAT map, the block-group map), from the
+   *  panel registry; `volume.adapter` is re-bound on every format and load. The family's extra
+   *  panels follow it in order. */
   const MapPanel = $derived(PANELS[volume.adapter.id].map);
 
   /** Scrub to `n` and recenter the dump on what that step changed, like the Timeline's
@@ -88,6 +89,7 @@
     <aside class="col left">
       <DirTree />
       <MapPanel />
+      {#each PANELS[volume.adapter.id].extras as Extra}<Extra />{/each}
       <ActionsPanel />
     </aside>
     <main class="col center"><HexView /></main>

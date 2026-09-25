@@ -26,7 +26,7 @@ export function buildAttribution(space: UnitSpace, layout: Region[], owners: rea
   owners.forEach((o, i) => {
     if (o.unit < n) {
       ownerByUnit[o.unit] = i;
-      colorByUnit[o.unit] = o.isDir ? COLOR_DIR : colorIndexForPath(o.path);
+      colorByUnit[o.unit] = o.color ?? (o.isDir ? COLOR_DIR : colorIndexForPath(o.path));
     }
   });
   return { space, regions: layout, owners, ownerByUnit, colorByUnit };

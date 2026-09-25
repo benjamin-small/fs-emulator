@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { Volume } from "../../src/lib/wasm";
-import { unitIsSector } from "../../src/fs/adapter";
+import { isPseudoOwner, unitIsSector } from "../../src/fs/adapter";
 import { defaultColorForRegion } from "../../src/core/attribution";
 import { COLOR_BOOT, COLOR_FREE, COLOR_JOURNAL, COLOR_TABLE } from "../../src/core/palette";
 import { EXT_SECTOR, EXT_UNIT } from "../../src/fs/ext/geometry";
-import { ExtAdapter, MKFS, asExt, ext } from "../../src/fs/ext";
+import { ExtAdapter, JOURNAL_OWNER, MKFS, asExt, ext } from "../../src/fs/ext";
 import { fat16 } from "../../src/fs/fat16";
 import { buildTree } from "../../src/core/tree";
 import { freeSpaceLabel } from "../../src/core/freeSpace";
@@ -203,10 +203,10 @@ describe("ExtAdapter: identity and unit space", () => {
 });
 
 describe("ExtAdapter: owners, chains, and slots", () => {
-  it("lists every path's blocks with their roles and first block, and no journal rows", () => {
+  it("lists every path's blocks with their roles and first block, and none of the journal's data blocks", () => {
     const { fs } = fixture();
     const bigger = (unit: number, role: "data" | "indirect") => ({ unit, path: "/bigger.txt", isDir: false, firstUnit: 1113, role });
-    expect(fs.owners.filter((o) => o.path !== "/lost+found")).toEqual([
+    expect(fs.owners.filter((o) => o.path !== "/lost+found" && o.path !== "<journal>")).toEqual([
       { unit: 69, path: "/", isDir: true, firstUnit: 69, role: "directory" },
       { unit: 1111, path: "/docs", isDir: true, firstUnit: 1111, role: "directory" },
       { unit: 1112, path: "/hello.txt", isDir: false, firstUnit: 1112, role: "data" },
@@ -214,11 +214,23 @@ describe("ExtAdapter: owners, chains, and slots", () => {
       bigger(1126, "indirect"),
     ]);
     expect(fs.owners.filter((o) => o.path === "/lost+found")).toEqual(range(70, 81).map((unit) => ({ unit, path: "/lost+found", isDir: true, firstUnit: 70, role: "directory" })));
-    expect(fs.owners.some((o) => o.path === "<journal>")).toBe(false);
     expect(fs.owners.map((o) => o.unit)).toEqual([...fs.owners.map((o) => o.unit)].sort((a, b) => a - b));
     expect(fs.journalBlocks).toEqual(range(82, 1110)); // the journal's data 82..1105 and its pointer blocks 1106..1110
     expect(fs.ownerOf("/hello.txt")).toEqual({ unit: 1112, path: "/hello.txt", isDir: false, firstUnit: 1112, role: "data" });
     expect(fs.ownerOf("/nope")).toBeUndefined();
+  });
+
+  it("keeps the journal's pointer blocks as <journal> rows in the journal colour, and never its data blocks", () => {
+    const { fs } = fixture();
+    // The pointer blocks 1106..1110 lie in the data region after the journal region (82..1105):
+    // units, so they are owned rather than free. The journal's data blocks are not units at all.
+    expect(fs.owners.filter((o) => o.path === "<journal>")).toEqual(range(1106, 1110).map((unit) => ({ unit, path: "<journal>", isDir: false, role: "indirect", color: COLOR_JOURNAL, firstUnit: unit })));
+    const owned = new Set(fs.owners.map((o) => o.unit));
+    expect(range(82, 1105).filter((b) => owned.has(b))).toEqual([]);
+    expect(fs.owners.filter((o) => o.color !== undefined).map((o) => o.path)).toEqual(Array(5).fill("<journal>")); // no other row carries a colour
+    expect(JOURNAL_OWNER).toBe("<journal>");
+    expect(fs.owners.filter((o) => isPseudoOwner(o.path)).map((o) => o.unit)).toEqual(range(1106, 1110)); // no volume path starts with "<"
+    for (const b of range(1106, 1110)) expect(fs.describeUnit(b), `block ${b}`).toBe("pointer block of the journal");
   });
 
   it("an ext2 volume has no journal blocks", () => {
@@ -381,7 +393,7 @@ describe("ExtAdapter: what the shell and the Inspector print", () => {
     expect(fs.describeUnit(1111)).toBe("directory block 0 of /docs");
     expect(fs.describeUnit(1127)).toBe("free");
     expect(fs.describeUnit(16383)).toBe("free");
-    for (const b of [0, 1, 5, 68, 90, 1106, 1110, 8193, 8260, 16384, -1]) expect(fs.describeUnit(b), `block ${b}`).toBeNull();
+    for (const b of [0, 1, 5, 68, 90, 1105, 8193, 8260, 16384, -1]) expect(fs.describeUnit(b), `block ${b}`).toBeNull();
   });
 
   it("annotates a block through the volume: block 1 is the superblock's fields", () => {

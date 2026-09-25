@@ -1,5 +1,6 @@
-import { Volume, type Annotation, type ExtBlockOwner, type ExtFileBlocks, type ExtGeometry, type ExtIndirectBlock, type ExtInode, type ExtSuperblock, type JournalInfo } from "../../lib/wasm";
+import { Volume, type Annotation, type ExtBlockOwner, type ExtFileBlocks, type ExtGeometry, type ExtIndirectBlock, type ExtInode, type ExtSuperblock, type JournalInfo, type Region } from "../../lib/wasm";
 import type { Interval } from "../../core/intervals";
+import { COLOR_JOURNAL } from "../../core/palette";
 import type { ByteChangeLike } from "../../core/patch";
 import type { DfFacts, FsAdapter, FsFamily, FsFamilyId, StatFacts, TraceRow, UnitOwner, UnitSpace } from "../adapter";
 import { SpaceAdapter, hexAddr } from "../base";
@@ -8,11 +9,9 @@ import { extSpace } from "./geometry";
 import { ExtJournal } from "./journal";
 import { CORRUPT_NOTE, NOTES, touchesMetadata as changesTouchMetadata } from "./metadata";
 
-/** The family id. The cast goes when Task 4 adds "ext" to `FsFamilyId` and registers the family. */
-const EXT_ID = "ext" as string as FsFamilyId;
-
-/** The path `blockOwners()` gives the journal's blocks (inode 8's data and pointer blocks). */
-const JOURNAL_PATH = "<journal>";
+/** The path `blockOwners()` gives the journal's blocks (inode 8's data and pointer blocks), and
+ *  the owner of the pointer-block rows in `owners`: a pseudo-owner (`isPseudoOwner`). */
+export const JOURNAL_OWNER = "<journal>";
 
 /** An absolute byte offset as `block B + 0xNN`: its block and the offset inside it. */
 function blockPlus(offset: number, blockSize: number): string {
@@ -26,18 +25,26 @@ function parentOf(path: string): string {
 }
 
 type PathRow = ExtBlockOwner & { role: "data" | "directory" | "indirect" };
-const isPathRow = (r: ExtBlockOwner): r is PathRow => r.path !== JOURNAL_PATH && r.role !== "journal";
+const isPathRow = (r: ExtBlockOwner): r is PathRow => r.path !== JOURNAL_OWNER && r.role !== "journal";
 
-/** The non-journal rows in the generic shape. `firstUnit` is the path's first data (or
- *  directory) block in logical order, `firstBlockOf(path)`: not always its lowest, because a file
- *  that grows after a lower block was freed maps that block later. Where the path cannot be
- *  walked (a corrupt volume) it falls back to the path's lowest data or directory block. */
-function toUnitOwners(rows: ExtBlockOwner[], firstBlockOf: (path: string) => number | undefined): UnitOwner[] {
-  const pathRows = rows.filter(isPathRow);
+/** The rows in the generic shape. `firstUnit` is the path's first data (or directory) block in
+ *  logical order, `firstBlockOf(path)`: not always its lowest, because a file that grows after a
+ *  lower block was freed maps that block later. Where the path cannot be walked (a corrupt
+ *  volume) it falls back to the path's lowest data or directory block. The journal's rows inside
+ *  `journal` regions are dropped (those blocks are never units); the rest of them (its pointer
+ *  blocks, which lie in a data region) stay as `<journal>` indirect rows in `COLOR_JOURNAL`, so
+ *  they read as the journal's, not free. */
+function toUnitOwners(rows: ExtBlockOwner[], firstBlockOf: (path: string) => number | undefined, journalRegions: readonly Region[]): UnitOwner[] {
+  const inJournalRegion = (b: number) => journalRegions.some((r) => b >= r.sectors.start && b < r.sectors.end);
   const first = new Map<string, number>();
-  for (const r of pathRows) if (r.role !== "indirect" && !first.has(r.path)) first.set(r.path, r.block);
+  for (const r of rows) if (isPathRow(r) && r.role !== "indirect" && !first.has(r.path)) first.set(r.path, r.block);
   for (const [path, lowest] of first) first.set(path, firstBlockOf(path) ?? lowest);
-  return pathRows.map((r) => ({ unit: r.block, path: r.path, isDir: r.role === "directory", firstUnit: first.get(r.path) ?? r.block, role: r.role }));
+  const out: UnitOwner[] = [];
+  for (const r of rows) {
+    if (isPathRow(r)) out.push({ unit: r.block, path: r.path, isDir: r.role === "directory", firstUnit: first.get(r.path) ?? r.block, role: r.role });
+    else if (r.path === JOURNAL_OWNER && !inJournalRegion(r.block)) out.push({ unit: r.block, path: JOURNAL_OWNER, isDir: false, role: "indirect", color: COLOR_JOURNAL, firstUnit: r.block });
+  }
+  return out;
 }
 
 /** Which pointer block `ind` is for its inode: `i_block[12]` is the single-indirect block, a
@@ -53,18 +60,20 @@ function indirectKind(inode: ExtInode | null, ind: ExtIndirectBlock): "single" |
  * in fs/adapter.ts); none of those calls fails on a corrupt volume. Path walks (`fileBlocks`,
  * `inodeNumber`, `dirEntries`) go through the core's corruption gate, so the methods that
  * need them answer "nothing" (`[]`, `null`, the muted trace row) while the volume is corrupt.
- * Journal blocks never become units: their owner rows go to `journalBlocks`, not `owners`.
+ * Every journal block is in `journalBlocks`; the ones inside `journal` regions never become
+ * units, and the pointer blocks (in a data region) stay in `owners` as `<journal>` rows.
  * The unit arithmetic, `ownerOf`, and `regionStart` are the shared `SpaceAdapter`'s (fs/base.ts).
  */
 export class ExtAdapter extends SpaceAdapter implements FsAdapter {
-  readonly id: FsFamilyId = EXT_ID;
+  readonly id: FsFamilyId = "ext";
   /** The bound volume's type: "ext3" with a journal, else "ext2". */
   name: "ext2" | "ext3" = "ext3";
   readonly family: FsFamily<ExtFamilyOptions> = ext;
   readonly vol: Volume;
   geo!: ExtGeometry;
   sb!: ExtSuperblock;
-  /** The directory, data, and indirect blocks of every path, in block order; no journal rows. */
+  /** The directory, data, and indirect blocks of every path, in block order, and the journal's
+   *  pointer blocks as `<journal>` rows in `COLOR_JOURNAL`; never the journal's data blocks. */
   owners: UnitOwner[] = [];
   /** The journal's blocks (its data blocks and its pointer blocks), ascending; [] on ext2. */
   journalBlocks: number[] = [];
@@ -96,10 +105,11 @@ export class ExtAdapter extends SpaceAdapter implements FsAdapter {
     this.space = extSpace(this.geo);
     this.sb = this.vol.extSuperblock();
     const rows = this.vol.blockOwners();
-    this.owners = toUnitOwners(rows, (path) => this.blocksOf(path)?.data[0]);
+    // On ext a region's sectors are blocks (the disk's sector is the block; see extSpace).
+    this.owners = toUnitOwners(rows, (path) => this.blocksOf(path)?.data[0], this.vol.layout().filter((r) => r.kind === "journal"));
     this.byUnit = new Map(this.owners.map((o) => [o.unit, o]));
     this.indirectBlocks = this.owners.filter((o) => o.role === "indirect").map((o) => o.unit);
-    this.journalBlocks = rows.filter((r) => r.path === JOURNAL_PATH).map((r) => r.block);
+    this.journalBlocks = rows.filter((r) => r.path === JOURNAL_OWNER).map((r) => r.block);
     this.journalSet = new Set(this.journalBlocks);
     this.info = this.vol.journalInfo();
     this.needsRecovery = this.vol.needsRecovery();
@@ -212,14 +222,17 @@ export class ExtAdapter extends SpaceAdapter implements FsAdapter {
     return rows;
   }
 
-  /** What block `b` holds for its owner, or `free`; null outside the data area (block 0, a
-   *  group's metadata, the journal's blocks, past the end). */
+  /** What block `b` holds for its owner (`pointer block of the journal` for the journal's own
+   *  pointer blocks), or `free`; null outside the data area (block 0, a group's metadata, the
+   *  journal's data blocks, past the end). */
   describeUnit(b: number): string | null {
     const g = this.geo;
-    if (!Number.isInteger(b) || b < g.firstDataBlock || b >= g.totalBlocks || this.journalSet.has(b)) return null;
+    if (!Number.isInteger(b) || b < g.firstDataBlock || b >= g.totalBlocks) return null;
     const group = g.groups.find((x) => b >= x.firstBlock && b < x.firstBlock + x.blockCount);
     if (!group || b < group.firstData) return null;
     const owner = this.byUnit.get(b);
+    if (owner?.path === JOURNAL_OWNER) return "pointer block of the journal";
+    if (this.journalSet.has(b)) return null;
     if (!owner) return "free";
     const { path } = owner;
     if (owner.role === "indirect") {
@@ -260,7 +273,7 @@ export class ExtAdapter extends SpaceAdapter implements FsAdapter {
  * other; one module avoids an import cycle vite-node cannot resolve). index.ts re-exports it.
  */
 export const ext: FsFamily<ExtFamilyOptions> = {
-  id: EXT_ID,
+  id: "ext",
   name: "ext",
   fsTypes: ["ext2", "ext3"],
   format: (options) => {

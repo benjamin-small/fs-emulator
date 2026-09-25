@@ -3,13 +3,12 @@ import type { ExtAdapter } from "./adapter";
 
 /** The ext family: `ext.format` is the one place `Volume.formatExt2`/`formatExt3` are called,
  *  and `ext.bind` makes the adapter. It is defined beside the class (see adapter.ts). */
-export { ext, ExtAdapter } from "./adapter";
+export { ext, ExtAdapter, JOURNAL_OWNER } from "./adapter";
 
 /** The ext adapter behind a generic one, for the few callers that need an ext-only fact (the
- *  block-group map's `geo`, the journal panel, the lessons' `inodeOffset`). The `as string`
- *  goes when "ext" joins `FsFamilyId`. */
+ *  block-group map's `geo` and `journalBlocks`, the journal panel, the lessons' `inodeOffset`). */
 export function asExt(fs: FsAdapter): ExtAdapter {
-  if ((fs.id as string) !== "ext") throw new Error(`not an ext adapter: ${fs.id}`);
+  if (fs.id !== "ext") throw new Error(`not an ext adapter: ${fs.id}`);
   return fs as ExtAdapter;
 }
 

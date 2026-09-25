@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Volume } from "../../src/lib/wasm";
-import { DEFAULTS, MKFS, SIZES, checkFormat, defaultInodesPerGroup, defaultJournalBlocks, toWasmOptions, type ExtFamilyOptions } from "../../src/fs/ext/format";
+import { DEFAULTS, MKFS, SIZES, checkFormat, defaultInodesPerGroup, defaultJournalBlocks, formOptions, toWasmOptions, type ExtFamilyOptions, type ExtFormFields } from "../../src/fs/ext/format";
 
 /** What `ext.format` does with the options, without the family object. */
 function formatWith(o: ExtFamilyOptions): Volume {
@@ -123,5 +123,31 @@ describe("toWasmOptions", () => {
   it("refuses journal options on ext2", () => {
     expect(() => toWasmOptions({ variant: "ext2", journalMode: "data" })).toThrow("journalBlocks and journalMode need variant ext3");
     expect(() => toWasmOptions({ variant: "ext2", journalBlocks: 1024 })).toThrow("journalBlocks and journalMode need variant ext3");
+  });
+});
+
+describe("formOptions (the Format form's fields as family options)", () => {
+  const fields: ExtFormFields = { variant: "ext3", totalBlocks: 16384, inodesPerGroup: undefined, label: "", journalMode: "ordered", journalBlocks: undefined };
+
+  it("reads a blank number input as the default and keeps the rest as typed", () => {
+    expect(formOptions(fields)).toEqual({ variant: "ext3", totalBlocks: 16384, inodesPerGroup: undefined, label: "", journalMode: "ordered", journalBlocks: undefined });
+    expect(toWasmOptions(formOptions(fields))).toEqual({ variant: "ext3", options: { totalBlocks: 16384, label: "", journalMode: "ordered" } });
+    expect(formOptions({ ...fields, inodesPerGroup: null, journalBlocks: null })).toEqual(formOptions(fields));
+    expect(formOptions({ ...fields, inodesPerGroup: Number.NaN }).inodesPerGroup).toBeUndefined();
+    expect(formOptions({ ...fields, inodesPerGroup: 256, journalBlocks: 2048, journalMode: "data", label: "disk" })).toEqual({ variant: "ext3", totalBlocks: 16384, inodesPerGroup: 256, label: "disk", journalMode: "data", journalBlocks: 2048 });
+  });
+
+  it("formats the default disk from the untouched form", () => {
+    const vol = formatWith(formOptions(fields));
+    expect(vol.fsType()).toBe("ext3");
+    expect(vol.extGeometry()).toEqual(Volume.formatExt3(undefined).extGeometry());
+  });
+
+  it("drops the journal fields on ext2, so switching the variant never trips the journal-on-ext2 error", () => {
+    const two = formOptions({ ...fields, variant: "ext2", journalMode: "data", journalBlocks: 512 });
+    expect(two).toEqual({ variant: "ext2", totalBlocks: 16384, inodesPerGroup: undefined, label: "" });
+    expect(checkFormat(two).problem).toBeNull();
+    expect(formatWith(two).fsType()).toBe("ext2");
+    expect(checkFormat(formOptions({ ...fields, journalBlocks: 512 })).problem).toBe("the journal must be at least 1024 blocks");
   });
 });
