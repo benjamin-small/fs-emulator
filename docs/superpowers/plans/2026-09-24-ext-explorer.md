@@ -6,7 +6,7 @@
 
 **Architecture:** The wasm crate gains seven ext-only inspection methods (`extGeometry`, `extSuperblock`, `blockOwners`, `inodeNumber`, `extInode`, `dirEntries`, `fileBlocks`). The adapter seam gains what a second family needs and FAT does not: a sector noun beside the unit noun, a `fileParts` clause, owner roles, a family's `fsTypes`, an optional journal capability, and `extras` panels. `ExtAdapter` implements the seam over the new DTOs, with journal blocks never treated as units and indirect blocks as owner rows; the Journal panel and the `crash`/`recover` commands exist whenever the mounted adapter has the capability. The terminal re-registers its commands when the mounted family changes. Lessons run on the default ext3 disk and pin their numbers by test.
 
-**Tech Stack:** Rust 1.87 workspace (wasm via wasm-bindgen + serde-wasm-bindgen), Svelte 5 runes + TypeScript strict, Vite 6, Vitest 3 in node loading the real wasm package, pnpm 10.33.0, `@benjamin-small/browser-terminal@0.3.0` (exact; `registerCommand` and `unregisterCommand`).
+**Tech Stack:** Rust 1.87 workspace (wasm via wasm-bindgen + serde-wasm-bindgen), Svelte 5 runes + TypeScript strict, Vite 6, Vitest 3 in node loading the real wasm package, pnpm 12 (any pnpm 10.26 or newer works), `@benjamin-small/browser-terminal@0.3.0` (exact; `registerCommand` and `unregisterCommand`).
 
 **Spec:** `docs/superpowers/specs/2026-09-24-ext-explorer-design.md` (binding), with `docs/superpowers/specs/2026-09-23-fs-adapter-design.md` binding for the seam except where the new spec's section 2 amends it. The shared interface contract the tasks were written against is reproduced in each task's Interfaces block.
 
@@ -18,7 +18,7 @@
 4. Journal blocks are never units; indirect blocks are owner rows with `role: "indirect"`; on ext the sector noun is `block` and the unit row collapses into the address row.
 5. `crates/fs-core`, `crates/fat`, and `crates/ext` are not changed by this plan; `crates/wasm` changes only in Task 1. `cargo fmt --all -- --check` and `cargo clippy --workspace --all-targets -- -D warnings` pass at every commit; no `#[allow]`, no `unwrap`/`expect` outside tests.
 6. `web/ui`: Svelte 5 runes, TypeScript strict with `verbatimModuleSyntax`, Vitest in the node environment loading the real wasm package (nothing a node test imports may import a `.svelte` file); no new dependencies; `pnpm test` and `pnpm build` green at every task's commit, `web/demo` builds at Task 1's and Task 7's.
-7. After any wasm change: `wasm-pack build crates/wasm --target bundler` then `pnpm install --frozen-lockfile` in `web/ui` before `pnpm test`. Run the web gates with `export PATH="/opt/homebrew/bin:$PATH"` so pnpm 10.33.0 is used (nvm's pnpm 12 rewrites the lockfile); `pnpm --version` must print `10.33.0`.
+7. After any wasm change: `wasm-pack build crates/wasm --target bundler` then `CI=true pnpm install --frozen-lockfile` in `web/ui` before `pnpm test`. Any pnpm 10.26 or newer works (nvm's pnpm 12 and Homebrew's 10.33 are both on this machine): each web package keeps its pnpm settings in a tracked `pnpm-workspace.yaml`, and a frozen install must leave `pnpm-lock.yaml` and `pnpm-workspace.yaml` unmodified. `CI=true` lets pnpm purge a modules directory another pnpm wrote without asking.
 8. Gates by task: Task 1 the Rust gates plus `wasm-pack test --node crates/wasm`, `wasm-pack build`, and the `web/ui` and `web/demo` builds; Tasks 2 to 7 the web gates; Task 7 ends with the browser pass of spec section 8.
 9. One conventional commit per task, no attribution lines. Specs are binding: where task text and spec differ, the spec wins.
 10. Reading the tasks: line ranges in a task's **Files** block refer to that task's own commit on its writer's branch; later tasks shift them, so use the anchor text. Test counts in **Expected** lines were observed on the task's base branch; when Tasks 5 and 6 run in sequence the second sees the first's tests too. The fix rounds inserted steps into Tasks 1, 2, 3, 4, and 6 (Task 2 Rounds 5 and 6, Task 3 Round 6, Task 1 Step 26); every Expected count was recomputed in sequential order after them, so the counts printed are the sequential ones.
@@ -1404,25 +1404,22 @@ Expected: fmt prints nothing and exits 0; both clippy runs end `Finished` with n
 
 - [ ] **Step 25: Run the web gates (nothing under `web/` changes)**
 
-The explorer and the demo consume the rebuilt package; they must still install, test, and build. Homebrew goes first on the `PATH` so its pnpm 10.33.0 is the one found (Node comes with it), and `pnpm --version` must print `10.33.0` before anything else runs. nvm's pnpm 12 rewrites `web/ui/pnpm-lock.yaml` and creates `web/ui/pnpm-workspace.yaml` even when `--frozen-lockfile` fails; if that happened, restore them with `git checkout -- web/ui/pnpm-lock.yaml && rm web/ui/pnpm-workspace.yaml` before continuing. `CI=true` skips pnpm's interactive modules-purge prompt when `node_modules` was written by another pnpm.
+The explorer and the demo consume the rebuilt package; they must still install, test, and build. Any pnpm 10.26 or newer works (`pnpm --version` prints `12.x` for nvm's or `10.33.0` for Homebrew's); both web packages keep their pnpm settings in a tracked `pnpm-workspace.yaml`, so a frozen install must leave `pnpm-lock.yaml` and `pnpm-workspace.yaml` unmodified. If either shows as modified in `git status`, restore it with `git checkout -- web/ui/pnpm-lock.yaml web/ui/pnpm-workspace.yaml` and run the install again. `CI=true` skips pnpm's interactive modules-purge prompt when `node_modules` was written by another pnpm.
 
 ```sh
-export PATH="/opt/homebrew/bin:$PATH"
 pnpm --version
 (cd web/ui && CI=true pnpm install --frozen-lockfile && pnpm test && pnpm build)
 (cd web/demo && CI=true pnpm install --frozen-lockfile && pnpm build)
 git status --short
 ```
 
-Expected: `10.33.0`; web/ui `Test Files  39 passed (39)`, `Tests  315 passed (315)`, svelte-check `0 ERRORS 0 WARNINGS`, `✓ built in`; web/demo `✓ built in`; `git status --short` lists only the five `crates/wasm` files (`README.md`, `src/dto.rs`, `src/types.rs`, `src/volume.rs`, `tests/volume.rs`).
+Expected: `pnpm --version` prints `12.x` (nvm's) or `10.33.0` (Homebrew's); web/ui `Test Files  39 passed (39)`, `Tests  315 passed (315)`, svelte-check `0 ERRORS 0 WARNINGS`, `✓ built in`; web/demo `✓ built in`; `git status --short` lists only the five `crates/wasm` files (`README.md`, `src/dto.rs`, `src/types.rs`, `src/volume.rs`, `tests/volume.rs`).
 
 - [ ] **Step 26: Check the README's ext2 recipe against the loader and say so**
 
-The README's "Loading an ext2 image" section gives an `mke2fs` recipe and says it has not been run against this crate. Run it: the check needs e2fsprogs 1.47.4 (Homebrew's, which is keg-only, so call it by its full path; a `mke2fs` elsewhere on the `PATH` may be another version), and it loads the image through the package Step 25 installed into `web/ui`, with a throwaway test file that the step deletes again. The `pnpm exec` below needs Step 25's environment again (a fresh shell has nvm's pnpm 12 first on the `PATH`, which rewrites the lockfile), so the block starts with the same `PATH` line and version check. From the repo root:
+The README's "Loading an ext2 image" section gives an `mke2fs` recipe and says it has not been run against this crate. Run it: the check needs e2fsprogs 1.47.4 (Homebrew's, which is keg-only, so call it by its full path; a `mke2fs` elsewhere on the `PATH` may be another version), and it loads the image through the package Step 25 installed into `web/ui`, with a throwaway test file that the step deletes again. From the repo root:
 
 ```sh
-export PATH="/opt/homebrew/bin:$PATH"
-pnpm --version   # must print 10.33.0
 /opt/homebrew/opt/e2fsprogs/sbin/mke2fs -V 2>&1 | head -1
 dd if=/dev/zero of=/tmp/ext2-recipe.img bs=1024 count=16384 2>/dev/null
 /opt/homebrew/opt/e2fsprogs/sbin/mke2fs -q -F -t ext2 -b 1024 -I 128 -O none,filetype,sparse_super /tmp/ext2-recipe.img
@@ -1443,7 +1440,7 @@ EOF
 rm web/ui/tests/ext2-recipe.test.ts /tmp/ext2-recipe.img
 ```
 
-Expected: `10.33.0`; `mke2fs 1.47.4 (6-Mar-2025)`; mke2fs warns `128-byte inodes cannot handle dates beyond 2038 and are deprecated` and nothing else; vitest prints `Test Files  1 passed (1)`, `Tests  1 passed (1)`.
+Expected: `mke2fs 1.47.4 (6-Mar-2025)`; mke2fs warns `128-byte inodes cannot handle dates beyond 2038 and are deprecated` and nothing else; vitest prints `Test Files  1 passed (1)`, `Tests  1 passed (1)`.
 
 Then in `crates/wasm/README.md`, under `### Loading an ext2 image`, replace:
 
@@ -1570,14 +1567,7 @@ export class ScrollNonces { next(): number }   // 1, 2, 3, ...; SelectionStore k
 // app.css: .step gains max-height: 210px; overflow: auto
 ```
 
-Environment for every command below, from `web/ui` (Homebrew's pnpm 10.33.0 must be the one found, and Node comes with it; nvm's pnpm 12 rewrites the lockfile):
-
-```sh
-export PATH="/opt/homebrew/bin:$PATH"
-pnpm --version   # must print 10.33.0
-```
-
-If `web/ui/pnpm-lock.yaml` shows as modified or a `web/ui/pnpm-workspace.yaml` appears in `git status` at any point, a pnpm 12 ran: `git checkout web/ui/pnpm-lock.yaml`, delete `web/ui/pnpm-workspace.yaml`, and run the install again with the PATH above.
+Environment for every command below, from `web/ui`: any pnpm 10.26 or newer (nvm's pnpm 12 and Homebrew's 10.33 both work). Both web packages keep their pnpm settings in a tracked `pnpm-workspace.yaml`, so a frozen install must leave `web/ui/pnpm-lock.yaml` and `web/ui/pnpm-workspace.yaml` unmodified; if either shows as modified in `git status` at any point, restore it with `git checkout web/ui/pnpm-lock.yaml web/ui/pnpm-workspace.yaml` and run `CI=true pnpm install --frozen-lockfile` again (`CI=true` lets pnpm purge a stale modules directory without asking).
 
 The wasm package must exist before the install (`web/ui` depends on `file:../../crates/wasm/pkg`): from the repo root, `wasm-pack build crates/wasm --target bundler`; then, from `web/ui`, `CI=true pnpm install --frozen-lockfile` (`CI=true` lets pnpm purge a stale modules directory without asking). Baseline: `pnpm test` prints `Test Files  39 passed (39)` and `Tests  315 passed (315)`.
 
@@ -3249,12 +3239,11 @@ Expected: `Test Files  3 passed (3)`, `Tests  10 passed (10)`.
 - [ ] **Step 47: Run the web gates.**
 
 ```sh
-pnpm --version
 CI=true pnpm install --frozen-lockfile && pnpm test && pnpm build
 git status --short
 ```
 
-Expected: `10.33.0`; `pnpm test` prints `Test Files  42 passed (42)` and `Tests  340 passed (340)`; `pnpm build` prints `svelte-check ... 0 ERRORS 0 WARNINGS 0 FILES_WITH_PROBLEMS` and vite's `✓ built in ...`; `git status --short` lists only the files in **Files** (no `pnpm-lock.yaml`, no `pnpm-workspace.yaml`).
+Expected: `pnpm test` prints `Test Files  42 passed (42)` and `Tests  340 passed (340)`; `pnpm build` prints `svelte-check ... 0 ERRORS 0 WARNINGS 0 FILES_WITH_PROBLEMS` and vite's `✓ built in ...`; `git status --short` lists only the files in **Files** (no `pnpm-lock.yaml`, no `pnpm-workspace.yaml`).
 
 - [ ] **Step 48: Check the FAT chrome in the browser.** `pnpm dev`, open the printed URL, and confirm on the default FAT16 disk: the Inspector on byte 0 shows `Sector` / `0 · reserved (boot sector)`, and hovering an annotation's range shows `bytes … of the sector (decimal)`; on a data byte (press `g`, enter `c:2`) `Sector` / `97 · data`, `Cluster` / `2 · FAT: free`, `Owner` / `free`; the `g` prompt reads `Jump to offset (0x…, decimal, s:sector, c:cluster)`; the dump labels `cluster 2` and the gap `63 empty sectors (31.5 KB)`; after Add file the Step panel's buttons read `Sector N` as before and the strip is its old height (83 px at 1440 px wide, no scrollbar); the ribbon reads `16.0 MB free` on the fresh disk and `15.9 MB free` after Add file, as before; hovering the ribbon captions `sector N · …`; the status line is empty; the console has no errors. `--own-11` computes to `#d4a017` (dark) and `#b7791f` (light); nothing on a FAT disk uses it yet. The FAT map looks exactly as before: its canvas is 198 × 2044 CSS px in the default layout (28 columns of 6 px cells, 292 rows; its backing store is that times `devicePixelRatio`), the end-of-chain dots, the selected chain's outlines and 2 px join, the diff outlines, and the dashed cell under a dump hover draw as they did, and narrowing the window re-wraps it. Start a lesson, scroll the dump far down, Close the lesson at its first step, and Start another: the dump scrolls back to the new lesson's first focus (before Step 44 it stayed where it was).
 
@@ -3368,14 +3357,7 @@ Strings and facts later tasks rely on (all pinned by this task's tests):
 - The boundary scan allows `.recover(` outside `src/fs/ext/` only on a receiver named `journal` (`journal.recover()`, `journal!.recover()`, `journal?.recover()`); write `volume.adapter.journal!.recover()` or bind a local named `journal`, never `const j = ...; j.recover()`. `.armCrash(` and `.disarmCrash(` count on every receiver: generic code arms through the capability's `arm`/`disarm`, and the store and the shell host name their method `setArmedPhase` (Tasks 2 and 6), so the scan needs no exemption for them.
 - When Task 4 adds `"ext"` to `FsFamilyId`: replace `EXT_ID` in `adapter.ts` with the literal `"ext"` and drop the `as string` in `asExt`; nothing else changes.
 
-Environment for every command below, from `web/ui` (Homebrew's pnpm 10.33.0 must be the one found; nvm's pnpm 12 rewrites the lockfile):
-
-```sh
-export PATH="/opt/homebrew/bin:$PATH"
-pnpm --version   # must print 10.33.0
-```
-
-If `web/ui/pnpm-lock.yaml` shows as modified or a `web/ui/pnpm-workspace.yaml` appears in `git status` at any point, a pnpm 12 ran: `git checkout web/ui/pnpm-lock.yaml`, delete `web/ui/pnpm-workspace.yaml`, and run the install again with the PATH above.
+Environment for every command below, from `web/ui`: any pnpm 10.26 or newer (nvm's pnpm 12 and Homebrew's 10.33 both work). Both web packages keep their pnpm settings in a tracked `pnpm-workspace.yaml`, so a frozen install must leave `web/ui/pnpm-lock.yaml` and `web/ui/pnpm-workspace.yaml` unmodified; if either shows as modified in `git status` at any point, restore it with `git checkout web/ui/pnpm-lock.yaml web/ui/pnpm-workspace.yaml` and run `CI=true pnpm install --frozen-lockfile` again (`CI=true` lets pnpm purge a stale modules directory without asking).
 
 #### Round 1: the unit space, the fixture, and the ext DTO types
 
@@ -5097,14 +5079,7 @@ export function clickPath(t: AttributionTable, b: number): string | null;   // o
 // app.css: .bgmap-wrap, .bgmap-wrap canvas, .bgmap-caption, .actions .format-check
 ```
 
-Environment for every command below, from `web/ui` (Homebrew's pnpm 10.33.0 must be the one found; nvm's pnpm 12 rewrites the lockfile):
-
-```sh
-export PATH="/opt/homebrew/bin:$PATH"
-pnpm --version   # must print 10.33.0
-```
-
-If `web/ui/pnpm-lock.yaml` shows as modified or a `web/ui/pnpm-workspace.yaml` appears in `git status` at any point, a pnpm 12 ran: `git checkout web/ui/pnpm-lock.yaml`, delete `web/ui/pnpm-workspace.yaml`, and run the install again with the PATH above (`CI=true pnpm install --frozen-lockfile` when the modules directory must be purged).
+Environment for every command below, from `web/ui`: any pnpm 10.26 or newer (nvm's pnpm 12 and Homebrew's 10.33 both work). Both web packages keep their pnpm settings in a tracked `pnpm-workspace.yaml`, so a frozen install must leave `web/ui/pnpm-lock.yaml` and `web/ui/pnpm-workspace.yaml` unmodified; if either shows as modified in `git status` at any point, restore it with `git checkout web/ui/pnpm-lock.yaml web/ui/pnpm-workspace.yaml` and run `CI=true pnpm install --frozen-lockfile` again (`CI=true` lets pnpm purge a stale modules directory without asking).
 
 #### Round 1: the journal's pointer blocks are owned, in the journal colour
 
@@ -6399,18 +6374,7 @@ export function ringCaption(b: JournalRingBlock): string;   // `journal block ${
 // app.css: .journal .facts, .journal .facts dd, .journal-flag, .journal-wrap, .journal-wrap canvas, .journal-caption, .journal-controls, .journal-controls select, .journal-armed, .journal-none
 ```
 
-Run every command below from `web/ui`, with this environment. Homebrew's pnpm 10.33.0 must be the one found, because nvm's pnpm 12 rewrites the lockfile:
-
-```sh
-export PATH="/opt/homebrew/bin:$PATH"
-pnpm --version   # must print 10.33.0
-```
-
-If `web/ui/pnpm-lock.yaml` shows as modified, or a `web/ui/pnpm-workspace.yaml` appears in `git status`, then a pnpm 12 ran. To recover:
-
-1. Run `git checkout web/ui/pnpm-lock.yaml`.
-2. Delete `web/ui/pnpm-workspace.yaml`.
-3. Run the install again with the PATH above. Use `CI=true pnpm install --frozen-lockfile` when the modules directory must be purged.
+Environment for every command below, from `web/ui`: any pnpm 10.26 or newer (nvm's pnpm 12 and Homebrew's 10.33 both work). Both web packages keep their pnpm settings in a tracked `pnpm-workspace.yaml`, so a frozen install must leave `web/ui/pnpm-lock.yaml` and `web/ui/pnpm-workspace.yaml` unmodified; if either shows as modified in `git status` at any point, restore it with `git checkout web/ui/pnpm-lock.yaml web/ui/pnpm-workspace.yaml` and run `CI=true pnpm install --frozen-lockfile` again (`CI=true` lets pnpm purge a stale modules directory without asking).
 
 #### Round 1: the ring's model
 
@@ -6965,14 +6929,7 @@ Strings (all pinned by this task's tests):
 - Both on a volume without a journal: `/dev/hda has no journal (${fsType})`, help `crash and recover need an ext3 volume: mkfs --type ext3`.
 - `mkfs` summary `Format /dev/hda (clears the timeline); --type picks fat16, ext2, or ext3`; `--type` desc `fat16, ext2, or ext3 (default: the mounted volume's type)`; `--label` desc `volume label (fat16: up to 11 characters; ext: up to 16 bytes)`; errors `--${long} is not a fat16 option` / `is not an ext2 option` / `is not an ext3 option`, `unknown type '${type}'` (help `types: fat16, ext2, ext3`), and the family's `Error` through `fsCall` as `/dev/hda: journalBlocks and journalMode need variant ext3`.
 
-Environment for every command below, from `web/ui` (Homebrew's pnpm 10.33.0 must be the one found; nvm's pnpm 12 rewrites the lockfile):
-
-```sh
-export PATH="/opt/homebrew/bin:$PATH"
-pnpm --version   # must print 10.33.0
-```
-
-If `web/ui/pnpm-lock.yaml` shows as modified or a `web/ui/pnpm-workspace.yaml` appears in `git status` at any point, a pnpm 12 ran: `git checkout web/ui/pnpm-lock.yaml`, delete `web/ui/pnpm-workspace.yaml`, and run `CI=true pnpm install --frozen-lockfile` again with the PATH above. On a fresh checkout build the wasm package first (repo root: `wasm-pack build crates/wasm --target bundler`), then `CI=true pnpm install --frozen-lockfile` in `web/ui`. Baseline after Tasks 1 to 5: `pnpm test` prints `Test Files  45 passed (45)` and `Tests  422 passed (422)`.
+Environment for every command below, from `web/ui`: any pnpm 10.26 or newer (nvm's pnpm 12 and Homebrew's 10.33 both work). Both web packages keep their pnpm settings in a tracked `pnpm-workspace.yaml`, so a frozen install must leave `web/ui/pnpm-lock.yaml` and `web/ui/pnpm-workspace.yaml` unmodified; if either shows as modified in `git status` at any point, restore it with `git checkout web/ui/pnpm-lock.yaml web/ui/pnpm-workspace.yaml` and run `CI=true pnpm install --frozen-lockfile` again (`CI=true` lets pnpm purge a stale modules directory without asking). On a fresh checkout build the wasm package first (repo root: `wasm-pack build crates/wasm --target bundler`), then `CI=true pnpm install --frozen-lockfile` in `web/ui`. Baseline after Tasks 1 to 5: `pnpm test` prints `Test Files  45 passed (45)` and `Tests  422 passed (422)`.
 
 #### Round 1: `crash` and `recover`
 
@@ -8140,14 +8097,7 @@ export function lessonHelpers(scenario: Scenario): {
 //   {#each groups as g}<optgroup label={g.label}>{#each g.scenarios as s}<option value={s.id}>{s.title}</option>{/each}</optgroup>{/each}
 ```
 
-Run every command below from `web/ui` unless a step says otherwise, with this environment (Homebrew's pnpm 10.33.0 must be the one found; nvm's pnpm 12 rewrites the lockfile):
-
-```sh
-export PATH="/opt/homebrew/bin:$PATH"
-pnpm --version   # must print 10.33.0
-```
-
-If `web/ui/pnpm-lock.yaml` shows as modified or a `web/ui/pnpm-workspace.yaml` appears in `git status` at any point, a pnpm 12 ran: `git checkout web/ui/pnpm-lock.yaml`, delete `web/ui/pnpm-workspace.yaml`, and run `CI=true pnpm install --frozen-lockfile` again with the PATH above.
+Environment for every command below, from `web/ui` unless a step says otherwise: any pnpm 10.26 or newer (nvm's pnpm 12 and Homebrew's 10.33 both work). Both web packages keep their pnpm settings in a tracked `pnpm-workspace.yaml`, so a frozen install must leave `web/ui/pnpm-lock.yaml` and `web/ui/pnpm-workspace.yaml` unmodified; if either shows as modified in `git status` at any point, restore it with `git checkout web/ui/pnpm-lock.yaml web/ui/pnpm-workspace.yaml` and run `CI=true pnpm install --frozen-lockfile` again (`CI=true` lets pnpm purge a stale modules directory without asking).
 
 #### Round 0: the baseline
 
