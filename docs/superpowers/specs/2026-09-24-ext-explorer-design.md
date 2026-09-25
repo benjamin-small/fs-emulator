@@ -163,8 +163,7 @@ plus `ExtBlockOwnerRole`.
 
 ## 4. The ext adapter (`web/ui/src/fs/ext/`)
 
-Files: `geometry.ts` (`EXT_UNIT`, `EXT_SECTOR`, `extSpace(geo)`,
-`extColorForRegion`), `adapter.ts` (`ExtAdapter`, `ext: FsFamily<ExtFamilyOptions>`),
+Files: `geometry.ts` (`EXT_UNIT`, `EXT_SECTOR`, `extSpace(geo)`), `adapter.ts` (`ExtAdapter`, `ext: FsFamily<ExtFamilyOptions>`),
 `format.ts` (`SIZES`, `DEFAULTS`, `checkFormat`, `defaultInodesPerGroup`,
 `MKFS`), `journal.ts` (`ExtJournal implements JournalCapability`, the
 phase mapping), `metadata.ts` (`CORRUPT_NOTE`, `NOTES`, `touchesMetadata`),
@@ -178,8 +177,9 @@ phase mapping), `metadata.ts` (`CORRUPT_NOTE`, `NOTES`, `touchesMetadata`),
   blockSize`, `sectorSize = blockSize`, `totalSectors = totalBlocks`;
   `unitOfSector(s)` is `s` for `firstDataBlock ≤ s < totalBlocks`, else
   undefined; `unitByteRange(b) = [b·1024, (b+1)·1024)`; `unitOfOffset` divides;
-  `unitStartsAt(s)` is `unitOfSector(s) !== undefined`; `colorForRegion` gives
-  `journal` regions `COLOR_JOURNAL` and everything else the default.
+  `unitStartsAt(s)` is `unitOfSector(s) !== undefined`; `colorForRegion` is
+  `defaultColorForRegion`, which already gives `journal` regions
+  `COLOR_JOURNAL`.
 - `ExtAdapter.refresh()` reads `extGeometry()`, `extSuperblock()`,
   `blockOwners()`, and on ext3 `journalInfo()` and `needsRecovery()`, into
   plain fields. `owners` are the non-journal rows mapped to `UnitOwner {
