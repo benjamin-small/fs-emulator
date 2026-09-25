@@ -568,6 +568,27 @@ fn a_raw_write_that_breaks_the_superblock_gates_path_operations() {
 }
 
 #[test]
+fn a_corrupt_volume_has_no_block_owners_until_repaired() {
+    let mut fs = default_fs();
+    fs.create_dir("/docs").unwrap();
+    fs.create_file("/docs/hello.txt", b"hello").unwrap();
+    let before = fs.block_owners();
+    assert!(before.values().any(|o| o.path == "/docs/hello.txt"));
+    let good = fs.disk().sector(1).to_vec();
+
+    fs.write_raw(1_024 + 56, &[0, 0]).unwrap();
+    assert!(fs.corruption().is_some());
+    assert!(
+        fs.block_owners().is_empty(),
+        "block_owners passes the same gate as every path operation"
+    );
+
+    fs.write_raw(1_024 + 56, &good[56..58]).unwrap();
+    assert!(fs.corruption().is_none());
+    assert_eq!(fs.block_owners(), before);
+}
+
+#[test]
 fn a_raw_write_that_breaks_the_descriptors_gates_path_operations() {
     let mut fs = default_fs();
     fs.write_raw(2 * 1_024, &[0; 32]).unwrap();

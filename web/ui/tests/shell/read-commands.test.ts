@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { Volume } from "../../src/lib/wasm";
 import { addrHelp } from "../../src/shell/addr";
-import { createCommands, rewoundWarning } from "../../src/shell/commands";
+import { rewoundWarning } from "../../src/shell/commands";
+import { createCommands } from "../../src/shell/register";
 import { DD_MAX_BYTES } from "../../src/shell/dd";
 import { Vfs } from "../../src/shell/vfs";
 import { call, callErr, makeHost } from "./helpers";

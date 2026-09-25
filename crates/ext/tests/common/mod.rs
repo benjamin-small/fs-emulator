@@ -60,15 +60,18 @@ pub fn changes_in_order(record: &OpRecord) -> Vec<(usize, usize)> {
 
 /// The superblock fields e2fsck or a kernel mount may rewrite on its own
 /// account, as `(offset, length, name)`: the mount and check bookkeeping,
-/// the lifetime write counter, and the reserved tail (`s_reserved`, up to
+/// the lifetime write counter, the metadata overhead (a Linux read-write
+/// mount stores the count it computes when the field is zero; 137 blocks
+/// on the default disk), and the reserved tail (`s_reserved`, up to
 /// `s_checksum`).
-pub const SUPERBLOCK_IGNORED: [(usize, usize, &str); 7] = [
+pub const SUPERBLOCK_IGNORED: [(usize, usize, &str); 8] = [
     (0x2C, 4, "s_mtime"),
     (0x30, 4, "s_wtime"),
     (0x34, 2, "s_mnt_count"),
     (0x3A, 2, "s_state"),
     (0x40, 4, "s_lastcheck"),
     (0x178, 8, "s_kbytes_written"),
+    (0x248, 4, "s_overhead_clusters"),
     (0x284, 0x178, "s_reserved"),
 ];
 

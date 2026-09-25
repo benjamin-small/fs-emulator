@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Volume } from "../../src/lib/wasm";
-import { commandSetOf, createCommands, registerCommands, type CommandDef, type CommandRegistry } from "../../src/shell/commands";
+import { commandSetOf, createCommands, registerCommands, type CommandRegistry } from "../../src/shell/register";
+import type { CommandDef } from "../../src/shell/types";
 import { journalCommands } from "../../src/shell/journalCommands";
 import { Vfs } from "../../src/shell/vfs";
 import { call, callErr, makeHost } from "./helpers";

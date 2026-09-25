@@ -2,9 +2,9 @@
   import { untrack } from "svelte";
   import { attrAtSector, type Attr } from "../core/attribution";
   import { freeSpaceLabel } from "../core/freeSpace";
+  import { metaLabel } from "../core/legend";
   import { colorIndexForPath } from "../core/palette";
   import { buildTree, type TreeNode } from "../core/tree";
-  import type { Region } from "../lib/wasm";
   import { layers } from "../state/layers.svelte";
   import { selection } from "../state/selection.svelte";
   import { volume } from "../state/volume.svelte";
@@ -231,12 +231,6 @@
     const attr: Attr = attrAtSector(volume.attribution, sector);
     return `${volume.adapter.sector.singular} ${sector} · ${attr.ownerPath ?? attr.regionName}`;
   });
-
-  function metaLabel(r: Region): string {
-    if (r.kind === "boot") return "boot";
-    if (r.kind === "directory") return "root";
-    return r.name;
-  }
 
   const metaRegions = $derived.by(() => {
     volume.epoch;

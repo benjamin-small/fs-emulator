@@ -43,7 +43,16 @@ crash phase for every mutation, recovery, journal block classification, and
 journal annotations. External ext2 and ext3 tests validate generated images
 with `e2fsck`, `dumpe2fs`, and `debugfs`; the recovery oracle requires
 `recover()` to produce the same bytes as `e2fsck -fy` on a crashed copy. The ignored macOS and Linux mount tests provide explicit manual
-checks against the host kernels.
+checks against the host kernels. On a Mac the Linux one runs in a privileged
+container (loop devices need it), with a separate target directory so the
+macOS build is left alone:
+
+```sh
+docker run --rm --privileged -v "$PWD":/work -w /work -e CARGO_TARGET_DIR=/work/target-linux \
+  rust:1.90-bookworm sh -c 'apt-get -qq update && apt-get -qq install -y e2fsprogs && cargo test -p ext --test mount_linux -- --ignored'
+```
+
+Both tests passed on 2026-09-25 (Linux 7.0); remove `target-linux/` afterwards.
 
 `wasm-pack test --node crates/wasm` exercises the JavaScript-facing `Volume`
 boundary. The TypeScript suite exercises the real generated WebAssembly package

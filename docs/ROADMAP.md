@@ -188,9 +188,12 @@ reject a journal that overlaps group metadata or maps a block twice; a
 crafted foreign image would then have transactions write over metadata.
 The explorer now loads foreign images, and the check (`CorruptImage`, as
 e2fsck reports) is still to add; slice 4 left the loader alone (a spec
-non-goal). The ignored ext3 mount test in
-`crates/ext/tests/mount_linux.rs`
-(`linux_replays_a_crashed_ext3_image_like_recover`) has not been run.
+non-goal). The ignored ext3 mount tests in
+`crates/ext/tests/mount_linux.rs` were run on 2026-09-25 (Linux 7.0 in a
+privileged Docker container; `docs/testing.md` has the command): the kernel
+reads the image back and replays the crashed image byte for byte like
+`recover()`, apart from `s_overhead_clusters`, which a read-write mount
+fills in when it is zero and the comparison now ignores.
 
 **`crates/wasm`**: `init` is exported by wasm-bindgen despite being private.
 `vite-plugin-top-level-await` and its `@swc/core` pin may be removable from
@@ -205,9 +208,8 @@ minimum region width, so tiny regions can vanish at narrow widths;
 pre-existing blanket `catch` around `rawDirEntries` on purpose, so a corrupt
 volume falls back to "no range" or "skip this entry" instead of throwing.
 
-**`web/ui`, after the ext slice** (the slice-4 browser pass): the `.warn`
-text (the Format check line) is hard to read in dark mode in both Format
-forms. By design, clicking one of the journal's pointer blocks (`<journal>`,
+**`web/ui`, after the ext slice** (the slice-4 browser pass): by design,
+clicking one of the journal's pointer blocks (`<journal>`,
 1106 to 1110 on the default disk) on the block-group map only jumps the dump:
 `<journal>` is a pseudo-owner (`isPseudoOwner`), not a tree path, so there is
 nothing to select.
@@ -249,9 +251,8 @@ selection even when a different file was selected; on keyboard layouts where
 backtick is a dead key only the Terminal button toggles the drawer; `readRaw`
 recomputes its display sum; `planWindow`'s message for an absent count on
 `/dev/zero` is unreachable through the runner; `select` warns before
-validating its target; `flagGiven` and the range message are repeated
-between `commands.ts` and `dd.ts`; `commands.ts` should get a second module
-before the next command group; the loading and error
+validating its target; the range message is repeated between
+`commands.ts` and `dd.ts`; the loading and error
 notes in the drawer are not live regions; `TerminalStore` is only exercised
 manually; `>>` and `write --append` read the whole existing file with no cap
 before rewriting it, so appending one byte to a file larger than 1 MiB

@@ -9,7 +9,7 @@
   import type { BrowserTerminal } from "@benjamin-small/browser-terminal";
   import type { Volume } from "../lib/wasm";
   import { themeFromTokens } from "../core/terminalTheme";
-  import { commandSetOf, registerCommands } from "../shell/commands";
+  import { commandSetOf, registerCommands } from "../shell/register";
   import type { ShellHost } from "../shell/host";
   import { createRedirectHandler } from "../shell/redirect";
   import { createStoreHost } from "../shell/storeHost.svelte";
