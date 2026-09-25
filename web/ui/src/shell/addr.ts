@@ -1,24 +1,31 @@
-import type { UnitSpace } from "../fs/adapter";
+import { unitIsSector, type UnitSpace } from "../fs/adapter";
 import { ShellError } from "./errors";
 
 export const SIZE_HELP = "sizes: 512, 1k, 4M, 0x200";
 
 /**
- * What an address parser needs from a family: the sector size, the unit noun and letter, the
- * unit's byte range, and optionally the family's own extra forms (`parseAddr`, which answers
- * `undefined` for anything that is not its own). A `UnitSpace` or an `FsAdapter` satisfies
- * it; tests build one from a fixture.
+ * What an address parser needs from a family: the sector size, the sector and unit nouns and
+ * letters, the unit's byte range, and optionally the family's own extra forms (`parseAddr`,
+ * which answers `undefined` for anything that is not its own, and `extraAddrHelp`, the help
+ * text for them). A `UnitSpace` or an `FsAdapter` satisfies it; tests build one from a fixture.
  */
-export type AddrSpace = Pick<UnitSpace, "sectorSize" | "unit" | "unitByteRange"> & { parseAddr?(v: string): number | undefined };
+export type AddrSpace = Pick<UnitSpace, "sectorSize" | "unit" | "sector" | "unitByteRange"> & {
+  parseAddr?(v: string): number | undefined;
+  extraAddrHelp?: string;
+};
 
-/** The address forms in one line, for error help and flag descriptions. For FAT this reads
- *  `addresses: 0x1f (hex), 512 (decimal), s:65 (sector), c:3 (cluster)`. */
+/** The address forms in one line, for error help and flag descriptions: the sector form, the
+ *  unit form when the unit is not the sector, then the family's extras. For FAT this reads
+ *  `addresses: 0x1f (hex), 512 (decimal), s:65 (sector), c:3 (cluster)`; for ext
+ *  `addresses: 0x1f (hex), 512 (decimal), b:65 (block), i:11 (inode)`. */
 export function addrHelp(space: AddrSpace): string {
-  return `addresses: 0x1f (hex), 512 (decimal), s:65 (sector), ${space.unit.letter}:3 (${space.unit.singular})`;
+  const { sector, unit } = space;
+  const unitForm = unitIsSector(space) ? "" : `, ${unit.letter}:3 (${unit.singular})`;
+  return `addresses: 0x1f (hex), 512 (decimal), ${sector.letter}:65 (${sector.singular})${unitForm}${space.extraAddrHelp ?? ""}`;
 }
 
 /** `<letter>:N` with the family's letter, case-insensitively like `s:N`; `undefined` otherwise. */
-function unitIndex(v: string, letter: string): number | undefined {
+function letterIndex(v: string, letter: string): number | undefined {
   const prefix = `${letter}:`;
   if (v.length <= prefix.length || v.slice(0, prefix.length).toLowerCase() !== prefix.toLowerCase()) return undefined;
   const digits = v.slice(prefix.length);
@@ -26,9 +33,10 @@ function unitIndex(v: string, letter: string): number | undefined {
 }
 
 /**
- * The address forms HexView's `g` prompt accepts: `s:N` (sector), `0x…`, decimal, the
- * family's `<letter>:N` (a data unit: FAT's `c:N`, whose clusters start at 2), then whatever
- * else the family parses (`space.parseAddr`). A number passes through when it is a
+ * The address forms HexView's `g` prompt accepts, in order: `s:N` (a sector, on every family),
+ * `0x…`, decimal, the family's sector letter when it is not `s` (ext's `b:N`), the family's
+ * unit letter (a data unit: FAT's `c:N`, whose clusters start at 2), then whatever else the
+ * family parses (`space.parseAddr`, ext's `i:N`). A number passes through when it is a
  * non-negative integer. Bounds are the caller's business (HexView checks the image length,
  * `seek` the disk size).
  */
@@ -40,8 +48,9 @@ export function parseAddr(v: string | number, space: AddrSpace): number {
   else if (/^0x[0-9a-f]+$/i.test(v)) off = parseInt(v, 16);
   else if (/^\d+$/.test(v)) off = Number(v);
   else {
-    const unit = unitIndex(v, space.unit.letter);
-    off = unit !== undefined ? space.unitByteRange(unit).start : space.parseAddr?.(v);
+    const sector = space.sector.letter.toLowerCase() === "s" ? undefined : letterIndex(v, space.sector.letter);
+    const unit = sector === undefined ? letterIndex(v, space.unit.letter) : undefined;
+    off = sector !== undefined ? sector * space.sectorSize : unit !== undefined ? space.unitByteRange(unit).start : space.parseAddr?.(v);
   }
   if (off === undefined || !Number.isInteger(off) || off < 0) throw bad();
   return off;

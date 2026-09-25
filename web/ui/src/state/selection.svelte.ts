@@ -1,3 +1,4 @@
+import { ScrollNonces } from "../core/scrollNonce";
 import { volume } from "./volume.svelte";
 
 export class SelectionStore {
@@ -8,11 +9,13 @@ export class SelectionStore {
   showRemnants = $state(false);
   expandedGaps = $state(new Set<number>());
   scrollTarget = $state<{ offset: number; nonce: number } | null>(null);
+  // One counter for the store's life: `reset()` leaves it running, because the dump remembers
+  // the last nonce it scrolled to across a reset (see `ScrollNonces`).
+  private readonly nonces = new ScrollNonces();
 
-  /** Move the byte cursor and ask the dump to scroll there.
-   *  Reads `scrollTarget` before writing it; callers inside an `$effect` must wrap
-   *  the call in `untrack()` so the effect does not depend on its own write. */
-  jumpTo(offset: number) { this.cursorOffset = offset; this.scrollTarget = { offset, nonce: (this.scrollTarget?.nonce ?? 0) + 1 }; }
+  /** Move the byte cursor and ask the dump to scroll there, even to the offset it is at: every
+   *  request carries a fresh nonce. Reads no state, so an `$effect` may call it. */
+  jumpTo(offset: number) { this.cursorOffset = offset; this.scrollTarget = { offset, nonce: this.nonces.next() }; }
 
   select(path: string | null) {
     this.path = path;

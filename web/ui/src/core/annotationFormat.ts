@@ -21,9 +21,10 @@ export function formatRange(r: ByteRange, sectorSize: number): string {
   return `0x${r.start.toString(16).padStart(w, "0")}..0x${r.end.toString(16).padStart(w, "0")}`;
 }
 
-/** The tooltip behind a range: the same bounds in decimal. */
-export function describeRange(r: ByteRange): string {
-  return `bytes ${r.start}..${r.end} of the sector (decimal)`;
+/** The tooltip behind a range: the same bounds in decimal, in the family's sector noun (the
+ *  Inspector passes `sector.singular`: "sector" on FAT, "block" on ext). */
+export function describeRange(r: ByteRange, sector = "sector"): string {
+  return `bytes ${r.start}..${r.end} of the ${sector} (decimal)`;
 }
 
 const DECIMAL = /^\d+$/;

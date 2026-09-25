@@ -6,6 +6,8 @@
   // listed here (e.g. an unexpected InvalidGeometry from a hand-typed format option).
   // Two entries name the mounted family (`volume.adapter.name`, "FAT16" today), so the
   // table is derived and follows a format or load that binds another adapter.
+  // `Unsupported` is left out on purpose: the loader's messages already name what was
+  // refused ("journal feature journal_64bit"), and a fixed phrase would hide it.
   const FRIENDLY: Record<string, string> = $derived({
     DiskFull: "Disk full. Free space or use a smaller file.",
     DirectoryFull: "This folder is full. Remove an entry or use a different folder.",
@@ -20,7 +22,7 @@
     InvalidGeometry: "Those format options don't add up to a valid disk.",
     CorruptImage: `That image doesn't look like a valid ${volume.adapter.name} volume.`,
     OutOfBounds: "That range runs past the end of the disk.",
-    Unsupported: "That isn't supported yet.",
+    NeedsRecovery: "This volume needs recovery: the journal holds an unfinished transaction. Recover it from the Journal panel or with recover.",
   });
   const message = $derived.by(() => {
     const s = volume.status;
@@ -40,5 +42,6 @@
   <!-- Shown whenever the volume is unmounted, status or no status: a failed op does not make
        the corruption go away, and the two say different things. -->
   {#if volume.corruption}<span>Volume not mounted: {volume.corruption}</span>{/if}
+  {#if volume.needsRecovery}<span>Volume needs recovery</span>{/if}
   {#if volume.status}<span class="err">{message}{#if volume.status.code}{" "}<span class="muted">{volume.status.code}</span>{/if}</span>{/if}
 </div>

@@ -11,6 +11,7 @@
   --own-0: transparent; --own-1: #6b7380; --own-2: #afa9ec; --own-3: #5dcaa5;
   --own-4: #5dcaa5; --own-5: #f0997b; --own-6: #ed93b1; --own-7: #85b7eb; --own-8: #97c459; --own-9: #fac775;
   --own-10: #cecbf6; /* FAT 1: --own-2 a shade lighter, so the mirror copy reads as related */
+  --own-11: #d4a017; /* journal amber: 25° of hue or 20% of lightness from --own-2, --own-4..--own-10 (core/palette.ts) */
   --font-display: "IBM Plex Sans Condensed", system-ui, sans-serif;
   --font-body: "IBM Plex Sans", system-ui, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -21,5 +22,5 @@
   color-scheme: light;
   --canvas: #eef1f4; --panel: #ffffff; --ink: #111827; --ink-muted: #5b6472; --hairline: #d5dae1;
   --focus: #378add; --diff: #ef9f27; --diff-ink: #854f0b;
-  --own-1: #8b93a1; --own-2: #7f77dd; --own-3: #1d9e75; --own-10: #afa9ec;
+  --own-1: #8b93a1; --own-2: #7f77dd; --own-3: #1d9e75; --own-10: #afa9ec; --own-11: #b7791f;
 }

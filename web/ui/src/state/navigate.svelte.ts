@@ -8,8 +8,7 @@ import { volume } from "./volume.svelte";
  * and from App.svelte's `[`/`]` shortcuts, right after `volume.seek(step)`.
  *
  * A step with no changes (or an index off either end of the history) leaves the dump
- * alone. These are event handlers, not effects, so `jumpTo`'s read-then-write of
- * `scrollTarget` needs no `untrack`.
+ * alone.
  */
 export function focusHistoryStep(step: number) {
   const offset = stepFocusOffset(volume.history[step]);

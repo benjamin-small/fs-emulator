@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { attrAtOffset, attrAtSector, buildAttribution, defaultColorForRegion } from "../src/core/attribution";
-import { COLOR_TABLE, COLOR_TABLE_ALT, colorIndexForPath } from "../src/core/palette";
+import { COLOR_JOURNAL, COLOR_TABLE, COLOR_TABLE_ALT, colorIndexForPath } from "../src/core/palette";
 import type { UnitOwner } from "../src/fs/adapter";
 import { clusterByteRange, clusterOfSector } from "../src/fs/fat16/geometry";
 import { geo, layout, space } from "./fixtures/geometry";
@@ -49,6 +49,27 @@ describe("attribution", () => {
     expect(attrAtOffset(t, 105 * 512)).toMatchObject({ unit: 4, ownerPath: "/DOCS/N.TXT" });
     expect(attrAtOffset(t, 109 * 512)).toMatchObject({ unit: 5, free: true, colorIndex: 0 });
     expect(attrAtOffset(t, 109 * 512).ownerPath).toBeUndefined();
+  });
+  it("colours a journal region COLOR_JOURNAL and never treats its sectors as units", () => {
+    expect(COLOR_JOURNAL).toBe(11);
+    const journal = { name: "journal", sectors: { start: 200, end: 300 }, kind: "journal" as const };
+    expect(defaultColorForRegion(journal)).toBe(COLOR_JOURNAL);
+    // The same disk with a journal carved out of the data region: its sectors map to clusters
+    // in the unit arithmetic, but attribution keys units off `data` regions only.
+    const split = [...layout.slice(0, 4), { name: "data", sectors: { start: 97, end: 200 }, kind: "data" as const }, journal, { name: "data", sectors: { start: 300, end: 32768 }, kind: "data" as const }];
+    const tj = buildAttribution(space, split, owners);
+    expect(space.unitOfSector(250)).toBeDefined();
+    expect(attrAtSector(tj, 250)).toEqual({ regionKind: "journal", regionName: "journal", sector: 250, free: false, colorIndex: COLOR_JOURNAL });
+  });
+  it("gives an indirect owner row its path's hue and reports the role", () => {
+    const withRole: UnitOwner[] = [
+      { unit: 5, path: "/BIG", isDir: false, firstUnit: 5, role: "data" },
+      { unit: 6, path: "/BIG", isDir: false, firstUnit: 5, role: "indirect" },
+    ];
+    const tr = buildAttribution(space, layout, withRole);
+    expect(attrAtSector(tr, 113)).toMatchObject({ unit: 6, ownerPath: "/BIG", role: "indirect", colorIndex: colorIndexForPath("/BIG") });
+    expect(attrAtSector(tr, 109)).toMatchObject({ unit: 5, role: "data", colorIndex: colorIndexForPath("/BIG") });
+    expect(attrAtSector(t, 97).role).toBeUndefined(); // FAT rows carry no role
   });
   it("file hues are stable and in range", () => {
     const i = colorIndexForPath("/A.TXT");

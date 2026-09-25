@@ -17,18 +17,35 @@
  * - `df()` returns generic keys; the shell derives the printed keys from the noun:
  *   `${unit.singular}Size` and `unit.plural`. FAT prints `clusterSize` and `clusters`, so
  *   `tests/shell/read-commands.test.ts` is unchanged.
- * - The address help is composed generically in `shell/addr.ts`:
- *   `addresses: 0x1f (hex), 512 (decimal), s:65 (sector), ${letter}:3 (${singular})`,
- *   which for FAT is byte-identical to the old `ADDR_HELP`.
+ * - The sector noun rule. `sector` is what the chrome calls one disk sector (FAT "sector",
+ *   ext "block"); `unit` is the allocation unit (FAT "cluster", ext "block"). Where the two
+ *   coincide (`unitIsSector`) the chrome shows one name: the Inspector folds its unit row
+ *   into the address row, and the address help and HexView's `g` prompt list one form.
+ * - The address help is composed generically in `shell/addr.ts` from the two nouns:
+ *   `addresses: 0x1f (hex), 512 (decimal), ${sector.letter}:65 (${sector.singular})`, then
+ *   `, ${unit.letter}:3 (${unit.singular})` when the unit is not the sector, then the
+ *   adapter's `extraAddrHelp`. For FAT that is byte-identical to the old `ADDR_HELP`.
+ * - Journal blocks are never units. Attribution keys units off `data` regions only; a
+ *   family's journal lies in regions of kind `journal` (coloured `COLOR_JOURNAL`), and those
+ *   blocks never appear in `owners`. A journal block outside those regions (ext's pointer
+ *   blocks, in a data region) is an owner row with a fixed `color`, so it reads as the
+ *   journal's rather than free.
  * - Reactivity rule. Adapter caches are plain fields, not runes, so every `$derived` that
  *   calls an adapter method reads `volume.epoch` first (see state/volume.svelte.ts).
  */
-import type { Volume, Region, RegionKind, Annotation } from "../lib/wasm";
+import type { Volume, Region, RegionKind, Annotation, OpRecord } from "../lib/wasm";
 import type { Interval } from "../core/intervals";
 import type { ColorIndex } from "../core/palette";
 import type { ByteChangeLike } from "../core/patch";
 
-export type FsFamilyId = "fat16";                       // ext adds "ext3"
+export type FsFamilyId = "fat16";                       // ext adds "ext"
+
+/** A noun and its shell address letter: how the chrome names one disk sector. */
+export interface AddrVocab {
+  singular: string;   // "sector"
+  plural: string;     // "sectors"
+  letter: string;     // "s": the shell address prefix (s:N, which every family also accepts)
+}
 
 /** The allocation-unit noun: how the UI, shell, and lessons name a data unit. */
 export interface UnitVocab {
@@ -36,14 +53,19 @@ export interface UnitVocab {
   plural: string;     // "clusters"
   letter: string;     // "c": the shell address prefix (c:N)
   first: number;      // first valid unit index (FAT: 2)
+  fileParts: string;  // the Lesson card's clause after a path: "its entry, chain, and clusters"
 }
 
-/** One unit -> the path that owns it. Generic mirror of wasm's ClusterOwner. */
-export interface UnitOwner { unit: number; path: string; isDir: boolean; firstUnit: number }
+/** One unit -> the path that owns it. Generic mirror of wasm's ClusterOwner. `role` names what
+ *  the unit holds for its path where the family tells them apart (ext: a data block, a
+ *  directory block, or an indirect pointer block); FAT leaves it undefined. An indirect row
+ *  takes its path's hue like a data row. */
+export interface UnitOwner { unit: number; path: string; isDir: boolean; firstUnit: number; role?: "data" | "directory" | "indirect" }
 
 /** Pure unit arithmetic over one geometry. Buildable without a Volume. */
 export interface UnitSpace {
   readonly unit: UnitVocab;
+  readonly sector: AddrVocab;                           // FAT: sector / s; ext: block / b
   readonly unitCount: number;                           // FAT: clusterCount
   readonly unitSize: number;                            // bytes per unit
   readonly sectorSize: number;                          // vol.sectorSize()
@@ -55,6 +77,12 @@ export interface UnitSpace {
   colorForRegion(region: Region): ColorIndex;           // FAT: "FAT 1" gets COLOR_TABLE_ALT
 }
 
+/** True when the family's allocation unit is its sector (ext: both are the block), so the
+ *  chrome names it once. Compares the singular nouns. */
+export function unitIsSector(space: Pick<UnitSpace, "unit" | "sector">): boolean {
+  return space.unit.singular === space.sector.singular;
+}
+
 /** One row of the Inspector's "Selected file" trace. */
 export interface TraceRow { label: string; offset: number | null }   // null = muted text, no jump
 /** stat facts the shell prints as key/value after the generic ones. Keys are the family's. */
@@ -62,12 +90,69 @@ export type StatFacts = Record<string, string | number | number[]>;
 export interface DfFacts { unitSize: number; units: number; used: number; free: number }
 
 export interface MkfsFlag { long: string; desc: string; kind: "int" | "str"; option: string }
-export interface MkfsSpec { summary: string; done: string; flags: MkfsFlag[] }
+/** The shell's `mkfs` for one family. It has no done line: the shell composes
+ *  `formatted /dev/hda as ${vol.fsType()}; the timeline was cleared` from the new volume, so a
+ *  family with two types (ext2, ext3) names the one it made. */
+export interface MkfsSpec { summary: string; flags: MkfsFlag[] }
+
+/** Where an armed crash stops the next journaled change: before its commit block is written,
+ *  after the commit but before the checkpoint, or part way through the checkpoint. The strings
+ *  are wasm's `armCrash` phases. */
+export type CrashPhase = "before_commit" | "after_commit" | "during_checkpoint";
+export const CRASH_PHASES: readonly CrashPhase[] = ["before_commit", "after_commit", "during_checkpoint"];
+export const CRASH_PHASE_LABELS: Record<CrashPhase, string> = {
+  before_commit: "before commit",
+  after_commit: "after commit",
+  during_checkpoint: "during checkpoint",
+};
+
+/** The journal's header facts: a structural twin of wasm's `JournalInfo`, declared here so
+ *  nothing outside a family's folder imports an ext-only wasm type. */
+export interface JournalState {
+  mode: "ordered" | "data";
+  sequence: number;
+  head: number;
+  start: number;
+  maxlen: number;
+  firstBlock: number;
+  maxTransaction: number;
+  needsRecovery: boolean;
+}
+
+/** One block of the journal ring, in reading order: a structural twin of wasm's
+ *  `JournalBlock`. `home` is the block a copy is written back to; `stale` marks a transaction
+ *  already checkpointed. */
+export interface JournalRingBlock {
+  index: number;
+  block: number;
+  kind: "superblock" | "descriptor" | "copy" | "commit" | "revoke" | "unused";
+  tid: number | null;
+  home: number | null;
+  escaped: boolean | null;
+  stale: boolean;
+}
+
+/**
+ * The optional journal part of an adapter (ext3). `state()` answers from the adapter's cache,
+ * refreshed with it; `blocks()` reads the volume, so callers memoise it per `volume.epoch`.
+ * Arming and disarming are not recorded operations. `recover()` runs nothing through the
+ * timeline itself: it returns the volume's op for the caller to run, as
+ * `volume.run(() => journal.recover())` or `host.run(() => journal.recover())`.
+ */
+export interface JournalCapability {
+  state(): JournalState;
+  blocks(): JournalRingBlock[];
+  arm(phase: CrashPhase): void;
+  disarm(): void;
+  phase(): CrashPhase | null;
+  recover(): OpRecord;
+}
 
 /** Static, per family: what exists before a volume of that family does. */
 export interface FsFamily<O = unknown> {
   readonly id: FsFamilyId;
-  readonly name: string;                                // "FAT16"; equals Volume.fsType() of format()'s result
+  readonly name: string;                                // the family's display name: "FAT16"
+  readonly fsTypes: readonly string[];                  // the Volume.fsType() strings it binds: ["FAT16"]
   format(options?: O): Volume;                          // the one place Volume.formatFat16 is called
   bind(vol: Volume): FsAdapter;                         // caller has matched fsType; reads the caches once
   readonly mkfs: MkfsSpec;
@@ -80,7 +165,7 @@ export interface FsFamily<O = unknown> {
  */
 export interface FsAdapter extends UnitSpace {
   readonly id: FsFamilyId;
-  readonly name: string;
+  readonly name: string;                                // the bound volume's type: "FAT16"
   readonly family: FsFamily;
   readonly vol: Volume;
 
@@ -98,16 +183,27 @@ export interface FsAdapter extends UnitSpace {
 
   stat(path: string): StatFacts;                        // FAT: firstCluster, chain, clusters, entryOffset, entrySlots, fatEntryOffset, dataOffset
   df(): DfFacts;
+  /** The units the ribbon counts free. FAT: the units no owner row claims, the count the ribbon
+   *  always made (a bad cluster or a lost chain stays free there). ext: `df().free`, because the
+   *  inode tables, the bitmaps, and the journal have no owner rows and are not free. */
+  freeUnits(): number;
   trace(path: string): TraceRow[];                      // Inspector rows, family wording
   describeUnit(unit: number): string | null;            // Inspector: "FAT: next -> 4"
   annotateSector(sector: number): Annotation[];         // FAT: annotateSectorWith(sector, cached owners)
 
   /** Family address forms beyond s:N / hex / decimal / <letter>:N (ext: i:N). undefined = not ours. */
   parseAddr?(v: string): number | undefined;
+  /** What `parseAddr` adds to the address help, appended as is (ext: ", i:11 (inode)"). */
+  readonly extraAddrHelp?: string;
   namesMatch(a: string, b: string): boolean;            // FAT: case-insensitive (vfs.canonicalize)
 
   /** True when the op may have moved regions; the store re-reads layout. FAT: any change starting below 512. */
   touchesMetadata(changes: ByteChangeLike[]): boolean;
   readonly corruptNote: string;                         // DirTree's note while the volume is corrupt
   readonly notes: { rewrite: string; partialWrite: string };  // the write --append and dd log clauses
+
+  /** True while the volume holds an unfinished journal transaction; FAT and ext2: always false. */
+  readonly needsRecovery: boolean;
+  /** Present only for a family with a journal (ext3); drives the Journal panel, `crash`, and `recover`. */
+  readonly journal?: JournalCapability;
 }

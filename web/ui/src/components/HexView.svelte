@@ -7,6 +7,7 @@
   import { BYTES_PER_ROW, buildSegments, offsetToRow, rowAt, rowToOffset, totalRows, type Segment } from "../core/segments";
   import { contains } from "../core/intervals";
   import { parseAddr } from "../shell/addr";
+  import { unitIsSector } from "../fs/adapter";
   import HexRow from "./HexRow.svelte";
 
   const ROW_H = 17, OVERSCAN = 10, MIN_RUN = 8, MAX_SPACER = 10_000_000;
@@ -59,7 +60,7 @@
     const { segment, rowInSegment } = rowAt(segments, r);
     if (segment.kind === "gap") {
       const bytes = segment.sectorCount * volume.sectorSize;
-      return { kind: "gap" as const, key: r, segment, text: `· · · ${segment.sectorCount.toLocaleString()} empty sectors (${fmtBytes(bytes)}) · · ·` };
+      return { kind: "gap" as const, key: r, segment, text: `· · · ${segment.sectorCount.toLocaleString()} empty ${volume.adapter.sector.plural} (${fmtBytes(bytes)}) · · ·` };
     }
     const offset = segment.startSector * volume.sectorSize + rowInSegment * BYTES_PER_ROW;
     const attr = attrAtOffset(volume.attribution, offset);
@@ -80,9 +81,9 @@
     const sectorStart = offset % volume.sectorSize === 0;
     // `unitStartsAt` is an adapter method (plain caches): `rowsInView`, the only caller of
     // `describeRow`, reads `volume.epoch` first.
-    const { unit } = volume.adapter;
+    const { unit, sector } = volume.adapter;
     const unitStart = attr.unit !== undefined && sectorStart && volume.adapter.unitStartsAt(attr.sector);
-    const label = unitStart ? `${unit.singular} ${attr.unit}${attr.ownerPath ? ` · ${attr.ownerPath}` : ""}` : sectorStart ? `sector ${attr.sector}${attr.unit === undefined ? ` · ${attr.regionName}` : ""}` : "";
+    const label = unitStart ? `${unit.singular} ${attr.unit}${attr.ownerPath ? ` · ${attr.ownerPath}` : ""}` : sectorStart ? `${sector.singular} ${attr.sector}${attr.unit === undefined ? ` · ${attr.regionName}` : ""}` : "";
     return { kind: "row" as const, key: r, offset, attr, cells, sectorStart, unitStart, label };
   }
 
@@ -102,10 +103,18 @@
       case "ArrowUp": return move(-BYTES_PER_ROW); case "ArrowDown": return move(BYTES_PER_ROW);
       case "PageUp": return move(-Math.floor(height / ROW_H) * BYTES_PER_ROW); case "PageDown": return move(Math.floor(height / ROW_H) * BYTES_PER_ROW);
       case "Home": return move(-cur); case "End": return move(max - cur);
-      case "g": { const { letter, singular } = volume.adapter.unit; const v = globalThis.prompt(`Jump to offset (0x…, decimal, s:sector, ${letter}:${singular})`); if (v) jump(v); return; }
+      case "g": { const v = globalThis.prompt(`Jump to offset (${jumpForms()})`); if (v) jump(v); return; }
       case "s": selection.stringsOn = !selection.stringsOn; return;
     }
   }
+  /** The `g` prompt's forms: FAT `0x…, decimal, s:sector, c:cluster`; where the unit is the
+   *  sector (ext) the one noun: `0x…, decimal, b:block`. */
+  function jumpForms(): string {
+    const { sector, unit } = volume.adapter;
+    const unitForm = unitIsSector(volume.adapter) ? "" : `, ${unit.letter}:${unit.singular}`;
+    return `0x…, decimal, ${sector.letter}:${sector.singular}${unitForm}`;
+  }
+
   function jump(v: string) {
     let off: number;
     try { off = parseAddr(v, volume.adapter); } catch { return; } // the prompt ignores bad input silently, as before

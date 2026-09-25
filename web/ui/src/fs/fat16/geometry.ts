@@ -1,7 +1,7 @@
 import type { Geometry, Region } from "../../lib/wasm";
 import { defaultColorForRegion } from "../../core/attribution";
 import { COLOR_TABLE_ALT, type ColorIndex } from "../../core/palette";
-import type { UnitSpace, UnitVocab } from "../adapter";
+import type { AddrVocab, UnitSpace, UnitVocab } from "../adapter";
 
 export function clusterOfSector(g: Geometry, sector: number): number | undefined {
   if (sector < g.firstDataSector) return undefined;
@@ -16,7 +16,10 @@ export function clusterByteRange(g: Geometry, cluster: number): { start: number;
 }
 
 /** How FAT names its allocation unit: the shell writes `c:N`, and data clusters start at 2. */
-export const FAT_UNIT: UnitVocab = { singular: "cluster", plural: "clusters", letter: "c", first: 2 };
+export const FAT_UNIT: UnitVocab = { singular: "cluster", plural: "clusters", letter: "c", first: 2, fileParts: "its entry, chain, and clusters" };
+
+/** How FAT names one disk sector: the shell writes `s:N`. */
+export const FAT_SECTOR: AddrVocab = { singular: "sector", plural: "sectors", letter: "s" };
 
 /** FAT's one colour rule of its own: the mirror copy "FAT 1" gets a lighter violet so "the FAT
  *  is written twice" is visible in the ribbon and the dump's owner stripe. Everything else is
@@ -30,6 +33,7 @@ export function fatColorForRegion(region: Region): ColorIndex {
 export function fat16Space(g: Geometry): UnitSpace {
   return {
     unit: FAT_UNIT,
+    sector: FAT_SECTOR,
     unitCount: g.clusterCount,
     unitSize: g.bytesPerSector * g.sectorsPerCluster,
     sectorSize: g.bytesPerSector,

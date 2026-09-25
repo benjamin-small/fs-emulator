@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { describeFocus } from "../src/core/lesson";
 import { layout, space } from "./fixtures/geometry";
+import type { UnitSpace } from "../src/fs/adapter";
 
 /** The panel's `regionNameAt`, which reads the attribution table; the layout fixture is enough here. */
 const regionNameAt = (sector: number): string =>
@@ -44,6 +45,18 @@ describe("describeFocus", () => {
     expect(describe_({ path: "/A.TXT", unit: 2, strings: true })).toBe(
       "Files: /A.TXT, its entry, chain, and clusters; cluster 2 in the data region (offset 0xc200); printable strings are highlighted",
     );
+  });
+
+  it("takes the file clause and the sector noun from the space (a family whose unit is its block)", () => {
+    const blocks: UnitSpace = {
+      ...space,
+      unit: { singular: "block", plural: "blocks", letter: "b", first: 1, fileParts: "its inode, block map, and blocks" },
+      sector: { singular: "block", plural: "blocks", letter: "b" },
+    };
+    const ext = (focus: Parameters<typeof describeFocus>[0]) => describeFocus(focus, blocks, regionNameAt);
+    expect(ext({ path: "/a" })).toBe("Files: /a, its inode, block map, and blocks");
+    expect(ext({ sector: 65 })).toBe("Block 65, root directory");
+    expect(ext({ path: "/a", sector: 1 })).toBe("Files: /a, its inode, block map, and blocks; block 1, FAT 0");
   });
 
   it("is null when there is nothing to point at", () => {

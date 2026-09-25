@@ -1,11 +1,13 @@
 import type { Region, RegionKind } from "../lib/wasm";
 import type { UnitOwner, UnitSpace } from "../fs/adapter";
-import { COLOR_BOOT, COLOR_DIR, COLOR_FREE, COLOR_TABLE, colorIndexForPath, type ColorIndex } from "./palette";
+import { COLOR_BOOT, COLOR_DIR, COLOR_FREE, COLOR_JOURNAL, COLOR_TABLE, colorIndexForPath, type ColorIndex } from "./palette";
 
 export type { ColorIndex };
 export interface Attr {
   regionKind: RegionKind; regionName: string; sector: number;
   unit?: number; ownerPath?: string; isDir?: boolean; free: boolean; colorIndex: ColorIndex;
+  /** The owner row's role, where the family sets one (ext: "indirect" for a pointer block). */
+  role?: UnitOwner["role"];
 }
 /** Byte ownership for one epoch. `ownerByUnit` and `colorByUnit` are indexed by unit number and
  *  have `space.unit.first + space.unitCount` rows (FAT: `clusterCount + 2`), so the rows below
@@ -42,6 +44,7 @@ export function defaultColorForRegion(region: Region): ColorIndex {
     case "allocationTable": return COLOR_TABLE;
     case "directory": return COLOR_DIR;
     case "data": return COLOR_FREE;
+    case "journal": return COLOR_JOURNAL;
     default: return COLOR_BOOT;
   }
 }
@@ -55,7 +58,7 @@ export function attrAtSector(t: AttributionTable, sector: number): Attr {
   const idx = t.ownerByUnit[unit];
   if (idx < 0) return { ...base, unit, free: true, colorIndex: COLOR_FREE };
   const o = t.owners[idx];
-  return { ...base, unit, ownerPath: o.path, isDir: o.isDir, free: false, colorIndex: t.colorByUnit[unit] };
+  return { ...base, unit, ownerPath: o.path, isDir: o.isDir, role: o.role, free: false, colorIndex: t.colorByUnit[unit] };
 }
 
 export function attrAtOffset(t: AttributionTable, offset: number): Attr {

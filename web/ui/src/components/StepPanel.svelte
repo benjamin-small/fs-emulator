@@ -5,6 +5,8 @@
 
   const rec = $derived(volume.history[volume.cursor]);
   const sectors = $derived(rec ? changedSectors(rec.changes, volume.sectorSize) : []);
+  // The buttons name a sector in the family's noun: "Sector 1" on FAT, "Block 1" on ext.
+  const noun = $derived.by(() => { volume.epoch; const s = volume.adapter.sector.singular; return s[0].toUpperCase() + s.slice(1); });
 </script>
 
 <!-- A strip under the top bar: heading, counter, op, sector buttons, and events flow left
@@ -19,7 +21,7 @@
     {#if sectors.length}
       <div class="btn-row">
         {#each sectors as sector (sector)}
-          <button onclick={() => selection.jumpTo(sector * volume.sectorSize)}>Sector {sector}</button>
+          <button onclick={() => selection.jumpTo(sector * volume.sectorSize)}>{noun} {sector}</button>
         {/each}
       </div>
     {/if}

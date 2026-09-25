@@ -249,6 +249,18 @@ describe("mkfs", () => {
     expect(host.selected.at(-1)).toBe("/D"); // mkfs selects nothing; the host adapter resets the selection
   });
 
+  it("names the type the new volume reports in its done line", async () => {
+    const { host, defs } = setup();
+    // A host whose freshly formatted volume reports another type: the line follows
+    // `fsType()`, not a string of the family's.
+    const format = host.format.bind(host);
+    host.format = (family, options) => {
+      format(family, options);
+      host.vol = Object.assign(Object.create(host.vol), { fsType: () => "ext3" });
+    };
+    expect((await call(defs, "mkfs")).log).toEqual(["formatted /dev/hda as ext3; the timeline was cleared"]);
+  });
+
   it("surfaces the core's geometry error with its code and leaves the volume alone", async () => {
     const { host, defs } = setup();
     const err = await callErr(defs, "mkfs", { flags: { sectors: 5 } });

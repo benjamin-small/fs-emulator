@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { Volume } from "../../src/lib/wasm";
 import { adapterFor } from "../../src/fs";
 import { asFat16, fat16, findEntrySlots } from "../../src/fs/fat16";
+import { unitIsSector, type FsAdapter } from "../../src/fs/adapter";
 import { buildTree } from "../../src/core/tree";
 import { scanZeroSectors } from "../../src/core/zeros";
 
@@ -33,11 +34,22 @@ describe("Fat16Adapter: identity and unit space", () => {
 
   it("names the unit and reports the default geometry", () => {
     const { fs } = fixture();
-    expect(fs.unit).toEqual({ singular: "cluster", plural: "clusters", letter: "c", first: 2 });
+    expect(fs.unit).toEqual({ singular: "cluster", plural: "clusters", letter: "c", first: 2, fileParts: "its entry, chain, and clusters" });
     expect(fs.unitCount).toBe(8167);
     expect(fs.unitSize).toBe(CLUSTER);
     expect(fs.sectorSize).toBe(512);
     expect(fs.totalSectors).toBe(32768);
+  });
+
+  it("names its sector apart from its cluster, and has no journal to recover", () => {
+    const { fs } = fixture();
+    expect(fs.sector).toEqual({ singular: "sector", plural: "sectors", letter: "s" });
+    expect(unitIsSector(fs)).toBe(false);
+    expect(fs.needsRecovery).toBe(false);
+    const generic: FsAdapter = fs; // the optional members, as the chrome and the shell see them
+    expect(generic.journal).toBeUndefined();
+    expect(generic.extraAddrHelp).toBeUndefined();
+    expect(fat16.fsTypes).toEqual(["FAT16"]);
   });
 
   it("does cluster arithmetic like the core", () => {

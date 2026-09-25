@@ -41,7 +41,7 @@ describe("DEFAULTS and MKFS", () => {
 
   it("keeps the shell's mkfs strings", () => {
     expect(MKFS.summary).toBe("Format /dev/hda as FAT16 (clears the timeline)");
-    expect(MKFS.done).toBe("formatted /dev/hda as FAT16; the timeline was cleared");
+    expect(MKFS).not.toHaveProperty("done"); // the shell composes the done line from fsType() (tests/shell/mutations.test.ts)
     expect(MKFS.flags.map((f) => [f.long, f.kind])).toEqual([
       ["sectors", "int"], ["spc", "int"], ["label", "str"], ["root-entries", "int"], ["fats", "int"], ["reserved", "int"],
     ]);

@@ -1,5 +1,6 @@
 import type { CommandArgs, CommandCtx, CommandDef, CommandSpec, FlagSpec, PosArg } from "./types";
 import type { DateTime, EntryInfo, Volume } from "../lib/wasm";
+import { hexAddr } from "../fs/base";
 import { SIZE_HELP, addrHelp, parseAddr, parseSize } from "./addr";
 import { decodeText, hasInput, toBytes } from "./bytes";
 import { DD_MAX_BYTES, parseDd, runDd } from "./dd";
@@ -57,8 +58,6 @@ export function fmtDate(d: DateTime | null): string {
   const p = (n: number) => String(n).padStart(2, "0");
   return `${d.year}-${p(d.month)}-${p(d.day)} ${p(d.hour)}:${p(d.minute)}:${p(d.second)}`;
 }
-
-export const hexAddr = (n: number): string => `0x${n.toString(16)}`;
 
 /** "cluster" -> "Cluster": a summary that opens with the family's unit noun. */
 const cap = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
@@ -464,7 +463,7 @@ function mutationCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
         const disk = host.vol.sectorCount() * host.vol.sectorSize();
         if (off + data.length > disk) throw new ShellError("/dev/hda: Range runs past the end of the disk", { code: "OutOfBounds" });
         fsCall(display, () => host.run((v) => v.writeRaw(off, data)));
-        ctx.log(`${data.length} bytes -> /dev/hda at 0x${off.toString(16)}`);
+        ctx.log(`${data.length} bytes -> /dev/hda at ${hexAddr(off)}`);
         return;
       }
       if (target.kind !== "volume") throw new ShellError(`${display}: Is a directory`);
@@ -579,8 +578,9 @@ function mutationCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
     },
   };
 
-  // The flags, their option keys, and both messages are the family's (`FsFamily.mkfs`); the
-  // spec is built once at registration, for the family mounted then.
+  // The flags, their option keys, and the summary are the family's (`FsFamily.mkfs`); the
+  // spec is built once at registration, for the family mounted then. The done line names the
+  // type the new volume reports, so one family with two types says which it made.
   const mkfs: CommandDef = {
     spec: {
       name: "mkfs",
@@ -588,7 +588,7 @@ function mutationCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
       flags: host.adapter.family.mkfs.flags.map((f) => F(f.long, f.desc, { shape: f.kind })),
     },
     fn: (args, _input, ctx) => {
-      const { flags, done } = host.adapter.family.mkfs;
+      const { flags } = host.adapter.family.mkfs;
       const options: Record<string, number | string> = {};
       for (const f of flags) {
         const v = args.flags[f.long];
@@ -603,7 +603,7 @@ function mutationCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
       fsCall("/dev/hda", () => host.format(host.adapter.id, options));
       vfs.cwd = "/mnt";
       host.setPrompt(promptFor(vfs.cwd));
-      ctx.log(done);
+      ctx.log(`formatted /dev/hda as ${host.vol.fsType()}; the timeline was cleared`);
     },
   };
 
@@ -673,7 +673,7 @@ function ddXxdCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
         case "raw": {
           warnIfRewound(host, ctx);
           const disk = host.vol.sectorCount() * host.vol.sectorSize();
-          if (base >= disk) throw new ShellError(`0x${base.toString(16)} is past the end of the disk (${disk} bytes)`);
+          if (base >= disk) throw new ShellError(`${hexAddr(base)} is past the end of the disk (${disk} bytes)`);
           const n = Math.min(len ?? host.vol.sectorSize(), disk - base);
           if (n > DD_MAX_BYTES) throw tooBig(n);
           bytes = host.vol.readRaw(base, n);
