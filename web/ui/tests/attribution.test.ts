@@ -1,14 +1,23 @@
 import { describe, expect, it } from "vitest";
 import { attrAtOffset, attrAtSector, buildAttribution, defaultColorForRegion } from "../src/core/attribution";
-import { COLOR_JOURNAL, COLOR_TABLE, COLOR_TABLE_ALT, colorIndexForPath } from "../src/core/palette";
+import { COLOR_BOOT, COLOR_DIR, COLOR_FREE, COLOR_JOURNAL, COLOR_TABLE, COLOR_TABLE_ALT, colorIndexForPath } from "../src/core/palette";
 import type { UnitOwner } from "../src/fs/adapter";
 import { clusterByteRange, clusterOfSector } from "../src/fs/fat16/geometry";
 import { geo, layout, space } from "./fixtures/geometry";
+import { geo as extGeo, layout as extLayout, space as extSpace } from "./fixtures/extGeometry";
 
 const owners: UnitOwner[] = [
   { unit: 2, path: "/DOCS", isDir: true, firstUnit: 2 },
   { unit: 3, path: "/DOCS/N.TXT", isDir: false, firstUnit: 3 },
   { unit: 4, path: "/DOCS/N.TXT", isDir: false, firstUnit: 3 },
+];
+
+/** Rows as the ext adapter makes them: the root directory, and a file with one data block and
+ *  its single-indirect block (the real /bigger.txt has 13 data blocks, 1113..1125). */
+const extOwners: UnitOwner[] = [
+  { unit: 69, path: "/", isDir: true, firstUnit: 69, role: "directory" },
+  { unit: 1113, path: "/bigger.txt", isDir: false, firstUnit: 1113, role: "data" },
+  { unit: 1126, path: "/bigger.txt", isDir: false, firstUnit: 1113, role: "indirect" },
 ];
 
 describe("attribution", () => {
@@ -70,6 +79,31 @@ describe("attribution", () => {
     expect(attrAtSector(tr, 113)).toMatchObject({ unit: 6, ownerPath: "/BIG", role: "indirect", colorIndex: colorIndexForPath("/BIG") });
     expect(attrAtSector(tr, 109)).toMatchObject({ unit: 5, role: "data", colorIndex: colorIndexForPath("/BIG") });
     expect(attrAtSector(t, 97).role).toBeUndefined(); // FAT rows carry no role
+  });
+  it("on ext: journal regions are never units, and metadata blocks are coloured by kind", () => {
+    const te = buildAttribution(extSpace, extLayout, extOwners);
+    expect(te.ownerByUnit.length).toBe(extGeo.totalBlocks); // unit.first (1) + unitCount (totalBlocks - 1)
+    expect(attrAtSector(te, 0)).toEqual({ regionKind: "boot", regionName: "boot block", sector: 0, free: false, colorIndex: COLOR_BOOT });
+    expect(attrAtSector(te, 3)).toMatchObject({ regionName: "block bitmap (group 0)", colorIndex: COLOR_TABLE });
+    expect(attrAtSector(te, 6)).toMatchObject({ regionName: "inode table (group 0)", colorIndex: COLOR_BOOT });
+    expect(attrAtSector(te, 8193)).toMatchObject({ regionName: "backup superblock (group 1)", colorIndex: COLOR_BOOT });
+    // Block 90 is a unit by arithmetic, and even an owner row claiming it would not make it one.
+    expect(extSpace.unitOfSector(90)).toBe(90);
+    const claimed = buildAttribution(extSpace, extLayout, [...extOwners, { unit: 90, path: "/x", isDir: false, firstUnit: 90, role: "data" }]);
+    for (const table of [te, claimed]) {
+      expect(attrAtSector(table, 90)).toEqual({ regionKind: "journal", regionName: "journal", sector: 90, free: false, colorIndex: COLOR_JOURNAL });
+    }
+    // The journal's pointer blocks 1106..1110 lie in the data region after it; the adapter keeps
+    // them out of `owners` (they are in `journalBlocks`), so attribution calls them free.
+    expect(attrAtSector(te, 1107)).toMatchObject({ regionName: "data (group 0)", unit: 1107, free: true, colorIndex: COLOR_FREE });
+  });
+  it("on ext: an indirect block takes its file's hue and reports its role", () => {
+    const te = buildAttribution(extSpace, extLayout, extOwners);
+    expect(attrAtSector(te, 69)).toMatchObject({ unit: 69, ownerPath: "/", isDir: true, role: "directory", colorIndex: COLOR_DIR, free: false });
+    expect(attrAtSector(te, 1113)).toMatchObject({ unit: 1113, ownerPath: "/bigger.txt", role: "data", colorIndex: colorIndexForPath("/bigger.txt") });
+    expect(attrAtSector(te, 1126)).toMatchObject({ unit: 1126, ownerPath: "/bigger.txt", isDir: false, role: "indirect", colorIndex: colorIndexForPath("/bigger.txt"), free: false });
+    expect(attrAtOffset(te, 1127 * 1024 + 5)).toMatchObject({ unit: 1127, free: true, colorIndex: COLOR_FREE });
+    expect(attrAtOffset(te, 1127 * 1024 + 5).role).toBeUndefined();
   });
   it("file hues are stable and in range", () => {
     const i = colorIndexForPath("/A.TXT");
