@@ -1,39 +1,17 @@
 <script lang="ts">
-  import ActionsPanel from "./components/ActionsPanel.svelte";
-  import DirTree from "./components/DirTree.svelte";
-  import HexView from "./components/HexView.svelte";
-  import Inspector from "./components/Inspector.svelte";
   import LessonPanel from "./components/LessonPanel.svelte";
-  import Ribbon from "./components/Ribbon.svelte";
   import ScenarioPanel from "./components/ScenarioPanel.svelte";
   import StatusLine from "./components/StatusLine.svelte";
-  import StepPanel from "./components/StepPanel.svelte";
-  import StringsPanel from "./components/StringsPanel.svelte";
   import TerminalPanel from "./components/TerminalPanel.svelte";
-  import Timeline from "./components/Timeline.svelte";
+  import WorkspaceScope from "./components/WorkspaceScope.svelte";
+  import WorkspaceView from "./components/WorkspaceView.svelte";
   import { inTextEntry } from "./core/keys";
-  import { PANELS } from "./fs/panels";
-  import { focusHistoryStep } from "./state/navigate.svelte";
-  import { scenarios } from "./state/scenarios.svelte";
   import { terminal } from "./state/terminal.svelte";
   import { theme } from "./state/theme.svelte";
-  import { volume } from "./state/volume.svelte";
+  import { workspaces } from "./state/workspace.svelte";
 
-  /** The map panel of the mounted volume's family (the FAT map, the block-group map), from the
-   *  panel registry; `volume.adapter` is re-bound on every format and load. The family's extra
-   *  panels follow it in order. */
-  const MapPanel = $derived(PANELS[volume.adapter.id].map);
-
-  /** Scrub to `n` and recenter the dump on what that step changed, like the Timeline's
-   *  own controls. Scrubbing is explicit navigation; running an operation is not, and
-   *  leaves the dump where it is. */
-  function step(n: number) {
-    volume.seek(n);
-    focusHistoryStep(n);
-  }
-
-  // `[` / `]` scrub the timeline and `/` jumps to the path field, all from anywhere
-  // except text entry, so typing a path or file content in the Actions panel isn't
+  // `[` / `]` scrub the active tab's timeline and `/` jumps to its path field, all from
+  // anywhere except text entry, so typing a path or file content in the Actions panel isn't
   // hijacked. `n` / `p` (scenario step) are handled by LessonPanel itself, which only
   // exists while a lesson is running. The terminal drawer counts as text
   // entry too (see core/keys.ts for the Ctrl-B chord case).
@@ -41,16 +19,17 @@
     // A modifier means the chord belongs to the browser or the OS (Cmd-` cycles windows on
     // macOS, Ctrl-[ is Escape in some setups), so none of these are ours to swallow.
     if (e.metaKey || e.ctrlKey || e.altKey || inTextEntry(e)) return;
+    const ws = workspaces.active;
     if (e.key === "`") {
       // Toggle the terminal from anywhere outside text entry. Inside the terminal the
       // key is typed (xterm cancels it), so closing is exit / Close / Escape on the bar.
       e.preventDefault();
       terminal.toggle();
-    } else if (e.key === "[") step(Math.max(0, volume.cursor - 1));
-    else if (e.key === "]") step(volume.cursor + 1);
+    } else if (e.key === "[") ws.goToStep(Math.max(0, ws.volume.cursor - 1));
+    else if (e.key === "]") ws.goToStep(ws.volume.cursor + 1);
     else if (e.key === "/") {
       e.preventDefault();
-      document.getElementById("action-path")?.focus();
+      document.getElementById(`action-path-${workspaces.activeId}`)?.focus();
     }
   }
 </script>
@@ -66,8 +45,14 @@
       title="Toggle the terminal (`)"
       onclick={() => terminal.toggle()}
     >Terminal</button>
-    <div id="scenario-slot"><ScenarioPanel /></div>
-    <StatusLine />
+    <!-- The picker and the status line belong to the active tab: rebuilt over its workspace on
+         a switch. -->
+    {#key workspaces.active}
+      <WorkspaceScope ws={workspaces.active}>
+        <div id="scenario-slot"><ScenarioPanel /></div>
+        <StatusLine />
+      </WorkspaceScope>
+    {/key}
     <button
       id="theme-toggle"
       type="button"
@@ -81,26 +66,17 @@
       <span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span>
     </button>
   </header>
-  <!-- The current step sits with the other controls, under the picker and the Terminal
-       button, so the right column is left to state and data (Lesson, Strings, Inspector). -->
-  <div id="step-slot" class="step-slot"><StepPanel /></div>
-  <div id="ribbon-slot" class="ribbon-slot"><Ribbon /></div>
-  <div class="grid">
-    <aside class="col left">
-      <DirTree />
-      <MapPanel />
-      {#each PANELS[volume.adapter.id].extras as Extra}<Extra />{/each}
-      <ActionsPanel />
-    </aside>
-    <main class="col center"><HexView /></main>
-    <aside class="col right">
-      <StringsPanel />
-      <Inspector />
-    </aside>
-  </div>
-  <footer id="timeline-slot"><Timeline /></footer>
+  <!-- One body per opened tab, kept mounted so each keeps its panels' state; only the active
+       one is shown. -->
+  {#each workspaces.opened as ws (ws.id)}
+    <div id="workspace-{ws.id}" class="workspace" hidden={!ws.active}><WorkspaceView {ws} /></div>
+  {/each}
   <TerminalPanel />
   <!-- Floating (position: fixed), so its place in the DOM is only reading order: after
-       everything it talks about. -->
-  {#if scenarios.current}<LessonPanel />{/if}
+       everything it talks about. One card for the page, over the active tab's lesson. -->
+  {#key workspaces.active}
+    <WorkspaceScope ws={workspaces.active}>
+      {#if workspaces.active.scenarios.current}<LessonPanel />{/if}
+    </WorkspaceScope>
+  {/key}
 </div>

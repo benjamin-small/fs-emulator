@@ -1,6 +1,8 @@
 <script lang="ts">
   import { all, scenarioGroups } from "../scenarios";
-  import { scenarios } from "../state/scenarios.svelte";
+  import { getWorkspace } from "../state/workspace.svelte";
+
+  const { volume, scenarios } = getWorkspace();
 
   // One <optgroup> per family (FAT16, then ext), in registry order. The first option overall is
   // still the FAT fundamentals, so the picker's default is unchanged.
@@ -12,7 +14,14 @@
   // of the right column: no overlay, nothing dimmed, nothing made inert.
   function startScenario() {
     const s = all.find((s) => s.id === selectedId);
-    if (s) scenarios.start(s);
+    if (!s) return;
+    // A lesson runs in its own family's tab; another family's lesson is refused onto the
+    // status line until the picker lists the tab's lessons only.
+    try {
+      scenarios.start(s);
+    } catch (e) {
+      volume.report(e);
+    }
   }
 </script>
 

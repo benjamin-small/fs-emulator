@@ -2,26 +2,32 @@ import { Volume, type FsError, type OpRecord, type Region } from "../lib/wasm";
 import { buildAttribution, type AttributionTable } from "../core/attribution";
 import { applyChanges, changedSectors } from "../core/patch";
 import { rescanSectors, scanZeroSectors } from "../core/zeros";
-import { DEFAULT_FAMILY, FAMILIES, adapterFor } from "../fs";
+import { FAMILIES, adapterFor, familyIdOf } from "../fs";
 import type { CrashPhase, FsAdapter, FsFamilyId } from "../fs/adapter";
-import { selection } from "./selection.svelte";
+import type { SelectionStore } from "./selection.svelte";
 
+/** One tab's disk: the mounted volume, its cached image, and its timeline. Every format and
+ *  every mount is of the tab's `family`; the constructor mounts that family's default disk. */
 export class VolumeStore {
-  vol = $state.raw<Volume>(FAMILIES[DEFAULT_FAMILY].format());
+  readonly family: FsFamilyId;
+  // `vol` and `adapter` are set by `adopt` in the constructor, before anything can read them.
+  vol = $state.raw<Volume>()!;
   /** The per-family view of `vol`: owners, tables, unit arithmetic. Its caches are plain
    *  fields, not runes, so a `$derived` that calls a method on it must read `epoch` first or
    *  it keeps answering from the previous op (the rule stated in fs/adapter.ts). `adopt`
    *  re-binds it for a new volume; `refreshMeta` re-reads it after every op. */
-  adapter = $state.raw<FsAdapter>(adapterFor(this.vol));
+  adapter = $state.raw<FsAdapter>()!;
   image = $state.raw<Uint8Array>(new Uint8Array(0));
   epoch = $state(0);
-  layout = $state.raw<Region[]>(this.vol.layout());
-  sectorSize = $state(this.vol.sectorSize());
-  totalSectors = $state(this.vol.sectorCount());
+  layout = $state.raw<Region[]>([]);
+  sectorSize = $state(0);
+  totalSectors = $state(0);
   zeros = $state.raw<Uint8Array>(new Uint8Array(0));
   history = $state.raw<OpRecord[]>([]);
   cursor = $state(-1);
   status = $state<{ text: string; code?: string } | null>(null);
+  /** News for the status line that is not an error; cleared with `status`. */
+  notice = $state<string | null>(null);
   /** The `CorruptImage` message while a raw write has left the on-disk metadata unparsable,
    *  `null` while mounted. Refreshed alongside the adapter, so it tracks the volume
    *  through every op, format, and load. */
@@ -40,12 +46,24 @@ export class VolumeStore {
   attribution: AttributionTable = $derived.by(() => { this.epoch; return buildAttribution(this.adapter, this.layout, this.adapter.owners); });
   atLatest = $derived(this.cursor === this.history.length - 1);
 
-  constructor() { this.adopt(this.vol); }
+  private readonly selection: SelectionStore;
+  /** Called after every adopt (a format or a mount): the workspace puts its shell back at /mnt. */
+  private readonly onAdopt: () => void;
+
+  constructor(family: FsFamilyId, selection: SelectionStore, onAdopt: () => void) {
+    this.family = family;
+    this.selection = selection;
+    this.onAdopt = onAdopt;
+    this.adopt(FAMILIES[family].format());
+  }
 
   /** Take over a fresh Volume: bind its adapter, full image copy, full scans, empty history.
-   *  The adapter is resolved into a local before any field is assigned, so a `fsType()` with
-   *  no registered adapter throws before the store is half-switched to the new volume. */
+   *  The family and the adapter are resolved before any field is assigned, so a `fsType()` of
+   *  another family, or with no registered adapter, throws before the store is half-switched
+   *  to the new volume. */
   private adopt(vol: Volume) {
+    const id = familyIdOf(vol.fsType());
+    if (id !== this.family) throw new Error(`this tab mounts ${this.family}, not ${id}`);
     const adapter = adapterFor(vol);
     this.vol = vol;
     this.adapter = adapter;
@@ -58,6 +76,7 @@ export class VolumeStore {
     this.cursor = -1;
     this.refreshMeta();
     this.epoch++;
+    this.onAdopt();
   }
 
   private refreshMeta() {
@@ -78,27 +97,36 @@ export class VolumeStore {
     try {
       if (phase === null) journal.disarm();
       else journal.arm(phase);
-    } catch (e) { this.fail(e); return false; }
+    } catch (e) { this.report(e); return false; }
     this.armedPhase = journal.phase();
     return true;
   }
 
-  /** A fresh volume of `family` (the current one by default) with that family's options. */
-  format(family: FsFamilyId = this.adapter.id, options?: unknown) {
+  /** A fresh volume of the tab's family with that family's options. `family` is kept for the
+   *  callers that name one (the Format forms, `mkfs`, a lesson step); another family is refused
+   *  into `status`, like any other format failure. */
+  format(family: FsFamilyId = this.family, options?: unknown) {
     try {
       if (!Object.hasOwn(FAMILIES, family)) throw new Error(`no filesystem family "${family}"`);
-      this.adopt(FAMILIES[family].format(options));
-      this.status = null;
-      selection.reset();
+      if (family !== this.family) throw new Error(`this tab formats ${this.family}, not ${family}`);
+      this.mount(FAMILIES[family].format(options));
     } catch (e) {
-      this.fail(e);
+      this.report(e);
     }
   }
 
-  /** Mount an image. An unregistered `fsType()` makes `adapterFor` throw, which lands in
-   *  `status` like any other load failure. */
+  /** Take over `vol` as the tab's disk, clearing the messages and the selection. Throws, and
+   *  leaves the store alone, when `vol` is another family's or no adapter handles its type. */
+  mount(vol: Volume) {
+    this.adopt(vol);
+    this.clearMessages();
+    this.selection.reset();
+  }
+
+  /** Mount an image. An unregistered or another family's `fsType()` makes `mount` throw, which
+   *  lands in `status` like any other load failure. */
   load(bytes: Uint8Array) {
-    try { this.adopt(Volume.fromImage(bytes)); this.status = null; selection.reset(); } catch (e) { this.fail(e); }
+    try { this.mount(Volume.fromImage(bytes)); } catch (e) { this.report(e); }
   }
 
   export(): Uint8Array { return this.vol.image(); }
@@ -107,7 +135,7 @@ export class VolumeStore {
   run(fn: (v: Volume) => OpRecord): OpRecord | null {
     if (!this.atLatest) this.backToNow();
     let rec: OpRecord;
-    try { rec = fn(this.vol); } catch (e) { this.fail(e); return null; }
+    try { rec = fn(this.vol); } catch (e) { this.report(e); return null; }
     applyChanges(this.image, rec.changes, "forward");
     rescanSectors(this.zeros, this.image, this.sectorSize, changedSectors(rec.changes, this.sectorSize));
     this.history = [...this.history, rec];
@@ -118,7 +146,7 @@ export class VolumeStore {
     // change (the core rejects that), so `sectorSize` and `zeros` stay valid.
     if (this.adapter.touchesMetadata(rec.changes)) this.layout = this.vol.layout();
     this.refreshMeta();
-    this.status = null;
+    this.clearMessages();
     this.epoch++;
     if (import.meta.env.DEV) this.checkInvariant();
     return rec;
@@ -139,15 +167,22 @@ export class VolumeStore {
     rescanSectors(this.zeros, this.image, this.sectorSize, touched);
     this.cursor = step;
     // The error belonged to the state being left behind; keep it off the new one.
-    this.status = null;
+    this.clearMessages();
     this.epoch++;
   }
 
   backToNow() { this.seek(this.history.length - 1); }
 
-  private fail(e: unknown) {
+  /** Put `e` (a wasm `FsError` or any Error) on the status line. */
+  report(e: unknown) {
     const err = e as Partial<FsError>;
     this.status = { text: err.message ?? String(e), code: err.code };
+  }
+
+  /** Clear the status line: the error and the notice. */
+  clearMessages() {
+    this.status = null;
+    this.notice = null;
   }
 
   private checkInvariant() {
@@ -159,5 +194,3 @@ export class VolumeStore {
     }
   }
 }
-
-export const volume = new VolumeStore();

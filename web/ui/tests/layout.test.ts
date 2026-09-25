@@ -17,6 +17,13 @@ describe("app.css layout guards", () => {
     expect(rule(".app")).toContain("grid-template-columns: minmax(0, 1fr)");
   });
 
+  it("lays a shown tab's body out in the app grid, and leaves a hidden one to the UA's rule", () => {
+    // Each tab's body sits in a `.workspace` wrapper; as a box it would be one grid item and the
+    // step strip, ribbon, grid, and footer would lose their rows. `:not([hidden])`, because an
+    // author `display` would override the UA's `[hidden] { display: none }`.
+    expect(rule(".workspace:not([hidden])")).toBe(" display: contents; ");
+  });
+
   it("gives the side terminal column an explicit width without redefining the main column", () => {
     const side = rule(".app.term-side");
     expect(side).toContain("grid-auto-columns: var(--term-w");

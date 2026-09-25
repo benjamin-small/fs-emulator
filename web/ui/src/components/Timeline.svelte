@@ -1,7 +1,9 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
-  import { focusHistoryStep } from "../state/navigate.svelte";
-  import { volume } from "../state/volume.svelte";
+  import { getWorkspace } from "../state/workspace.svelte";
+
+  const ws = getWorkspace();
+  const { volume } = ws;
 
   const PLAY_MS = 700;
   const PLAY_MS_REDUCED = 1500;
@@ -17,8 +19,7 @@
   // highlights its changes in place instead; the dump moves only for a step someone
   // picked here, for the `[`/`]` shortcuts, or for a click on the ribbon or the tree.
   function goTo(step: number) {
-    volume.seek(step);
-    focusHistoryStep(step);
+    ws.goToStep(step);
   }
 
   function reducedMotion(): boolean {

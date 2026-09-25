@@ -1,11 +1,11 @@
 <script lang="ts">
   import { cellRect, dashCell, dotCell, drawChain, outlineCell, prepareCanvas } from "../../core/grid";
   import { observeWidth } from "../../core/observeWidth";
-  import { layers } from "../../state/layers.svelte";
-  import { selection } from "../../state/selection.svelte";
-  import { volume } from "../../state/volume.svelte";
+  import { getWorkspace } from "../../state/workspace.svelte";
   import { CELL, FILL_FREE, GAP, HEADER, MAX_HEIGHT, bandHeader, blockAt, blockCaption, blockFills, blocksTouched, cellOf, clampScroll, clickPath, indirectBlocks, layoutBands, mapHeading, visibleRows, wrapHeader } from "./blockMap";
   import { asExt } from "./index";
+
+  const { volume, selection, layers } = getWorkspace();
 
   let canvas = $state<HTMLCanvasElement>();
   let wrap = $state<HTMLDivElement>();

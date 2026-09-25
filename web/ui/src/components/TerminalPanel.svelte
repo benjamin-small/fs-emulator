@@ -16,7 +16,7 @@
   import { MOUNT, Vfs, promptFor } from "../shell/vfs";
   import { terminal } from "../state/terminal.svelte";
   import { theme } from "../state/theme.svelte";
-  import { volume } from "../state/volume.svelte";
+  import { workspaces } from "../state/workspace.svelte";
 
   let mountEl = $state<HTMLDivElement>();
   let bt: BrowserTerminal | null = null;
@@ -80,10 +80,11 @@
       try {
         // Commands read live store fields through the host on every call; only what is fixed
         // at registration (the command set, its summaries and flag descriptions) follows the
-        // family, through the re-registration effect below.
-        const created = createStoreHost(close, (prefix) => term.setPrompt(prefix));
+        // family, through the re-registration effect below. The host is the active tab's
+        // workspace's (the page opens one workspace for now).
+        const created = createStoreHost(workspaces.active, close, (prefix) => term.setPrompt(prefix));
         registered = registerCommands(term, created, vfs);
-        registeredSet = commandSetOf(volume.adapter);
+        registeredSet = commandSetOf(workspaces.active.volume.adapter);
         // `>`, `>>` and `<` resolve through the same VFS the commands do, so
         // `echo hi > /mnt/A.TXT` is the journaled write `echo hi | write /mnt/A.TXT` is.
         term.setRedirectHandler(createRedirectHandler(created, vfs));
@@ -125,11 +126,12 @@
   // wasm Volume, and the directory the shell was sitting in no longer exists. `mkfs` resets
   // the cwd itself; the Actions panel's Format, a scenario step's `step.format`, and Load
   // image do not, so follow the volume here and put the shell back at /mnt with a matching
-  // prompt. `volume.vol` is the only tracked read: `seenVol` and `vfs.cwd` are plain fields,
-  // and the prompt call is untracked so this effect can never depend on what it writes.
+  // prompt. The active workspace's `volume.vol` is the only tracked read: `seenVol` and
+  // `vfs.cwd` are plain fields, and the prompt call is untracked so this effect can never
+  // depend on what it writes.
   let seenVol: Volume | null = null;
   $effect(() => {
-    const vol = volume.vol;
+    const vol = workspaces.active.volume.vol;
     if (vol === seenVol) return;
     const first = seenVol === null;
     seenVol = vol;
@@ -143,12 +145,12 @@
   // summaries and flag descriptions that name the family's nouns (`df`'s "Cluster usage",
   // the `b:65 (block)` address help) and whether `crash` and `recover` exist at all are fixed
   // then. So swap the whole set: unregister every name, register `createCommands` again over
-  // the same `vfs` (the working directory survives), and re-set the prompt. `volume.adapter`
-  // is the only tracked read; the terminal and the names are plain fields, and the work is
-  // untracked. Before the terminal exists there is nothing to swap: creation registers the
-  // set of the family mounted then.
+  // the same `vfs` (the working directory survives), and re-set the prompt. The active
+  // workspace's `volume.adapter` is the only tracked read; the terminal and the names are
+  // plain fields, and the work is untracked. Before the terminal exists there is nothing to
+  // swap: creation registers the set of the family mounted then.
   $effect(() => {
-    const set = commandSetOf(volume.adapter);
+    const set = commandSetOf(workspaces.active.volume.adapter);
     untrack(() => {
       if (!bt || !host || set === registeredSet) return;
       registered = registerCommands(bt, host, vfs, registered);

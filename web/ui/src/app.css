@@ -27,6 +27,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
    `--term-w`. It is placed explicitly in column 2, so the implicit column exists only while
    the drawer is rendered; hidden, it adds neither a track nor a gap. */
 .app.term-side { grid-auto-columns: var(--term-w, 500px); }
+/* A tab's body (App.svelte's `.workspace` wrapper) adds no box: its step strip, ribbon, grid,
+   and footer are the app grid's rows. `:not([hidden])`, since an author `display` would
+   override the UA's `[hidden] { display: none }` and show every tab at once. */
+.workspace:not([hidden]) { display: contents; }
 .app.term-side > .terminal-drawer { grid-column: 2; grid-row: 1 / -1; position: relative; }
 .topbar { display: flex; align-items: center; gap: 16px; }
 .topbar h1 { font: 500 18px var(--font-display); margin: 0; }

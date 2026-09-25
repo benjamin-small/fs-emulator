@@ -5,9 +5,9 @@
   import { metaLabel } from "../core/legend";
   import { colorIndexForPath } from "../core/palette";
   import { buildTree, type TreeNode } from "../core/tree";
-  import { layers } from "../state/layers.svelte";
-  import { selection } from "../state/selection.svelte";
-  import { volume } from "../state/volume.svelte";
+  import { getWorkspace } from "../state/workspace.svelte";
+
+  const { volume, selection, layers } = getWorkspace();
 
   const HEIGHT = 28;
   const FLASH_MS = 300;

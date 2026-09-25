@@ -1,9 +1,11 @@
 <script lang="ts">
-  import { volume } from "../state/volume.svelte";
-  import { selection } from "../state/selection.svelte";
   import { FAMILIES } from "../fs";
   import type { FsFamilyId } from "../fs/adapter";
   import { PANELS } from "../fs/panels";
+  import { getWorkspace } from "../state/workspace.svelte";
+
+  const ws = getWorkspace();
+  const { volume, selection } = ws;
 
   /** The family the Format details will format: the mounted one until the Filesystem select
    *  picks another, and back to the mounted one whenever that changes (a format, a load). */
@@ -81,7 +83,7 @@
   <fieldset disabled={!volume.atLatest}>
     <label class="field">
       Path
-      <input id="action-path" class="mono" type="text" bind:value={path} />
+      <input id="action-path-{ws.id}" class="mono" type="text" bind:value={path} />
     </label>
     <label class="field">
       Content

@@ -1,8 +1,9 @@
 <script lang="ts">
-  import { selection } from "../../state/selection.svelte";
-  import { volume } from "../../state/volume.svelte";
+  import { getWorkspace } from "../../state/workspace.svelte";
   import { CLUSTER_SIZES, DEFAULTS, SIZES, checkFormat } from "./format";
   import type { Fat16FormatOptions } from "./index";
+
+  const { volume, selection } = getWorkspace();
 
   // Mirror the mounted default disk (16 MB, 4 sectors per cluster) so opening the
   // form shows the geometry that is already on screen.

@@ -191,11 +191,12 @@ describe("re-registration when the family changes", () => {
     expect([...registered.keys()]).toEqual(fat);
     expect(fat).not.toContain("crash");
 
-    await call(createCommands(host, vfs), "mkfs", { flags: { type: "ext3" } });
-    await call(createCommands(host, vfs), "mkdir", { positionals: ["/mnt/d"] });
+    // Each tab formats its own family only, so the ext3 set comes from an ext host.
+    const ext = makeHost(Volume.formatExt3(undefined));
+    await call(createCommands(ext, vfs), "mkdir", { positionals: ["/mnt/d"] });
     vfs.cwd = "/mnt/d";
     calls.length = 0;
-    const ext3 = registerCommands(term, host, vfs, fat);
+    const ext3 = registerCommands(term, ext, vfs, fat);
     expect(calls.slice(0, fat.length)).toEqual(fat.map((n) => `-${n}`)); // every old name goes first
     expect(calls.slice(fat.length)).toEqual(ext3.map((n) => `+${n}`));
     expect([...registered.keys()]).toEqual(ext3);
@@ -204,13 +205,12 @@ describe("re-registration when the family changes", () => {
     expect(pwd.value).toBe("/mnt/d"); // the new definitions share the old working directory
 
     // ext3 to ext2 keeps the family but loses the journal: crash and recover go.
-    host.format("ext", { variant: "ext2" });
-    const ext2 = registerCommands(term, host, vfs, ext3);
+    ext.format("ext", { variant: "ext2" });
+    const ext2 = registerCommands(term, ext, vfs, ext3);
     expect(ext2).toEqual(ext3.slice(0, -2));
     expect(registered.has("crash")).toBe(false);
     expect(registered.has("recover")).toBe(false);
 
-    host.format("fat16");
     expect(registerCommands(term, host, vfs, ext2)).toEqual(fat);
     expect(registered.has("crash")).toBe(false);
   });

@@ -5,8 +5,9 @@
   import { inTextEntry } from "../core/keys";
   import { describeFocus } from "../core/lesson";
   import { lessonWindow } from "../state/lessonWindow.svelte";
-  import { scenarios } from "../state/scenarios.svelte";
-  import { volume } from "../state/volume.svelte";
+  import { getWorkspace } from "../state/workspace.svelte";
+
+  const { volume, scenarios } = getWorkspace();
 
   /** Below this viewport width the card docks to the bottom of the screen instead of
    *  floating: there is no room to drag it anywhere useful. Same breakpoint as the
@@ -87,14 +88,15 @@
     if (lessonWindow.pos) lessonWindow.setPos(clampPosition(lessonWindow.pos, cardSize(), viewport));
   }
 
-  // The default spot is measured from the layout (the grid's top edge), after the card has
-  // its size; re-measured whenever the viewport changes and the user has not moved it yet.
+  // The default spot is measured from the layout (the shown tab's grid's top edge; a hidden
+  // tab's grid has no box), after the card has its size; re-measured whenever the viewport
+  // changes and the user has not moved it yet.
   $effect(() => {
     void viewport;
     if (lessonWindow.pos || docked) return;
     void tick().then(() => {
       if (lessonWindow.pos) return;
-      const gridTop = document.querySelector(".grid")?.getBoundingClientRect().top ?? 96;
+      const gridTop = document.querySelector(".workspace:not([hidden]) .grid")?.getBoundingClientRect().top ?? 96;
       fallback = defaultPosition(cardSize(), viewport, Math.round(gridTop));
     });
   });

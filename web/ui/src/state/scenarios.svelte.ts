@@ -1,8 +1,8 @@
 import type { OpRecord, Volume } from "../lib/wasm";
 import type { FsAdapter, FsFamilyId } from "../fs/adapter";
 import { ScenarioCursor } from "../core/scenarioCursor";
-import { selection } from "./selection.svelte";
-import { volume } from "./volume.svelte";
+import type { SelectionStore } from "./selection.svelte";
+import type { VolumeStore } from "./volume.svelte";
 
 export interface StepFocus {
   offset?: number;
@@ -35,7 +35,7 @@ export interface Scenario<O = unknown> {
   steps: Step<O>[];
 }
 
-/** Drives `volume`/`selection` through a scenario's steps, one at a time. */
+/** Drives a tab's `volume`/`selection` through a scenario's steps, one at a time. */
 export class ScenarioRunner {
   current = $state<Scenario | null>(null);
   index = $state(-1);
@@ -48,10 +48,20 @@ export class ScenarioRunner {
   /** Step bookkeeping (which steps have run, and the volume cursor each one left). */
   private cursor: ScenarioCursor | null = null;
 
-  /** Begin `s` from a clean default disk of its family, then apply its first step. */
+  private readonly volume: VolumeStore;
+  private readonly selection: SelectionStore;
+
+  constructor(volume: VolumeStore, selection: SelectionStore) {
+    this.volume = volume;
+    this.selection = selection;
+  }
+
+  /** Begin `s` from a clean default disk of its family, then apply its first step. A lesson
+   *  runs in its own family's tab only. */
   start(s: Scenario) {
-    volume.format(s.family); // also resets the selection
-    selection.reset();
+    if (s.family !== this.volume.family) throw new Error(`lesson ${s.id} is for ${s.family}; this tab is ${this.volume.family}`);
+    this.volume.format(s.family); // also resets the selection
+    this.selection.reset();
     this.current = s;
     this.index = -1;
     this.cursor = new ScenarioCursor(s.steps.length);
@@ -68,12 +78,12 @@ export class ScenarioRunner {
     this.index = this.cursor.index;
     const step = this.current.steps[this.index];
     if ("seekTo" in plan) {
-      volume.seek(plan.seekTo);
+      this.volume.seek(plan.seekTo);
       this.applyFocus(step);
       return;
     }
     this.applyStep(step);
-    this.cursor.advance(volume.cursor);
+    this.cursor.advance(this.volume.cursor);
   }
 
   /** Step back: show the disk as it was after the previous step and re-apply its focus.
@@ -84,7 +94,7 @@ export class ScenarioRunner {
     if (this.current.steps[this.index].format) return;
     const target = this.cursor.back();
     this.index = this.cursor.index;
-    if (target !== null) volume.seek(target);
+    if (target !== null) this.volume.seek(target);
     this.applyFocus(this.current.steps[this.index]);
   }
 
@@ -93,30 +103,28 @@ export class ScenarioRunner {
     this.index = -1;
     this.cursor = null;
     this.focus = null;
-    selection.showRemnants = false;
-    selection.stringsOn = false;
+    this.selection.showRemnants = false;
+    this.selection.stringsOn = false;
   }
 
   private applyStep(step: Step) {
     // `next()` is the only caller and returns early without a current scenario.
-    if (step.format) volume.format(this.current!.family, step.format);
-    if (step.action) volume.run((v) => step.action!(v, volume.adapter));
+    if (step.format) this.volume.format(this.current!.family, step.format);
+    if (step.action) this.volume.run((v) => step.action!(v, this.volume.adapter));
     this.applyFocus(step);
   }
 
   /** Every path that lands on a step ends here — a fresh run, a Next that seeks to a step
    *  that already ran, and Prev — so this is where the resolved focus is published. */
   private applyFocus(step: Step) {
-    const focus = typeof step.focus === "function" ? step.focus(volume.adapter) : step.focus;
+    const focus = typeof step.focus === "function" ? step.focus(this.volume.adapter) : step.focus;
     this.focus = focus ?? null;
     if (!focus) return;
-    if (focus.path !== undefined) selection.select(focus.path);
-    if (focus.offset !== undefined) selection.jumpTo(focus.offset);
-    else if (focus.sector !== undefined) selection.jumpTo(focus.sector * volume.sectorSize);
-    else if (focus.unit !== undefined) selection.jumpTo(volume.adapter.unitByteRange(focus.unit).start);
-    if (focus.showRemnants !== undefined) selection.showRemnants = focus.showRemnants;
-    if (focus.strings !== undefined) selection.stringsOn = focus.strings;
+    if (focus.path !== undefined) this.selection.select(focus.path);
+    if (focus.offset !== undefined) this.selection.jumpTo(focus.offset);
+    else if (focus.sector !== undefined) this.selection.jumpTo(focus.sector * this.volume.sectorSize);
+    else if (focus.unit !== undefined) this.selection.jumpTo(this.volume.adapter.unitByteRange(focus.unit).start);
+    if (focus.showRemnants !== undefined) this.selection.showRemnants = focus.showRemnants;
+    if (focus.strings !== undefined) this.selection.stringsOn = focus.strings;
   }
 }
-
-export const scenarios = new ScenarioRunner();

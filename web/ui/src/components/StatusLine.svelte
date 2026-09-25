@@ -1,5 +1,7 @@
 <script lang="ts">
-  import { volume } from "../state/volume.svelte";
+  import { getWorkspace } from "../state/workspace.svelte";
+
+  const { volume } = getWorkspace();
 
   // Sentence-case, verb-first-adjacent copy per the design spec ("Disk full. Free
   // space or use a smaller file."); falls back to the raw wasm message for codes not

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_FAMILY, FAMILIES, adapterFor, familyIdOf } from "../../src/fs";
+import { DEFAULT_FAMILY, FAMILIES, FAMILY_IDS, ROUTE_ALIASES, adapterFor, familyIdOf } from "../../src/fs";
+import { formatRoute, parseRoute } from "../../src/core/route";
 import { fat16 } from "../../src/fs/fat16";
 import { ext } from "../../src/fs/ext";
 import { CRASH_PHASES, CRASH_PHASE_LABELS, unitIsSector, type FsFamily } from "../../src/fs/adapter";
@@ -23,6 +24,19 @@ describe("the family registry", () => {
     expect(Object.keys(FAMILIES)).toEqual(["fat16", "ext"]);
     expect(FAMILIES.ext).toBe(ext);
     expect(Object.values(FAMILIES).map((f) => [f.id, f.name])).toEqual([["fat16", "FAT16"], ["ext", "ext"]]);
+  });
+
+  it("lists the family ids in registry order, the order of the tabs", () => {
+    expect(FAMILY_IDS).toEqual(["fat16", "ext"]);
+    expect(FAMILY_IDS).toEqual(Object.keys(FAMILIES));
+  });
+
+  it("routes the short and the type names to a family's tab, and each id to its own", () => {
+    expect(ROUTE_ALIASES).toEqual({ fat: "fat16", ext2: "ext", ext3: "ext" });
+    for (const id of FAMILY_IDS) expect(parseRoute(formatRoute(id), FAMILY_IDS, ROUTE_ALIASES)).toBe(id);
+    expect(parseRoute("#ext3", FAMILY_IDS, ROUTE_ALIASES)).toBe("ext");
+    expect(parseRoute("#FAT", FAMILY_IDS, ROUTE_ALIASES)).toBe("fat16");
+    expect(parseRoute("", FAMILY_IDS, ROUTE_ALIASES)).toBeNull();
   });
 
   it("registers FAT16 as the default family, whose format() yields a volume of its own name", () => {

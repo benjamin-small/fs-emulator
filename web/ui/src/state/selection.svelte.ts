@@ -1,5 +1,4 @@
 import { ScrollNonces } from "../core/scrollNonce";
-import { volume } from "./volume.svelte";
 
 export class SelectionStore {
   path = $state<string | null>(null);
@@ -12,6 +11,13 @@ export class SelectionStore {
   // One counter for the store's life: `reset()` leaves it running, because the dump remembers
   // the last nonce it scrolled to across a reset (see `ScrollNonces`).
   private readonly nonces = new ScrollNonces();
+  /** Clears the tab's status line (its VolumeStore's `clearMessages`). Injected, because the
+   *  workspace builds the volume store after this one. */
+  private readonly clearMessages: () => void;
+
+  constructor(clearMessages: () => void) {
+    this.clearMessages = clearMessages;
+  }
 
   /** Move the byte cursor and ask the dump to scroll there, even to the offset it is at: every
    *  request carries a fresh nonce. Reads no state, so an `$effect` may call it. */
@@ -20,7 +26,7 @@ export class SelectionStore {
   select(path: string | null) {
     this.path = path;
     // The old error described the action that failed, not this selection.
-    volume.status = null;
+    this.clearMessages();
   }
 
   expandGap(startSector: number) { const s = new Set(this.expandedGaps); s.add(startSector); this.expandedGaps = s; }
@@ -34,5 +40,3 @@ export class SelectionStore {
     this.scrollTarget = null;
   }
 }
-
-export const selection = new SelectionStore();

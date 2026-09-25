@@ -2,11 +2,11 @@
   import { attrAtOffset } from "../../core/attribution";
   import { cellAt, cellRect, dashCell, dotCell, drawChain, gridCols, gridRows, outlineCell, prepareCanvas } from "../../core/grid";
   import { observeWidth } from "../../core/observeWidth";
-  import { layers } from "../../state/layers.svelte";
-  import { selection } from "../../state/selection.svelte";
-  import { volume } from "../../state/volume.svelte";
+  import { getWorkspace } from "../../state/workspace.svelte";
   import { clusterState } from "./fatchain";
   import { asFat16 } from "./index";
+
+  const { volume, selection, layers } = getWorkspace();
 
   const CELL = 6, GAP = 1, MAX_HEIGHT = 260;
 

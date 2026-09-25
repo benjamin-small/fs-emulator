@@ -1,14 +1,14 @@
 <script lang="ts">
   import { untrack } from "svelte";
-  import { volume } from "../state/volume.svelte";
-  import { selection } from "../state/selection.svelte";
-  import { layers } from "../state/layers.svelte";
+  import { getWorkspace } from "../state/workspace.svelte";
   import { attrAtOffset } from "../core/attribution";
   import { BYTES_PER_ROW, buildSegments, offsetToRow, rowAt, rowToOffset, totalRows, type Segment } from "../core/segments";
   import { contains } from "../core/intervals";
   import { parseAddr } from "../shell/addr";
   import { unitIsSector } from "../fs/adapter";
   import HexRow from "./HexRow.svelte";
+
+  const { volume, selection, layers } = getWorkspace();
 
   const ROW_H = 17, OVERSCAN = 10, MIN_RUN = 8, MAX_SPACER = 10_000_000;
   let container = $state<HTMLDivElement>();

@@ -1,7 +1,9 @@
 <script lang="ts">
-  import { volume } from "../state/volume.svelte";
-  import { selection } from "../state/selection.svelte";
   import { changedSectors } from "../core/patch";
+  import { getWorkspace } from "../state/workspace.svelte";
+
+  const ws = getWorkspace();
+  const { volume, selection } = ws;
 
   const rec = $derived(volume.history[volume.cursor]);
   const sectors = $derived(rec ? changedSectors(rec.changes, volume.sectorSize) : []);
@@ -11,8 +13,8 @@
 
 <!-- A strip under the top bar: heading, counter, op, sector buttons, and events flow left
      to right and wrap, so the current step reads as one line on a wide window. -->
-<section class="panel step" aria-labelledby="step-heading">
-  <h2 id="step-heading">Step</h2>
+<section class="panel step" aria-labelledby="step-heading-{ws.id}">
+  <h2 id="step-heading-{ws.id}">Step</h2>
   {#if !rec}
     <p class="muted">Run an action to see what it changes.</p>
   {:else}
