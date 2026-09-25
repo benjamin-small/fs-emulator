@@ -4,13 +4,19 @@
   import { layers } from "../../state/layers.svelte";
   import { selection } from "../../state/selection.svelte";
   import { volume } from "../../state/volume.svelte";
-  import { CELL, FILL_FREE, GAP, HEADER, MAX_HEIGHT, bandHeader, blockAt, blockCaption, blockFills, blocksTouched, cellOf, clickPath, indirectBlocks, layoutBands, mapHeading, wrapHeader } from "./blockMap";
+  import { CELL, FILL_FREE, GAP, HEADER, MAX_HEIGHT, bandHeader, blockAt, blockCaption, blockFills, blocksTouched, cellOf, clickPath, indirectBlocks, layoutBands, mapHeading, visibleRows, wrapHeader } from "./blockMap";
   import { asExt } from "./index";
 
   let canvas = $state<HTMLCanvasElement>();
+  let wrap = $state<HTMLDivElement>();
   // The panel's content width, kept current by `observeWidth` on the wrapper so the bands wrap
   // to the sidebar's actual size.
   let width = $state(0);
+  // How far the wrapper is scrolled. A 256 MB disk's bands can be tens of thousands of CSS px
+  // tall (32 groups); the canvas stays at most `MAX_HEIGHT` and only ever paints the screenful
+  // at `scrollTop`, which also keeps a mouse move over the hex dump from repainting every cell
+  // on the disk (`onscroll` below, and the `visibleRows` clip in `paint`).
+  let scrollTop = $state(0);
   let hoverBlock = $state<number | null>(null);
   /** The lines the tallest band header needs at this width in the map's font; every band's
    *  header row is that tall. `paint` measures it, because measuring sets the canvas's font, a
@@ -27,9 +33,13 @@
   const map = $derived(layoutBands(geo, width, headerLines));
   const fills = $derived((volume.epoch, blockFills(volume.attribution, geo, fs.journalBlocks)));
   const heading = $derived(mapHeading(geo));
+  // The canvas is sized to the scroll viewport, not the whole map: a 256 MB disk's bands are
+  // far taller than a browser's canvas-size limit, so `.bgmap-spacer` (below) carries the full
+  // scroll height and the canvas paints only what is in view, sticky at the top of it.
+  const viewportHeight = $derived(Math.max(1, Math.min(map.height, MAX_HEIGHT)));
 
   $effect(() => {
-    volume.epoch; layers.chain; layers.diff; selection.hoverOffset; headers; map; fills;
+    volume.epoch; layers.chain; layers.diff; selection.hoverOffset; headers; map; fills; scrollTop;
     paint();
   });
 
@@ -39,8 +49,10 @@
 
   function paint() {
     if (!canvas) return;
-    // Drawn at the device's ratio, so the band headers stay sharp.
-    const ctx = prepareCanvas(canvas, Math.max(1, Math.floor(width)), map.height);
+    // Drawn at the device's ratio, so the band headers stay sharp. The canvas is only ever the
+    // viewport's height, however tall the whole map is.
+    const h = Math.max(1, Math.floor(viewportHeight));
+    const ctx = prepareCanvas(canvas, Math.max(1, Math.floor(width)), h);
     if (!ctx) return;
 
     // Each band's header in lines that fit the width in the map's font (a one-line header is
@@ -71,15 +83,36 @@
       return c;
     };
 
+    // The visible slice of the whole map, in world (unscrolled) coordinates. Clamped so a
+    // format that shrinks the disk cannot leave `scrollTop` pointing past the new, shorter map
+    // before the next real scroll event corrects it.
+    const top = Math.max(0, Math.min(scrollTop, Math.max(0, map.height - h)));
+    const bottom = top + h;
+    const isVisible = (y: number) => y + CELL > top && y < bottom;
+
+    ctx.save();
+    ctx.translate(0, -top);
+
     ctx.textBaseline = "middle";
     ctx.fillStyle = muted;
-    map.bands.forEach((band, i) => wrapped[i].forEach((line, k) => ctx.fillText(line, 0, band.top + k * HEADER + HEADER / 2 - 1)));
+    map.bands.forEach((band, i) => {
+      if (band.top >= bottom || band.cellsTop <= top) return; // the header row itself is off-screen
+      wrapped[i].forEach((line, k) => {
+        const y = band.top + k * HEADER + HEADER / 2 - 1;
+        if (isVisible(y)) ctx.fillText(line, 0, y);
+      });
+    });
 
     // Runs of one colour are the rule (a file's blocks, the journal, free space), so the fill
-    // style changes only at a run's edge.
+    // style changes only at a run's edge. Only the rows the viewport covers are drawn: a 256 MB
+    // disk has 262,144 cells in total, far more than one screenful.
     let last = -1;
     for (const band of map.bands) {
-      for (let i = 0; i < band.count; i++) {
+      const rows = visibleRows(band, top, bottom);
+      if (!rows) continue;
+      const start = rows.first * map.cols;
+      const end = Math.min(band.count, (rows.last + 1) * map.cols);
+      for (let i = start; i < end; i++) {
         const f = fills[band.first + i];
         if (f !== last) { ctx.fillStyle = fillFor(f); last = f; }
         const c = cellRect(i, map.cols, CELL, GAP);
@@ -91,29 +124,35 @@
     // map's end-of-chain mark.
     for (const b of indirectBlocks(volume.attribution)) {
       const c = cellOf(map, b);
-      if (c) dotCell(ctx, c.x, c.y, CELL, ink);
+      if (c && isVisible(c.y)) dotCell(ctx, c.x, c.y, CELL, ink);
     }
 
     for (const b of blocksTouched(layers.diff, geo.blockSize, geo.totalBlocks)) {
       const c = cellOf(map, b);
-      if (c) outlineCell(ctx, c.x, c.y, CELL, diffColor);
+      if (c && isVisible(c.y)) outlineCell(ctx, c.x, c.y, CELL, diffColor);
     }
 
-    const chain = layers.chain.map((b) => cellOf(map, b)).filter((c): c is { x: number; y: number } => c !== null);
+    const chain = layers.chain.map((b) => cellOf(map, b)).filter((c): c is { x: number; y: number } => c !== null && isVisible(c.y));
     if (chain.length) drawChain(ctx, chain, CELL, focus, 1);
 
     // Cross-link with the hex dump: the block under the mouse there gets a dashed outline
     // here, so the map shows where in the whole disk the hovered byte lives.
     if (selection.hoverOffset !== null) {
       const c = cellOf(map, Math.floor(selection.hoverOffset / geo.blockSize));
-      if (c) dashCell(ctx, c.x, c.y, CELL, focus);
+      if (c && isVisible(c.y)) dashCell(ctx, c.x, c.y, CELL, focus);
     }
+
+    ctx.restore();
+  }
+
+  function onScroll() {
+    if (wrap) scrollTop = wrap.scrollTop;
   }
 
   function onMove(e: MouseEvent) {
     if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
-    hoverBlock = blockAt(map, e.clientX - rect.left, e.clientY - rect.top);
+    hoverBlock = blockAt(map, e.clientX - rect.left, e.clientY - rect.top + scrollTop);
   }
   function onLeave() { hoverBlock = null; }
   function onClick() {
@@ -133,8 +172,10 @@
 <section class="panel bgmap">
   <h2>{heading}</h2>
   {#if !volume.atLatest}<p class="muted stale-note">Shows the latest state, not the step you are viewing.</p>{/if}
-  <div class="bgmap-wrap" use:observeWidth={(w) => (width = w)} style:max-height="{MAX_HEIGHT}px">
-    <canvas bind:this={canvas} onmousemove={onMove} onmouseleave={onLeave} onclick={onClick} aria-label="Block group map"></canvas>
+  <div class="bgmap-wrap" bind:this={wrap} use:observeWidth={(w) => (width = w)} onscroll={onScroll} style:max-height="{MAX_HEIGHT}px">
+    <div class="bgmap-spacer" style:height="{map.height}px">
+      <canvas bind:this={canvas} onmousemove={onMove} onmouseleave={onLeave} onclick={onClick} aria-label="Block group map"></canvas>
+    </div>
   </div>
   <p class="mono muted bgmap-caption">{caption || " "}</p>
 </section>

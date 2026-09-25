@@ -4,7 +4,7 @@ import { COLOR_BOOT, COLOR_DIR, COLOR_JOURNAL, COLOR_TABLE, colorIndexForPath } 
 import { asExt, ext } from "../../src/fs/ext";
 import {
   BAND_GAP, CELL, FILL_FREE, HEADER, MAX_HEIGHT, PITCH,
-  bandHeader, blockAt, blockCaption, blockFills, blocksTouched, cellOf, clickPath, indirectBlocks, layoutBands, mapHeading, wrapHeader,
+  bandHeader, blockAt, blockCaption, blockFills, blocksTouched, cellOf, clickPath, indirectBlocks, layoutBands, mapHeading, visibleRows, wrapHeader,
 } from "../../src/fs/ext/blockMap";
 
 const BLOCK = 1024;
@@ -111,6 +111,17 @@ describe("the block-group map's geometry", () => {
     expect(blockAt(m, 300, HEADER)).toBeNull();                   // past the last column
     expect(blockAt(m, -1, HEADER)).toBeNull();
     expect(blockAt(m, 0, m.height)).toBeNull();
+  });
+
+  it("finds a band's visible rows within a vertical range, or null when the band misses it entirely", () => {
+    // A synthetic band: header at y=[0,16), 10 rows of cells at y=[16,66) in steps of PITCH (5).
+    const band = { group: 0, first: 1, count: 600, top: 0, cellsTop: HEADER, rows: 10 };
+    expect(visibleRows(band, 100, 200)).toBeNull();               // fully above the range (range starts past the band)
+    expect(visibleRows(band, 0, 10)).toBeNull();                  // fully below the range (range ends before the band's rows start)
+    expect(visibleRows(band, 20, 30)).toEqual({ first: 0, last: 2 });   // partially visible at the top edge
+    expect(visibleRows(band, 50, 80)).toEqual({ first: 6, last: 9 });   // partially visible at the bottom edge
+    expect(visibleRows(band, 0, 100)).toEqual({ first: 0, last: 9 });   // the whole band fits inside the range
+    expect(visibleRows(band, 21, 26)).toEqual({ first: 1, last: 1 });   // a range that exactly spans one row
   });
 });
 

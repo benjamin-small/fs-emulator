@@ -83,6 +83,20 @@ export function blockAt(m: MapLayout, x: number, y: number): number | null {
   return null;
 }
 
+/** The row indices (0-based within `band`) whose cells intersect the vertical range
+ *  `[top, bottom)`; null when the band's cell rows do not intersect it at all. A large disk
+ *  (256 MB: 32 groups, tens of thousands of CSS px tall) is painted one screenful at a time, so
+ *  the canvas never grows past the browser's canvas-size limit; this is the row range that
+ *  screenful covers for one band. */
+export function visibleRows(band: Band, top: number, bottom: number): { first: number; last: number } | null {
+  const rowsTop = band.cellsTop;
+  const rowsBottom = band.cellsTop + band.rows * PITCH;
+  if (bottom <= rowsTop || top >= rowsBottom) return null;
+  const first = Math.max(0, Math.floor((top - band.cellsTop) / PITCH));
+  const last = Math.min(band.rows - 1, Math.ceil((bottom - band.cellsTop) / PITCH) - 1);
+  return { first, last };
+}
+
 /** Each block's fill, indexed by block: metadata by region kind (the table's `colorForRegion`),
  *  every block in `journalBlocks` `COLOR_JOURNAL`, an owned data or directory block its owner's
  *  colour, and a free block `FILL_FREE`. */

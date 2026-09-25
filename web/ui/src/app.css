@@ -139,7 +139,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 
 /* Block-group map (ext) */
 .bgmap-wrap { overflow-y: auto; overflow-x: hidden; }
-.bgmap-wrap canvas { display: block; cursor: pointer; }
+.bgmap-wrap canvas { display: block; cursor: pointer; position: sticky; top: 0; }
 .bgmap-caption { margin: 6px 0 0; font-size: 11px; min-height: 14px; }
 
 /* Step panel */
