@@ -355,8 +355,8 @@ superblock at block 82), and group 1's backup superblock (block 8193).
 superblock's incompat word (block 1 + 0x60, which read 0x06 while the
 transaction ran). The following steps only move the dump, in the order the
 bytes were written: the data blocks (1111..1113, written before anything
-touches the journal), the journal superblock (block 82 + 0x18: `s_start`
-pointed at the transaction), the descriptor (block 83: one tag per metadata
+touches the journal), the journal superblock (block 82 + 0x1C: `s_start`
+pointed at the transaction, with `s_sequence` at +0x18), the descriptor (block 83: one tag per metadata
 block, ascending), the first copy (block 84, the superblock's image with the
 flag set), the commit block (after the last copy), a checkpointed home
 block (the root directory, block 69, which now names the file), the journal
