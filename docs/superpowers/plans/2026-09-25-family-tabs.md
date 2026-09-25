@@ -4213,7 +4213,7 @@ Run: `git grep -n "scenarioGroups\|ScenarioGroup\|format-family\|\.extras\|extra
 Expected: no output.
 
 Run: `pnpm test`
-Expected: `Test Files  54 passed (54)`, `Tests  535 passed (535)`.
+Expected: `Test Files  54 passed (54)`, `Tests  537 passed (537)`.
 
 Run: `pnpm build`
 Expected: svelte-check `COMPLETED 464 FILES 0 ERRORS 0 WARNINGS 0 FILES_WITH_PROBLEMS`, then `✓ built in …`.
