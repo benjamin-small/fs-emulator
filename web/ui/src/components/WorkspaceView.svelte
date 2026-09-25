@@ -24,9 +24,10 @@
 </script>
 
 <!-- The current step sits with the other controls, under the picker and the Terminal
-     button, so the right column is left to state and data (Lesson, Strings, Inspector). -->
-<div id="step-slot" class="step-slot"><StepPanel /></div>
-<div id="ribbon-slot" class="ribbon-slot"><Ribbon /></div>
+     button, so the right column is left to state and data (Lesson, Strings, Inspector). The
+     slots are classes, not ids: every opened tab has its own. -->
+<div class="step-slot"><StepPanel /></div>
+<div class="ribbon-slot"><Ribbon /></div>
 <div class="grid">
   <aside class="col left">
     <DirTree />
@@ -40,4 +41,4 @@
     <Inspector />
   </aside>
 </div>
-<footer id="timeline-slot"><Timeline /></footer>
+<footer class="timeline-slot"><Timeline /></footer>

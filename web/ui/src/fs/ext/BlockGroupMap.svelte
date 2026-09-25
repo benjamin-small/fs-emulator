@@ -1,11 +1,13 @@
 <script lang="ts">
   import { cellRect, dashCell, dotCell, drawChain, outlineCell, prepareCanvas } from "../../core/grid";
+  import { keepScroll } from "../../core/keepScroll";
   import { observeWidth } from "../../core/observeWidth";
   import { getWorkspace } from "../../state/workspace.svelte";
   import { CELL, FILL_FREE, GAP, HEADER, MAX_HEIGHT, bandHeader, blockAt, blockCaption, blockFills, blocksTouched, cellOf, clampScroll, clickPath, indirectBlocks, layoutBands, mapHeading, visibleRows, wrapHeader } from "./blockMap";
   import { asExt } from "./index";
 
-  const { volume, selection, layers } = getWorkspace();
+  const ws = getWorkspace();
+  const { volume, selection, layers } = ws;
 
   let canvas = $state<HTMLCanvasElement>();
   let wrap = $state<HTMLDivElement>();
@@ -175,7 +177,8 @@
 <section class="panel bgmap">
   <h2>{heading}</h2>
   {#if !volume.atLatest}<p class="muted stale-note">Shows the latest state, not the step you are viewing.</p>{/if}
-  <div class="bgmap-wrap" bind:this={wrap} use:observeWidth={(w) => (width = w)} onscroll={onScroll} style:max-height="{MAX_HEIGHT}px">
+  <!-- `keepScroll`: hiding the tab zeroes the map's scroll; showing it again puts it back. -->
+  <div class="bgmap-wrap" bind:this={wrap} use:keepScroll={ws.active} use:observeWidth={(w) => (width = w)} onscroll={onScroll} style:max-height="{MAX_HEIGHT}px">
     <div class="bgmap-spacer" style:height="{map.height}px">
       <canvas bind:this={canvas} onmousemove={onMove} onmouseleave={onLeave} onclick={onClick} aria-label="Block group map"></canvas>
     </div>

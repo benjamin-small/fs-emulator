@@ -2,13 +2,15 @@
   import { untrack } from "svelte";
   import { getWorkspace } from "../state/workspace.svelte";
   import { attrAtOffset } from "../core/attribution";
+  import { keepScroll } from "../core/keepScroll";
   import { BYTES_PER_ROW, buildSegments, offsetToRow, rowAt, rowToOffset, totalRows, type Segment } from "../core/segments";
   import { contains } from "../core/intervals";
   import { parseAddr } from "../shell/addr";
   import { unitIsSector } from "../fs/adapter";
   import HexRow from "./HexRow.svelte";
 
-  const { volume, selection, layers } = getWorkspace();
+  const ws = getWorkspace();
+  const { volume, selection, layers } = ws;
 
   const ROW_H = 17, OVERSCAN = 10, MIN_RUN = 8, MAX_SPACER = 10_000_000;
   let container = $state<HTMLDivElement>();
@@ -128,7 +130,8 @@
      onkeydown (arrows/Home/End/PageUp/PageDown/g/s) and tabindex, so there is no
      keyboard equivalent for per-byte hover to pair with mouseover. -->
 <!-- svelte-ignore a11y_mouse_events_have_key_events -->
-<div class="hexview panel" bind:this={container} bind:clientHeight={height} onscroll={(e) => (scrollTop = (e.currentTarget as HTMLDivElement).scrollTop)} onmouseover={onOver} onmouseleave={() => (selection.hoverOffset = null)} onclick={onClick} onkeydown={onKey} tabindex="0" role="grid" aria-label="Disk bytes">
+<!-- `keepScroll`: hiding the tab zeroes the dump's scroll; showing it again puts it back. -->
+<div class="hexview panel" use:keepScroll={ws.active} bind:this={container} bind:clientHeight={height} onscroll={(e) => (scrollTop = (e.currentTarget as HTMLDivElement).scrollTop)} onmouseover={onOver} onmouseleave={() => (selection.hoverOffset = null)} onclick={onClick} onkeydown={onKey} tabindex="0" role="grid" aria-label="Disk bytes">
   {#if volume.image.length === 0}
     <p class="muted">Format a disk or load an image to start.</p>
   {:else}

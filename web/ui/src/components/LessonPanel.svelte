@@ -33,8 +33,16 @@
   // Minimized, the title is hidden, so the dialog itself takes focus: its name is the
   // scenario title and its description the step's title and text, which aria still reads
   // from the hidden elements, so the new step is announced either way.
+  // A tab switch remounts the card over a lesson already under way (App keys it on the active
+  // tab): focus stays on the tab that was activated, as the tabs pattern expects, and moves
+  // only on the lesson's own steps after that.
+  let onTab = document.activeElement?.getAttribute("role") === "tab";
   $effect(() => {
     void scenarios.index;
+    if (onTab) {
+      onTab = false;
+      return;
+    }
     void tick().then(() => (lessonWindow.minimized ? cardEl : titleEl)?.focus());
   });
 

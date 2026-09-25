@@ -48,6 +48,11 @@
   }
 
   onDestroy(stop);
+  // Playback belongs to the tab on screen: hiding the tab stops it, so a hidden timeline never
+  // steps on (and never moves its dump) behind another tab.
+  $effect(() => {
+    if (!ws.active) stop();
+  });
 
   function onSlide(e: Event) {
     goTo(Number((e.currentTarget as HTMLInputElement).value));
