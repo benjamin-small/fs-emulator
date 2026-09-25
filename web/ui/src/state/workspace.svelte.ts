@@ -1,8 +1,10 @@
 import { createContext } from "svelte";
+import { loadNotice, loadPlan } from "../core/loadNotice";
 import { parseRoute } from "../core/route";
 import { stepFocusOffset } from "../core/stepFocus";
-import { DEFAULT_FAMILY, FAMILY_IDS, ROUTE_ALIASES } from "../fs";
+import { DEFAULT_FAMILY, FAMILIES, FAMILY_IDS, ROUTE_ALIASES, detectFamily } from "../fs";
 import type { FsFamilyId } from "../fs/adapter";
+import type { Volume } from "../lib/wasm";
 import { MOUNT, Vfs } from "../shell/vfs";
 import { LayersStore } from "./layers.svelte";
 import { ScenarioRunner } from "./scenarios.svelte";
@@ -78,6 +80,27 @@ export class WorkspaceRegistry {
     }
     this.activeId = id;
     return ws;
+  }
+
+  /** Load image, from `from`'s Actions panel: the image opens in its own family's tab, whichever
+   *  tab it was loaded from. Bytes no family recognises are `from`'s error, as before. Another
+   *  tab is activated (created first if need be), a lesson running there is closed (its disk is
+   *  about to go), and its status line says where the image went; `from` is left as it was. */
+  loadImage(bytes: Uint8Array, fileName: string, from: Workspace): void {
+    let vol: Volume, id: FsFamilyId;
+    try {
+      ({ vol, id } = detectFamily(bytes));
+    } catch (e) {
+      // A notice left by an earlier routed load no longer describes the last load.
+      from.volume.clearMessages();
+      from.volume.report(e);
+      return;
+    }
+    const t = this.activate(id);
+    const plan = loadPlan(from.id, t.id, t.scenarios.current !== null);
+    if (plan.stopLesson) t.scenarios.stop();
+    t.volume.mount(vol);
+    if (plan.notice) t.volume.notice = loadNotice(fileName, FAMILIES[id].name, vol.fsType(), FAMILIES[from.id].name);
   }
 }
 

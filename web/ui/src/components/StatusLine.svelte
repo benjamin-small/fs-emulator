@@ -45,5 +45,6 @@
        the corruption go away, and the two say different things. -->
   {#if volume.corruption}<span>Volume not mounted: {volume.corruption}</span>{/if}
   {#if volume.needsRecovery}<span>Volume needs recovery</span>{/if}
+  {#if volume.notice}<span class="note">{volume.notice}</span>{/if}
   {#if volume.status}<span class="err">{message}{#if volume.status.code}{" "}<span class="muted">{volume.status.code}</span>{/if}</span>{/if}
 </div>

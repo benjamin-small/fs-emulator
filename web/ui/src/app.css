@@ -244,6 +244,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .actions .format-check { margin: 0 0 6px; font-size: 12px; }
 .actions .warn { color: var(--warn); }
 .actions .using-bytes { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 12px; }
+.actions .load-hint { margin: -4px 0 0; font-size: 12px; }
 
 /* Terminal drawer */
 /* Only layout here: since browser-terminal 0.3.0 the panes' colours and font come from

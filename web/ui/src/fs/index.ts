@@ -1,4 +1,4 @@
-import type { Volume } from "../lib/wasm";
+import { Volume } from "../lib/wasm";
 import type { FsAdapter, FsFamily, FsFamilyId } from "./adapter";
 import { ext } from "./ext";
 import { fat16 } from "./fat16";
@@ -24,4 +24,12 @@ export function familyIdOf(fsType: string): FsFamilyId {
 
 export function adapterFor(vol: Volume): FsAdapter {
   return FAMILIES[familyIdOf(vol.fsType())].bind(vol);
+}
+
+/** Mount an image and name the family it belongs to, whichever tab it was loaded from. Throws
+ *  the loader's error for bytes no family recognises (`unsupported: no recognisable filesystem
+ *  signature`), and `familyIdOf`'s for a type with no adapter. */
+export function detectFamily(bytes: Uint8Array): { vol: Volume; id: FsFamilyId } {
+  const vol = Volume.fromImage(bytes);
+  return { vol, id: familyIdOf(vol.fsType()) };
 }

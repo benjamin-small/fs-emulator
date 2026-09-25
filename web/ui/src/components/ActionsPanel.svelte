@@ -2,7 +2,7 @@
   import { FAMILIES } from "../fs";
   import type { FsFamilyId } from "../fs/adapter";
   import { PANELS } from "../fs/panels";
-  import { getWorkspace } from "../state/workspace.svelte";
+  import { getWorkspace, workspaces } from "../state/workspace.svelte";
 
   const ws = getWorkspace();
   const { volume, selection } = ws;
@@ -59,10 +59,11 @@
   async function onLoadImage(e: Event) {
     const file = (e.currentTarget as HTMLInputElement).files?.[0] ?? null;
     if (!file) return;
+    // An image of the other family opens in that family's tab (`loadImage` says so there).
     try {
-      volume.load(new Uint8Array(await file.arrayBuffer()));
+      workspaces.loadImage(new Uint8Array(await file.arrayBuffer()), file.name, ws);
     } catch (err) {
-      volume.status = { text: err instanceof Error ? err.message : String(err) };
+      volume.report(err);
     }
   }
 
@@ -117,8 +118,9 @@
 
     <label class="field">
       Load image
-      <input type="file" onchange={onLoadImage} />
+      <input type="file" onchange={onLoadImage} aria-describedby="load-hint-{ws.id}" />
     </label>
+    <p id="load-hint-{ws.id}" class="muted load-hint">FAT16 and ext images each open in their own tab.</p>
     <button onclick={exportImage}>Export image</button>
   </fieldset>
 </section>
