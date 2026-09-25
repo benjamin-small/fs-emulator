@@ -93,12 +93,14 @@
     <dl class="facts">
       {#each journalFacts(info) as [name, value] (name)}<dt>{name}</dt><dd class="mono">{value}</dd>{/each}
     </dl>
-    {#if volume.needsRecovery}<p class="journal-flag">{NEEDS_RECOVERY}</p>{/if}
+    <div class="journal-live" aria-live="polite">
+      {#if volume.needsRecovery}<p class="journal-flag">{NEEDS_RECOVERY}</p>{/if}
+    </div>
     <div class="journal-wrap" use:observeWidth={(w) => (width = w)} style:max-height="{MAX_HEIGHT}px">
       <canvas bind:this={canvas} onmousemove={onMove} onmouseleave={onLeave} onclick={onClick} aria-label="Journal ring"></canvas>
     </div>
     <p class="mono muted journal-caption">{caption || " "}</p>
-    <div class="journal-controls">
+    <div class="journal-controls" aria-live="polite">
       {#if volume.armedPhase}
         <span class="journal-armed">{armedText(volume.armedPhase)}</span>
       {:else}
