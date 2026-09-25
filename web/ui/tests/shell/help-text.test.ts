@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Volume } from "../../src/lib/wasm";
-import { createCommands } from "../../src/shell/commands";
+import { createCommands } from "../../src/shell/register";
 import { makeHost } from "./helpers";
 
 /**

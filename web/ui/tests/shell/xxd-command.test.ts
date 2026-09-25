@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createCommands } from "../../src/shell/commands";
+import { createCommands } from "../../src/shell/register";
 import { Vfs } from "../../src/shell/vfs";
 import { formatXxd } from "../../src/shell/xxd";
 import { call, callErr, makeHost } from "./helpers";

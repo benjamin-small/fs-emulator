@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { Volume } from "../../src/lib/wasm";
 import { FAMILIES } from "../../src/fs";
-import { createCommands, mkfsFlagsFor, mkfsTypeOf, mkfsTypes, orList } from "../../src/shell/commands";
+import { mkfsFlagsFor, mkfsTypeOf, mkfsTypes, orList } from "../../src/shell/mkfs";
+import { createCommands } from "../../src/shell/register";
 import { Vfs } from "../../src/shell/vfs";
 import { call, callErr, makeHost } from "./helpers";
 

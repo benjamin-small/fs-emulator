@@ -21,6 +21,12 @@ export const BYTES_HELP = "pipe text (echo hi), bytes from `cat --bytes` or `dd`
  * be zero bytes long (`cat --bytes /dev/null`), so `> f` makes an empty file rather than
  * failing with "nothing to write".
  */
+/** True when a flag was given at all: browser-terminal hands an absent flag as `undefined`
+ *  (or `null`), and `0` and `""` are values. */
+export function flagGiven(v: unknown): boolean {
+  return v !== undefined && v !== null;
+}
+
 export function hasInput(v: Value | undefined): boolean {
   return !(v === undefined || v === null || (Array.isArray(v) && v.length === 0));
 }

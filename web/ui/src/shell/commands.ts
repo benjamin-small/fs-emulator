@@ -1,14 +1,12 @@
 import type { CommandArgs, CommandDef, CommandSpec, FlagSpec, PosArg } from "./types";
 import type { DateTime, EntryInfo, Volume } from "../lib/wasm";
-import { FAMILIES } from "../fs";
-import type { FsAdapter, FsFamily, MkfsFlag } from "../fs/adapter";
 import { hexAddr } from "../fs/base";
 import { SIZE_HELP, addrHelp, parseAddr, parseSize, posAddrHelp } from "./addr";
-import { decodeText, hasInput, toBytes } from "./bytes";
+import { decodeText, flagGiven, hasInput, toBytes } from "./bytes";
 import { DD_MAX_BYTES, parseDd, runDd } from "./dd";
 import { CORRUPT_HELP, ShellError, fsCall, wrapFs } from "./errors";
 import { corruptionOf, selectPath, warnIfRewound, type ShellHost } from "./host";
-import { journalCommands } from "./journalCommands";
+import { mkfsCommand } from "./mkfs";
 import { canonicalize, Vfs, promptFor, resolved, type Resolved } from "./vfs";
 import { formatXxd } from "./xxd";
 
@@ -51,48 +49,6 @@ export function fmtDate(d: DateTime | null): string {
   if (!d) return "";
   const p = (n: number) => String(n).padStart(2, "0");
   return `${d.year}-${p(d.month)}-${p(d.day)} ${p(d.hour)}:${p(d.minute)}:${p(d.second)}`;
-}
-
-/** `a, b, or c` (`a or b` for two): the way a summary lists choices. */
-export function orList(items: readonly string[]): string {
-  return items.length <= 2 ? items.join(" or ") : `${items.slice(0, -1).join(", ")}, or ${items.at(-1)}`;
-}
-
-/** `mkfs --type`'s values: every family's `fsTypes`, lower-cased, in registry order
- *  (`fat16`, `ext2`, `ext3`). */
-export function mkfsTypes(families: Readonly<Record<string, FsFamily>>): string[] {
-  return Object.values(families).flatMap((f) => f.fsTypes.map((t) => t.toLowerCase()));
-}
-
-/** `mkfs`'s default `--type`: the mounted volume's own type, lower-cased (`FAT16` is `fat16`). */
-export function mkfsTypeOf(host: ShellHost): string {
-  return host.vol.fsType().toLowerCase();
-}
-
-/**
- * Every family's `mkfs.flags` as one list, in registry order and deduplicated by `long`. A flag
- * two families share keeps the first one's kind and merges the descriptions, each split at its
- * first comma, as `${base} (fat16: ${restA}; ext: ${restB})`: `--label` reads
- * `volume label (fat16: up to 11 characters; ext: up to 16 bytes)`.
- */
-export function mkfsFlagsFor(families: Readonly<Record<string, FsFamily>>): Omit<MkfsFlag, "option">[] {
-  const split = (desc: string): [string, string] => {
-    const i = desc.indexOf(",");
-    return i < 0 ? [desc, ""] : [desc.slice(0, i), desc.slice(i + 1).trim()];
-  };
-  const byLong = new Map<string, { kind: MkfsFlag["kind"]; descs: { id: string; desc: string }[] }>();
-  for (const family of Object.values(families)) {
-    for (const f of family.mkfs.flags) {
-      const seen = byLong.get(f.long);
-      if (seen) seen.descs.push({ id: family.id, desc: f.desc });
-      else byLong.set(f.long, { kind: f.kind, descs: [{ id: family.id, desc: f.desc }] });
-    }
-  }
-  return [...byLong].map(([long, { kind, descs }]) => ({
-    long,
-    kind,
-    desc: descs.length === 1 ? descs[0].desc : `${split(descs[0].desc)[0]} (${descs.map((d) => `${d.id}: ${split(d.desc)[1]}`).join("; ")})`,
-  }));
 }
 
 /** "cluster" -> "Cluster": a summary that opens with the family's unit noun. */
@@ -459,7 +415,7 @@ export function writeVolumeFile(host: ShellHost, vfs: Vfs, path: string, bytes: 
 }
 
 /** `write`, `mkdir`, `rmdir`, `rm`, `touch`, `cp`, `mkfs`: every disk change goes through `host.run`. */
-function mutationCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
+export function mutationCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
   const joinPath = (dir: string, name: string): string => (dir === "/" ? `/${name}` : `${dir}/${name}`);
   const baseName = (p: string): string => p.slice(p.lastIndexOf("/") + 1);
   /** The volume path behind `target`, or the ShellError for `/`, `/dev` and the devices. */
@@ -468,7 +424,6 @@ function mutationCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
     if (target.kind === "root" || target.kind === "dev") throw new ShellError(`${display}: ${dirMsg}`);
     throw new ShellError(`${display}: ${deviceMsg}`);
   };
-  const flagGiven = (v: unknown): boolean => v !== undefined && v !== null;
 
   const write: CommandDef = {
     spec: {
@@ -614,56 +569,11 @@ function mutationCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
     },
   };
 
-  // One `mkfs` for every family: `--type` picks the family (and the variant, for a family with
-  // several types), and the flag list is every family's, so the spec does not depend on the
-  // family mounted at registration. The option keys come from the chosen family's own flags.
-  // The done line names the type the new volume reports.
-  const types = mkfsTypes(FAMILIES);
-  const union = mkfsFlagsFor(FAMILIES);
-  const mkfs: CommandDef = {
-    spec: {
-      name: "mkfs",
-      summary: `Format /dev/hda (clears the timeline); --type picks ${orList(types)}`,
-      flags: [
-        F("type", `${orList(types)} (default: the mounted volume's type)`, { shape: "str" }),
-        ...union.map((f) => F(f.long, f.desc, { shape: f.kind })),
-      ],
-    },
-    fn: (args, _input, ctx) => {
-      const typeFlag = args.flags.type;
-      const type = flagGiven(typeFlag) ? String(typeFlag).toLowerCase() : mkfsTypeOf(host);
-      const family = Object.values(FAMILIES).find((f) => f.fsTypes.some((t) => t.toLowerCase() === type));
-      if (!family) throw new ShellError(`unknown type '${type}'`, { help: `types: ${types.join(", ")}` });
-      const { flags } = family.mkfs;
-      for (const f of union) {
-        if (flagGiven(args.flags[f.long]) && !flags.some((g) => g.long === f.long)) {
-          throw new ShellError(`--${f.long} is not ${/^[aeiou]/i.test(type) ? "an" : "a"} ${type} option`);
-        }
-      }
-      // A family with several types (ext: ext2, ext3) takes the one asked for as its `variant`.
-      const options: Record<string, number | string> = family.fsTypes.length > 1 ? { variant: type } : {};
-      for (const f of flags) {
-        const v = args.flags[f.long];
-        if (!flagGiven(v)) continue;
-        if (f.kind === "int") {
-          if (typeof v !== "number" || !Number.isInteger(v) || v < 0) throw new ShellError(`--${f.long} must be a non-negative integer`);
-          options[f.option] = v;
-        } else {
-          options[f.option] = String(v);
-        }
-      }
-      fsCall("/dev/hda", () => host.format(family.id, options));
-      vfs.cwd = "/mnt";
-      host.setPrompt(promptFor(vfs.cwd));
-      ctx.log(`formatted /dev/hda as ${host.vol.fsType()}; the timeline was cleared`);
-    },
-  };
-
-  return [write, mkdir, rmdir, rm, touch, cp, mkfs];
+  return [write, mkdir, rmdir, rm, touch, cp, mkfsCommand(host, vfs)];
 }
 
 /** `dd`, `xxd` and its alias `hexdump`. */
-function ddXxdCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
+export function ddXxdCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
   const dd: CommandDef = {
     spec: {
       name: "dd",
@@ -759,43 +669,4 @@ function ddXxdCommands(host: ShellHost, vfs: Vfs): CommandDef[] {
     { spec: xxdSpec("xxd", "Hex dump a file, /dev/hda, or piped bytes"), fn: xxd },
     { spec: xxdSpec("hexdump", "alias of xxd"), fn: xxd },
   ];
-}
-
-/**
- * Every command the terminal registers. `echo` is a browser-terminal builtin
- * and is not registered here. `vfs` holds the one working directory per page.
- * `crash` and `recover` come last, and only while the mounted adapter has a journal (ext3);
- * the terminal calls this again whenever that or the family changes.
- */
-export function createCommands(host: ShellHost, vfs: Vfs = new Vfs()): CommandDef[] {
-  const journal = host.adapter.journal ? journalCommands(host) : [];
-  return [...readCommands(host, vfs), ...mutationCommands(host, vfs), ...ddXxdCommands(host, vfs), ...journal];
-}
-
-/**
- * Which command set `createCommands` builds for this adapter: the family, plus `+journal` when
- * it has a journal capability (`fat16`, `ext`, `ext+journal`). The terminal re-registers when
- * this changes, because the summaries and flag descriptions that name the family's nouns, and
- * the presence of `crash` and `recover`, are fixed when a command is registered.
- */
-export function commandSetOf(adapter: FsAdapter): string {
-  return adapter.journal ? `${adapter.id}+journal` : adapter.id;
-}
-
-/** browser-terminal's two registration calls, all `registerCommands` needs of the terminal. */
-export interface CommandRegistry {
-  registerCommand(spec: CommandSpec, fn: CommandDef["fn"]): void;
-  unregisterCommand(name: string): void;
-}
-
-/**
- * Unregister the `previous` command names, register `createCommands(host, vfs)` in their place,
- * and return the names now registered for the next call. The same `vfs` keeps the working
- * directory across a re-registration.
- */
-export function registerCommands(term: CommandRegistry, host: ShellHost, vfs: Vfs, previous: readonly string[] = []): string[] {
-  for (const name of previous) term.unregisterCommand(name);
-  const defs = createCommands(host, vfs);
-  for (const { spec, fn } of defs) term.registerCommand(spec, fn);
-  return defs.map((d) => d.spec.name);
 }

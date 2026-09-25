@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { SIZE_HELP } from "../../src/shell/addr";
 import { DD_MAX_BYTES, OPERAND_HELP, formatRecords, parseDd, planWindow } from "../../src/shell/dd";
 import { ShellError } from "../../src/shell/errors";
-import { createCommands } from "../../src/shell/commands";
+import { createCommands } from "../../src/shell/register";
 import { applyChanges } from "../../src/core/patch";
 import { Vfs } from "../../src/shell/vfs";
 import { call, callErr, makeHost } from "./helpers";
