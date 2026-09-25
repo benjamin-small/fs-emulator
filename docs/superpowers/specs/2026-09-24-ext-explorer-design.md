@@ -310,7 +310,8 @@ phase mapping), `metadata.ts` (`CORRUPT_NOTE`, `NOTES`, `touchesMetadata`),
   `volume label (fat16: up to 11 characters; ext: up to 16 bytes)`, the one
   sanctioned FAT expectation change. At run time a flag that
   the chosen family does not list is `ShellError("--${long} is not a ${type}
-  option")`. ext's `MKFS.flags`: `--blocks` (`totalBlocks`, "total 1 KiB
+  option")` with the article following the type (`a fat16 option`, `an ext3
+  option`). ext's `MKFS.flags`: `--blocks` (`totalBlocks`, "total 1 KiB
   blocks (default 16384 = 16 MB)"), `--inodes-per-group`, `--label` ("volume
   label, up to 16 bytes"), `--uuid` ("32 hex digits, hyphens optional"),
   `--journal-blocks` ("journal size in blocks, ext3 only"), `--journal-mode`
@@ -321,9 +322,11 @@ phase mapping), `metadata.ts` (`CORRUPT_NOTE`, `NOTES`, `touchesMetadata`),
 - `df` prints `blockSize`/`blocks`; `stat` spreads the ext facts; `seek`,
   `write --at`, `xxd --offset` accept `b:N` and `i:N` through `parseAddr`.
 - **Re-registration**: `TerminalPanel` keeps the registered command names;
-  an effect on `volume.adapter.id` unregisters them all and registers
-  `createCommands(host, vfs)` again with the same `vfs` (so the working
-  directory and prompt survive), then re-sets the prompt.
+  an effect on the command set key (the family id plus whether the adapter
+  has a journal, so ext3 to ext2 drops `crash` and `recover`) unregisters
+  them all and registers `createCommands(host, vfs)` again with the same
+  `vfs` (so the working directory and prompt survive), then re-sets the
+  prompt.
 
 ## 7. Lessons (all `family: "ext"`, all run on the default ext3 disk)
 
