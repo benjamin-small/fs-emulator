@@ -221,7 +221,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .actions .format .field { margin-bottom: 6px; }
 .actions .cluster-count { margin: 0 0 6px; font-size: 12px; }
 .actions .format-check { margin: 0 0 6px; font-size: 12px; }
-.actions .warn { color: var(--diff-ink); }
+.actions .warn { color: var(--warn); }
 .actions .using-bytes { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 12px; }
 
 /* Terminal drawer */

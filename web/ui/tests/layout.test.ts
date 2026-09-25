@@ -75,3 +75,29 @@ describe("app.css layout guards", () => {
     expect(rule(".actions .field input, .actions .field textarea, .actions .field select")).toContain("width: 100%");
   });
 });
+
+describe("theme tokens", () => {
+  const tokens = readFileSync(new URL("../src/styles/tokens.css", import.meta.url), "utf8");
+  const css = readFileSync(new URL("../src/app.css", import.meta.url), "utf8");
+  const block = (selector: string) => tokens.match(new RegExp(`^${selector.replace(/[[\]]/g, (ch) => `\\${ch}`)} \\{([^}]*)\\}`, "m"))?.[1] ?? "";
+
+  it("gives the Format check line its own warning colour in both themes", () => {
+    // `--diff-ink` is the ink for text on the amber `--diff` background; on the dark panel it
+    // is a dark brown nobody can read, which is what the Format forms' `.warn` line used.
+    expect(block(":root")).toMatch(/--warn: #[0-9a-f]{6};/);
+    expect(block(':root[data-theme="light"]')).toMatch(/--warn: #[0-9a-f]{6};/);
+    expect(css).toContain(".actions .warn { color: var(--warn); }");
+  });
+});
+
+describe("JournalPanel markup guards", () => {
+  const svelte = readFileSync(new URL("../src/fs/ext/JournalPanel.svelte", import.meta.url), "utf8");
+
+  it("announces the recovery flag and the armed line through persistent live regions", () => {
+    // The flag and the armed line come and go inside `{#if}` blocks; a live region that appears
+    // with its content is not announced, so the regions wrap the blocks and stay in the DOM.
+    expect(svelte).toContain('<div class="journal-live" aria-live="polite">');
+    expect(svelte).toContain('<div class="journal-controls" aria-live="polite">');
+  });
+});
+
