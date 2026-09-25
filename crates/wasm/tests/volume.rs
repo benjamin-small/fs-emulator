@@ -946,3 +946,433 @@ fn journal_methods_throw_not_ext_on_fat() {
     }
     assert_eq!(f.history_length(), 0);
 }
+
+/// The default ext3 disk holding `/docs` (inode 12, block 1111),
+/// `/hello.txt` (inode 13, 12 bytes in block 1112), and `/bigger.txt`
+/// (inode 14, 13 data blocks 1113..=1125 and its single-indirect block
+/// 1126): 16 blocks, 3 inodes, and one directory, all from group 0.
+fn ext3_with_files() -> Volume {
+    let mut v = fresh_ext3();
+    v.create_dir("/docs").unwrap();
+    v.create_file("/hello.txt", b"Hello, ext3!").unwrap();
+    v.create_file("/bigger.txt", &[b'x'; 13312]).unwrap();
+    v
+}
+
+/// Every element of a JS array of numbers.
+fn nums(list: &JsValue) -> Vec<f64> {
+    Array::from(list)
+        .iter()
+        .map(|n| n.as_f64().expect("a number"))
+        .collect()
+}
+
+fn assert_nums(v: &JsValue, want: &[(&str, f64)]) {
+    for (key, value) in want {
+        assert_eq!(num(v, key), *value, "{key}");
+    }
+}
+
+fn assert_not_ext(err: JsValue) {
+    assert_eq!(code(err.clone()), "NotExt");
+    assert_eq!(message(&err), "not an ext volume");
+}
+
+#[wasm_bindgen_test]
+fn ext_geometry_merges_the_group_layout_with_the_descriptor_counts() {
+    let geo = fresh_ext3().ext_geometry().unwrap();
+    assert_nums(
+        &geo,
+        &[
+            ("blockSize", 1024.0),
+            ("totalBlocks", 16384.0),
+            ("firstDataBlock", 1.0),
+            ("blocksPerGroup", 8192.0),
+            ("inodesPerGroup", 512.0),
+            ("inodesCount", 1024.0),
+            ("inodeSize", 128.0),
+            ("inodeTableBlocks", 64.0),
+            ("descriptorBlocks", 1.0),
+        ],
+    );
+    let groups = Array::from(&get(&geo, "groups"));
+    assert_eq!(groups.length(), 2);
+    assert_nums(
+        &groups.get(0),
+        &[
+            ("index", 0.0),
+            ("firstBlock", 1.0),
+            ("blockCount", 8192.0),
+            ("superblockBlock", 1.0),
+            ("descriptorsBlock", 2.0),
+            ("blockBitmap", 3.0),
+            ("inodeBitmap", 4.0),
+            ("inodeTable", 5.0),
+            ("firstData", 69.0),
+            ("freeBlocks", 7082.0),
+            ("freeInodes", 501.0),
+            ("usedDirs", 2.0),
+        ],
+    );
+    assert_nums(
+        &groups.get(1),
+        &[
+            ("index", 1.0),
+            ("firstBlock", 8193.0),
+            ("blockCount", 8191.0),
+            ("superblockBlock", 8193.0),
+            ("descriptorsBlock", 8194.0),
+            ("blockBitmap", 8195.0),
+            ("inodeBitmap", 8196.0),
+            ("inodeTable", 8197.0),
+            ("firstData", 8261.0),
+            ("freeBlocks", 8123.0),
+            ("freeInodes", 512.0),
+            ("usedDirs", 0.0),
+        ],
+    );
+
+    // The counts come from the live descriptors.
+    let busy = Array::from(&get(&ext3_with_files().ext_geometry().unwrap(), "groups")).get(0);
+    assert_nums(
+        &busy,
+        &[
+            ("freeBlocks", 7066.0),
+            ("freeInodes", 498.0),
+            ("usedDirs", 3.0),
+        ],
+    );
+
+    // sparse_super: group 2 of a three-group disk has no superblock copy.
+    let three = Volume::format_ext2(obj(&[("totalBlocks", JsValue::from(24576u32))])).unwrap();
+    let g2 = Array::from(&get(&three.ext_geometry().unwrap(), "groups")).get(2);
+    assert!(get(&g2, "superblockBlock").is_null());
+    assert!(get(&g2, "descriptorsBlock").is_null());
+    assert_nums(
+        &g2,
+        &[
+            ("firstBlock", 16385.0),
+            ("blockCount", 8191.0),
+            ("blockBitmap", 16385.0),
+            ("inodeBitmap", 16386.0),
+            ("inodeTable", 16387.0),
+        ],
+    );
+
+    assert_not_ext(fresh().ext_geometry().unwrap_err());
+}
+
+#[wasm_bindgen_test]
+fn ext_superblock_reports_the_counts_uuid_and_label() {
+    let sb = fresh_ext3().ext_superblock().unwrap();
+    assert_nums(
+        &sb,
+        &[
+            ("inodesCount", 1024.0),
+            ("blocksCount", 16384.0),
+            ("reservedBlocks", 0.0),
+            ("freeBlocks", 15205.0),
+            ("freeInodes", 1013.0),
+            ("firstDataBlock", 1.0),
+            ("logBlockSize", 0.0),
+            ("blocksPerGroup", 8192.0),
+            ("inodesPerGroup", 512.0),
+            ("magic", 61267.0), // 0xEF53
+            ("state", 1.0),
+            ("revLevel", 1.0),
+            ("firstIno", 11.0),
+            ("inodeSize", 128.0),
+            ("featureCompat", 4.0),   // has_journal
+            ("featureIncompat", 2.0), // filetype
+            ("featureRoCompat", 1.0), // sparse_super
+            ("journalInum", 8.0),
+            ("defaultMountOpts", 64.0), // ordered
+            ("mtime", 0.0),
+            ("wtime", 315532800.0), // 1980-01-01, the default clock
+            ("mntCount", 0.0),
+        ],
+    );
+    assert_eq!(text_of(&sb, "uuid"), "e2f5ee00-2026-4923-8000-000000000001");
+    assert_eq!(text_of(&sb, "label"), "");
+
+    // The counters follow the volume.
+    let busy = ext3_with_files().ext_superblock().unwrap();
+    assert_nums(&busy, &[("freeBlocks", 15189.0), ("freeInodes", 1010.0)]);
+
+    // Options reach it; ext2 has no journal inode.
+    let mut e = Volume::format_ext2(obj(&[
+        ("label", JsValue::from_str("teach")),
+        (
+            "uuid",
+            JsValue::from_str("0123456789ABCDEF0123456789abcdef"),
+        ),
+    ]))
+    .unwrap();
+    let sb = e.ext_superblock().unwrap();
+    assert_eq!(text_of(&sb, "label"), "teach");
+    assert_eq!(text_of(&sb, "uuid"), "01234567-89ab-cdef-0123-456789abcdef");
+    assert_nums(&sb, &[("journalInum", 0.0), ("featureCompat", 0.0)]);
+
+    // The label is lossy UTF-8: a raw 0xFF byte reads as U+FFFD.
+    e.write_raw(1024 + 120, &[0xFF]).unwrap();
+    assert_eq!(
+        text_of(&e.ext_superblock().unwrap(), "label"),
+        "\u{FFFD}each"
+    );
+
+    assert_not_ext(fresh().ext_superblock().unwrap_err());
+}
+
+/// `(inode, path, role)` of one `ExtBlockOwner` row.
+fn owner_of(row: &JsValue) -> (f64, String, String) {
+    (
+        num(row, "inode"),
+        text_of(row, "path"),
+        text_of(row, "role"),
+    )
+}
+
+#[wasm_bindgen_test]
+fn block_owners_ascend_by_block_and_name_their_role() {
+    let rows: Vec<JsValue> = Array::from(&ext3_with_files().block_owners().unwrap())
+        .iter()
+        .collect();
+    let blocks: Vec<f64> = rows.iter().map(|r| num(r, "block")).collect();
+    assert!(blocks.windows(2).all(|w| w[0] < w[1]));
+    // Root 1, lost+found 12, the journal 1024 + 5 pointer blocks, /docs 1,
+    // /hello.txt 1, /bigger.txt 13 + 1.
+    assert_eq!(rows.len(), 1058);
+    assert_eq!((blocks[0], blocks[rows.len() - 1]), (69.0, 1126.0));
+    let at = |block: f64| owner_of(&rows[blocks.iter().position(|&b| b == block).unwrap()]);
+    let row = |inode: f64, path: &str, role: &str| (inode, path.to_string(), role.to_string());
+    assert_eq!(at(69.0), row(2.0, "/", "directory"));
+    assert_eq!(at(70.0), row(11.0, "/lost+found", "directory"));
+    assert_eq!(at(81.0), row(11.0, "/lost+found", "directory"));
+    assert_eq!(at(82.0), row(8.0, "<journal>", "journal"));
+    assert_eq!(at(1105.0), row(8.0, "<journal>", "journal"));
+    for pointer in 1106..=1110 {
+        assert_eq!(at(pointer as f64), row(8.0, "<journal>", "indirect"));
+    }
+    assert_eq!(at(1111.0), row(12.0, "/docs", "directory"));
+    assert_eq!(at(1112.0), row(13.0, "/hello.txt", "data"));
+    assert_eq!(at(1113.0), row(14.0, "/bigger.txt", "data"));
+    assert_eq!(at(1125.0), row(14.0, "/bigger.txt", "data"));
+    assert_eq!(at(1126.0), row(14.0, "/bigger.txt", "indirect"));
+
+    // ext2 has no journal: the root and lost+found only.
+    let ext2 = Array::from(&fresh_ext().block_owners().unwrap());
+    assert_eq!(ext2.length(), 13);
+    assert!(ext2.iter().all(|r| text_of(&r, "role") == "directory"));
+
+    assert_not_ext(fresh().block_owners().unwrap_err());
+}
+
+#[wasm_bindgen_test]
+fn inode_number_resolves_a_path_like_lookup() {
+    let v = ext3_with_files();
+    for (path, ino) in [
+        ("/", 2),
+        ("/lost+found", 11),
+        ("/docs", 12),
+        ("/hello.txt", 13),
+        ("/bigger.txt", 14),
+    ] {
+        assert_eq!(v.inode_number(path).unwrap(), ino, "{path}");
+    }
+    assert_eq!(code(v.inode_number("/nope").unwrap_err()), "NotFound");
+    assert_eq!(code(v.inode_number("/docs/nope").unwrap_err()), "NotFound");
+    assert_eq!(
+        code(v.inode_number("/hello.txt/x").unwrap_err()),
+        "NotADirectory"
+    );
+    assert_eq!(code(v.inode_number("relative").unwrap_err()), "InvalidPath");
+    assert_not_ext(fresh().inode_number("/").unwrap_err());
+}
+
+#[wasm_bindgen_test]
+fn inode_number_is_corrupt_image_while_a_raw_write_breaks_the_superblock() {
+    let mut v = ext3_with_files();
+    // Zero the superblock's magic (block 1 + 0x38): the lookup goes through the corruption gate.
+    v.write_raw(1024 + 0x38, &[0, 0]).unwrap();
+    let err = v.inode_number("/hello.txt").unwrap_err();
+    assert_eq!(code(err.clone()), "CorruptImage");
+    assert!(
+        message(&err).contains("superblock or group descriptors no longer parse after a raw write")
+    );
+    // Writing the magic back repairs it.
+    v.write_raw(1024 + 0x38, &[0x53, 0xEF]).unwrap();
+    assert_eq!(v.inode_number("/hello.txt").unwrap(), 13);
+}
+
+#[wasm_bindgen_test]
+fn ext_inode_decodes_the_slot_and_names_its_offset() {
+    let v = ext3_with_files();
+    let slot = |inode: &JsValue| {
+        let s = get(inode, "slot");
+        (num(&s, "block"), num(&s, "offset"))
+    };
+
+    let root = v.ext_inode(2).unwrap();
+    assert_nums(
+        &root,
+        &[
+            ("ino", 2.0),
+            ("mode", 0o40755 as f64),
+            ("uid", 0.0),
+            ("gid", 0.0),
+            ("size", 1024.0),
+            ("links", 4.0), // ".", "..", lost+found's "..", /docs's ".."
+            ("blocks", 2.0),
+            ("flags", 0.0),
+            ("atime", 315532800.0),
+            ("ctime", 315532800.0),
+            ("mtime", 315532800.0),
+            ("dtime", 0.0),
+        ],
+    );
+    let mut want = vec![0.0; 15];
+    want[0] = 69.0;
+    assert_eq!(nums(&get(&root, "block")), want);
+    assert_eq!(slot(&root), (5.0, 5.0 * 1024.0 + 128.0));
+
+    let hello = v.ext_inode(13).unwrap();
+    assert_nums(
+        &hello,
+        &[
+            ("mode", 0o100644 as f64),
+            ("size", 12.0),
+            ("links", 1.0),
+            ("blocks", 2.0),
+        ],
+    );
+    assert_eq!(nums(&get(&hello, "block"))[0], 1112.0);
+    assert_eq!(slot(&hello), (6.0, 6.0 * 1024.0 + 0x200 as f64));
+
+    // Twelve direct pointers, then the single-indirect block.
+    let bigger = v.ext_inode(14).unwrap();
+    assert_nums(&bigger, &[("size", 13312.0), ("blocks", 28.0)]);
+    let mut want: Vec<f64> = (1113..=1124).map(f64::from).collect();
+    want.extend([1126.0, 0.0, 0.0]);
+    assert_eq!(nums(&get(&bigger, "block")), want);
+    assert_eq!(slot(&bigger), (6.0, 6.0 * 1024.0 + 0x280 as f64));
+
+    // The journal inode, and the last slot of group 1's table.
+    let journal = v.ext_inode(8).unwrap();
+    assert_eq!(num(&journal, "size"), 1048576.0);
+    assert_eq!(slot(&journal), (5.0, 5.0 * 1024.0 + 0x380 as f64));
+    let last = v.ext_inode(1024).unwrap();
+    assert_eq!(num(&last, "mode"), 0.0);
+    assert_eq!(slot(&last), (8260.0, 8260.0 * 1024.0 + 0x380 as f64));
+
+    assert_eq!(code(v.ext_inode(0).unwrap_err()), "NotFound");
+    assert_eq!(code(v.ext_inode(1025).unwrap_err()), "NotFound");
+    assert_not_ext(fresh().ext_inode(2).unwrap_err());
+}
+
+/// `(block, offset, inode, recLen, nameLen, fileType, name)` of every
+/// `ExtDirEntry` in a `dirEntries` result.
+type DirRow = (f64, f64, f64, f64, f64, f64, String);
+
+fn dir_rows(list: &JsValue) -> Vec<DirRow> {
+    Array::from(list)
+        .iter()
+        .map(|e| {
+            (
+                num(&e, "block"),
+                num(&e, "offset"),
+                num(&e, "inode"),
+                num(&e, "recLen"),
+                num(&e, "nameLen"),
+                num(&e, "fileType"),
+                text_of(&e, "name"),
+            )
+        })
+        .collect()
+}
+
+#[wasm_bindgen_test]
+fn dir_entries_list_every_record_with_absolute_offsets() {
+    let mut v = ext3_with_files();
+    let root = 69.0 * 1024.0;
+    let entry = |offset: f64, inode: f64, rec: f64, len: f64, ft: f64, name: &str| {
+        (69.0, root + offset, inode, rec, len, ft, name.to_string())
+    };
+    assert_eq!(
+        dir_rows(&v.dir_entries("/").unwrap()),
+        vec![
+            entry(0.0, 2.0, 12.0, 1.0, 2.0, "."),
+            entry(12.0, 2.0, 12.0, 2.0, 2.0, ".."),
+            entry(24.0, 11.0, 20.0, 10.0, 2.0, "lost+found"),
+            entry(44.0, 12.0, 12.0, 4.0, 2.0, "docs"),
+            entry(56.0, 13.0, 20.0, 9.0, 1.0, "hello.txt"),
+            entry(76.0, 14.0, 948.0, 10.0, 1.0, "bigger.txt"),
+        ]
+    );
+    let docs = 1111.0 * 1024.0;
+    assert_eq!(
+        dir_rows(&v.dir_entries("/docs").unwrap()),
+        vec![
+            (1111.0, docs, 12.0, 12.0, 1.0, 2.0, ".".to_string()),
+            (1111.0, docs + 12.0, 2.0, 1012.0, 2.0, 2.0, "..".to_string()),
+        ]
+    );
+
+    // A record whose inode is zeroed stays in the list, and a name is
+    // lossy UTF-8.
+    v.write_raw(69 * 1024 + 76, &[0, 0, 0, 0]).unwrap();
+    v.write_raw(69 * 1024 + 56 + 8, &[0xFF]).unwrap();
+    let rows = dir_rows(&v.dir_entries("/").unwrap());
+    assert_eq!(rows.len(), 6);
+    assert_eq!(
+        rows[4],
+        entry(56.0, 13.0, 20.0, 9.0, 1.0, "\u{FFFD}ello.txt")
+    );
+    assert_eq!(rows[5], entry(76.0, 0.0, 948.0, 10.0, 1.0, "bigger.txt"));
+
+    // The zeroed record no longer names a file.
+    assert_eq!(code(v.inode_number("/bigger.txt").unwrap_err()), "NotFound");
+
+    assert_eq!(code(v.dir_entries("/nope").unwrap_err()), "NotFound");
+    assert_eq!(code(v.dir_entries("/docs/..x").unwrap_err()), "NotFound");
+    assert_eq!(
+        code(ext3_with_files().dir_entries("/hello.txt").unwrap_err()),
+        "NotADirectory"
+    );
+    assert_not_ext(fresh().dir_entries("/").unwrap_err());
+}
+
+#[wasm_bindgen_test]
+fn file_blocks_list_data_in_logical_order_and_every_pointer_block() {
+    let mut v = ext3_with_files();
+    let blocks = |v: &Volume, path: &str| {
+        let fb = v.file_blocks(path).unwrap();
+        let indirect: Vec<(f64, f64)> = Array::from(&get(&fb, "indirect"))
+            .iter()
+            .map(|i| (num(&i, "block"), num(&i, "level")))
+            .collect();
+        (nums(&get(&fb, "data")), indirect)
+    };
+
+    assert_eq!(blocks(&v, "/hello.txt"), (vec![1112.0], vec![]));
+    assert_eq!(
+        blocks(&v, "/bigger.txt"),
+        ((1113..=1125).map(f64::from).collect(), vec![(1126.0, 1.0)])
+    );
+    assert_eq!(blocks(&v, "/"), (vec![69.0], vec![]));
+    assert_eq!(blocks(&v, "/docs"), (vec![1111.0], vec![]));
+    assert_eq!(
+        blocks(&v, "/lost+found"),
+        ((70..=81).map(f64::from).collect(), vec![])
+    );
+
+    // 269 blocks reach the double-indirect block: the single-indirect
+    // block (level 1), the double (level 2), and its one second-level
+    // block (level 1), after the data.
+    v.create_file("/huge.bin", &[7u8; 269 * 1024]).unwrap();
+    let (data, indirect) = blocks(&v, "/huge.bin");
+    assert_eq!(data, (1127..=1395).map(f64::from).collect::<Vec<_>>());
+    assert_eq!(indirect, vec![(1396.0, 1.0), (1397.0, 2.0), (1398.0, 1.0)]);
+
+    assert_eq!(code(v.file_blocks("/nope").unwrap_err()), "NotFound");
+    assert_not_ext(fresh().file_blocks("/").unwrap_err());
+}
