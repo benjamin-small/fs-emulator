@@ -41,6 +41,15 @@ describe("Fat16Adapter: identity and unit space", () => {
     expect(fs.totalSectors).toBe(32768);
   });
 
+  // The Operation bar's empty state: the mounted disk in one line, from its geometry.
+  it("sums the disk up in one line from the mounted geometry", () => {
+    expect(fixture().fs.summary()).toBe("FAT16 · 16 MB · 512-byte sectors · 2 KiB clusters");
+    // 8,192 sectors need one-sector clusters to stay in the FAT16 range; 21,504 is 10.5 MB.
+    expect(fat16.bind(fat16.format({ totalSectors: 8192, sectorsPerCluster: 1 })).summary()).toBe("FAT16 · 4 MB · 512-byte sectors · 512-byte clusters");
+    expect(fat16.bind(fat16.format({ totalSectors: 21504 })).summary()).toBe("FAT16 · 10.5 MB · 512-byte sectors · 2 KiB clusters");
+    expect(fat16.bind(fat16.format({ totalSectors: 65536, sectorsPerCluster: 8 })).summary()).toBe("FAT16 · 32 MB · 512-byte sectors · 4 KiB clusters");
+  });
+
   it("names its sector apart from its cluster, and has no journal to recover", () => {
     const { fs } = fixture();
     expect(fs.sector).toEqual({ singular: "sector", plural: "sectors", letter: "s" });

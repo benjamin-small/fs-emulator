@@ -4,7 +4,7 @@ import { FAMILIES } from "../src/fs";
 import { BIGGER, BIGGER_BYTES, biggerText, HELLO, HELLO_TEXT, scenario } from "../src/scenarios/extFundamentals";
 import { lessonHelpers } from "./fixtures/lesson";
 
-// "The fundamentals (ext)" quotes the default ext3 disk's numbers in its copy (block 69,
+// The ext tab's "The fundamentals" quotes the default ext3 disk's numbers in its copy (block 69,
 // 15,190 free blocks, inode 12 at block 6 + 0x180, ...). These tests pin every quoted number
 // to the volume the lesson runs on, and every step's resolved focus, so a change to the default
 // format cannot leave the lesson teaching stale arithmetic.
@@ -23,7 +23,7 @@ const setBits = (bytes: Uint8Array) => bytes.reduce((sum, b) => sum + b.toString
 describe("the ext fundamentals lesson", () => {
   it("runs on the default ext3 disk", () => {
     expect(scenario.id).toBe("ext-fundamentals");
-    expect(scenario.title).toBe("The fundamentals (ext)");
+    expect(scenario.title).toBe("The fundamentals");
     expect(scenario.family).toBe("ext");
     expect(FAMILIES[scenario.family].format().fsType()).toBe("ext3");
   });

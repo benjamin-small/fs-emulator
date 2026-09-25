@@ -1,20 +1,15 @@
 <script lang="ts">
   import { FAMILIES } from "../fs";
-  import type { FsFamilyId } from "../fs/adapter";
   import { PANELS } from "../fs/panels";
   import { getWorkspace, workspaces } from "../state/workspace.svelte";
 
   const ws = getWorkspace();
   const { volume, selection } = ws;
 
-  /** The family the Format details will format: the mounted one until the Filesystem select
-   *  picks another, and back to the mounted one whenever that changes (a format, a load). */
-  const mounted = $derived(volume.adapter.id);
-  let family = $state<FsFamilyId>(volume.adapter.id);
-  $effect(() => { family = mounted; });
-
-  /** The chosen family's Format form, from the panel registry. */
-  const FormatPanel = $derived(PANELS[family].format);
+  /** The tab's Format form, from the panel registry: a tab formats its own family only. */
+  const FormatPanel = PANELS[volume.family].format;
+  /** The types that form makes: "FAT16", "ext2 / ext3". */
+  const formatTypes = FAMILIES[volume.family].fsTypes.join(" / ");
 
   let path = $state("/Hello world.txt");
   let content = $state("Hello from the browser");
@@ -106,13 +101,7 @@
     </div>
 
     <details class="format">
-      <summary>Format</summary>
-      <label class="field">
-        Filesystem
-        <select id="format-family" bind:value={family}>
-          {#each Object.values(FAMILIES) as f}<option value={f.id}>{f.name}</option>{/each}
-        </select>
-      </label>
+      <summary>Format ({formatTypes})</summary>
       <FormatPanel />
     </details>
 

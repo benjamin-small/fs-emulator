@@ -189,6 +189,17 @@ describe("ExtAdapter: identity and unit space", () => {
     expect(() => ext.format({ variant: "ext2", journalMode: "data" })).toThrow("journalBlocks and journalMode need variant ext3");
   });
 
+  // The Operation bar's empty state: the mounted disk in one line, from its geometry and journal.
+  it("sums the disk up in one line: ext3 with its journal, ext2 without", () => {
+    expect(fixture().fs.summary()).toBe("ext3 · 16 MB · 16,384 1 KiB blocks in 2 groups · 1,024-block journal, ordered mode");
+    expect(ext.bind(ext.format({ variant: "ext2" })).summary()).toBe("ext2 · 16 MB · 16,384 1 KiB blocks in 2 groups · no journal");
+    expect(ext.bind(ext.format({ totalBlocks: 65536 })).summary()).toBe("ext3 · 64 MB · 65,536 1 KiB blocks in 8 groups · 4,096-block journal, ordered mode");
+    // One group is "group"; a data-mode journal says so; 10,752 blocks is 10.5 MB.
+    expect(ext.bind(ext.format({ variant: "ext2", totalBlocks: 4096 })).summary()).toBe("ext2 · 4 MB · 4,096 1 KiB blocks in 1 group · no journal");
+    expect(ext.bind(ext.format({ totalBlocks: 4096, journalMode: "data" })).summary()).toBe("ext3 · 4 MB · 4,096 1 KiB blocks in 1 group · 1,024-block journal, data mode");
+    expect(ext.bind(ext.format({ totalBlocks: 10752 })).summary()).toBe("ext3 · 10.5 MB · 10,752 1 KiB blocks in 2 groups · 1,024-block journal, ordered mode");
+  });
+
   it("does block arithmetic over the volume's geometry", () => {
     const { fs } = fixture();
     expect(fs.unit).toBe(EXT_UNIT);

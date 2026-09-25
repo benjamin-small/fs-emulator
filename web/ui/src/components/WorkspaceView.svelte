@@ -19,24 +19,25 @@
   setWorkspace(ws);
 
   /** The map panel of the tab's family (the FAT map, the block-group map), from the panel
-   *  registry. The family's extra panels follow it in order. */
+   *  registry. The family's aside panels (ext: the Journal) head the right column. */
   const MapPanel = $derived(PANELS[ws.id].map);
 </script>
 
 <!-- The current step sits with the other controls, under the picker and the Terminal
-     button, so the right column is left to state and data (Lesson, Strings, Inspector). The
-     slots are classes, not ids: every opened tab has its own. -->
+     button, so the right column is left to state and data (the family's aside panels, such as
+     ext's Journal, then Strings and the Inspector). The slots are classes, not ids: every
+     opened tab has its own. -->
 <div class="step-slot"><StepPanel /></div>
 <div class="ribbon-slot"><Ribbon /></div>
 <div class="grid">
   <aside class="col left">
     <DirTree />
     <MapPanel />
-    {#each PANELS[ws.id].extras as Extra}<Extra />{/each}
     <ActionsPanel />
   </aside>
   <main class="col center"><HexView /></main>
   <aside class="col right">
+    {#each PANELS[ws.id].aside as Aside}<Aside />{/each}
     <StringsPanel />
     <Inspector />
   </aside>

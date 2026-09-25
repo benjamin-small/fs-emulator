@@ -1,4 +1,5 @@
 import type { CommandDef } from "./types";
+import { articleFor } from "../core/loadNotice";
 import { FAMILIES } from "../fs";
 import type { FsFamily, MkfsFlag } from "../fs/adapter";
 import { flagGiven } from "./bytes";
@@ -62,9 +63,6 @@ export function mkfsFlagsFor(families: Readonly<Record<string, FsFamily>>): Omit
   }));
 }
 
-/** `a` or `an` before `word`, by its first letter (`an ext3`, `a FAT16`). */
-const article = (word: string): string => (/^[aeiou]/i.test(word) ? "an" : "a");
-
 /** `mkfs`: format `/dev/hda` as `--type` (default: the mounted volume's type), one of the tab's
  *  family's types, with that family's flags; the done line names the type the new volume reports. */
 export function mkfsCommand(host: ShellHost, vfs: Vfs): CommandDef {
@@ -91,13 +89,13 @@ export function mkfsCommand(host: ShellHost, vfs: Vfs): CommandDef {
       const owner = familyOfType(type);
       if (!owner) throw new ShellError(`unknown type '${type}'`, { help: typesHelp });
       if (owner.id !== family.id) {
-        throw new ShellError(`'${type}' is ${article(owner.name)} ${owner.name} type: switch to the ${owner.name} tab to format one`, { help: typesHelp });
+        throw new ShellError(`'${type}' is ${articleFor(owner.name)} ${owner.name} type: switch to the ${owner.name} tab to format one`, { help: typesHelp });
       }
       // browser-terminal refuses a flag the spec does not list before this runs; a caller that
       // bypasses the parser (the tests) still gets a refusal naming the type.
       for (const [long, v] of Object.entries(args.flags)) {
         if (long !== "type" && flagGiven(v) && !flags.some((f) => f.long === long)) {
-          throw new ShellError(`--${long} is not ${article(type)} ${type} option`);
+          throw new ShellError(`--${long} is not ${articleFor(type)} ${type} option`);
         }
       }
       // A family with several types (ext: ext2, ext3) takes the one asked for as its `variant`.
