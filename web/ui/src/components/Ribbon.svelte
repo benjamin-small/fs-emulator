@@ -1,6 +1,7 @@
 <script lang="ts">
   import { untrack } from "svelte";
   import { attrAtSector, type Attr } from "../core/attribution";
+  import { freeSpaceLabel } from "../core/freeSpace";
   import { colorIndexForPath } from "../core/palette";
   import { buildTree, type TreeNode } from "../core/tree";
   import type { Region } from "../lib/wasm";
@@ -224,10 +225,11 @@
 
   const caption = $derived.by(() => {
     if (hoverCol === null) return "";
+    volume.epoch;
     const total = volume.totalSectors;
     const sector = Math.min(hoverCol * sectorsPerCol, Math.max(0, total - 1));
     const attr: Attr = attrAtSector(volume.attribution, sector);
-    return `sector ${sector} · ${attr.ownerPath ?? attr.regionName}`;
+    return `${volume.adapter.sector.singular} ${sector} · ${attr.ownerPath ?? attr.regionName}`;
   });
 
   function metaLabel(r: Region): string {
@@ -256,14 +258,9 @@
     return out;
   });
 
-  const freeLabel = $derived.by(() => {
-    volume.epoch;
-    const { unit, unitCount, unitSize } = volume.adapter;
-    const owner = volume.attribution.ownerByUnit;
-    let free = 0;
-    for (let u = unit.first; u < unit.first + unitCount; u++) if (owner[u] < 0) free++;
-    return `${((free * unitSize) / (1024 * 1024)).toFixed(1)} MB free`;
-  });
+  // The family's free count: on FAT the units no file owns, as always; on ext the superblock's,
+  // because the inode tables, the bitmaps, and the journal have no owner and are not free.
+  const freeLabel = $derived.by(() => { volume.epoch; return freeSpaceLabel(volume.adapter); });
 </script>
 
 <svelte:window onmouseup={onUp} />

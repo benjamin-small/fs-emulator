@@ -458,6 +458,314 @@ impl From<ext::JournalBlock> for JournalBlock {
     }
 }
 
+/// One block group of `extGeometry()`: where its structures live (from
+/// `ext::GroupLayout`) and its counters (from the primary group
+/// descriptor). `superblockBlock` and `descriptorsBlock` are `null` in a
+/// group `sparse_super` gives no backup.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtGroup {
+    pub index: u32,
+    pub first_block: u32,
+    pub block_count: u32,
+    pub superblock_block: Option<u32>,
+    pub descriptors_block: Option<u32>,
+    pub block_bitmap: u32,
+    pub inode_bitmap: u32,
+    pub inode_table: u32,
+    pub first_data: u32,
+    pub free_blocks: u16,
+    pub free_inodes: u16,
+    pub used_dirs: u16,
+}
+
+/// `extGeometry()`: the numbers every ext panel derives from the superblock,
+/// and each group's layout and counters.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtGeometry {
+    pub block_size: u32,
+    pub total_blocks: u32,
+    pub first_data_block: u32,
+    pub blocks_per_group: u32,
+    pub inodes_per_group: u32,
+    pub inodes_count: u32,
+    pub inode_size: u16,
+    pub inode_table_blocks: u32,
+    pub descriptor_blocks: u32,
+    pub groups: Vec<ExtGroup>,
+}
+
+impl ExtGeometry {
+    /// Merge the layout with the primary descriptors, group by group.
+    pub fn new(geo: &ext::Geometry, gds: &[ext::GroupDescriptor]) -> Self {
+        let groups = geo
+            .groups_layout
+            .iter()
+            .map(|g| {
+                let gd = gds.get(g.index as usize).copied().unwrap_or_default();
+                ExtGroup {
+                    index: g.index,
+                    first_block: g.first_block,
+                    block_count: g.block_count,
+                    superblock_block: g.superblock_block,
+                    descriptors_block: g.descriptors_block,
+                    block_bitmap: g.block_bitmap,
+                    inode_bitmap: g.inode_bitmap,
+                    inode_table: g.inode_table,
+                    first_data: g.first_data,
+                    free_blocks: gd.free_blocks_count,
+                    free_inodes: gd.free_inodes_count,
+                    used_dirs: gd.used_dirs_count,
+                }
+            })
+            .collect();
+        ExtGeometry {
+            block_size: geo.block_size,
+            total_blocks: geo.total_blocks,
+            first_data_block: geo.first_data_block,
+            blocks_per_group: geo.blocks_per_group,
+            inodes_per_group: geo.inodes_per_group,
+            inodes_count: geo.inodes_count,
+            inode_size: ext::INODE_SIZE,
+            inode_table_blocks: geo.inode_table_blocks,
+            descriptor_blocks: geo.descriptor_blocks,
+            groups,
+        }
+    }
+}
+
+/// The 16 UUID bytes as lower-case hex, hyphenated 8-4-4-4-12.
+pub fn uuid_text(bytes: &[u8; 16]) -> String {
+    let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    format!(
+        "{}-{}-{}-{}-{}",
+        &hex[0..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..32]
+    )
+}
+
+/// The bytes up to the first NUL, as lossy UTF-8.
+pub fn nul_trimmed(bytes: &[u8]) -> String {
+    let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
+    String::from_utf8_lossy(&bytes[..end]).into_owned()
+}
+
+/// `extSuperblock()`: the primary superblock's fields the explorer shows.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtSuperblock {
+    pub inodes_count: u32,
+    pub blocks_count: u32,
+    pub reserved_blocks: u32,
+    pub free_blocks: u32,
+    pub free_inodes: u32,
+    pub first_data_block: u32,
+    pub log_block_size: u32,
+    pub blocks_per_group: u32,
+    pub inodes_per_group: u32,
+    pub magic: u16,
+    pub state: u16,
+    pub rev_level: u32,
+    pub first_ino: u32,
+    pub inode_size: u16,
+    pub feature_compat: u32,
+    pub feature_incompat: u32,
+    pub feature_ro_compat: u32,
+    pub uuid: String,
+    pub label: String,
+    pub journal_inum: u32,
+    pub default_mount_opts: u32,
+    pub mtime: u32,
+    pub wtime: u32,
+    pub mnt_count: u16,
+}
+
+impl From<&ext::Superblock> for ExtSuperblock {
+    fn from(sb: &ext::Superblock) -> Self {
+        ExtSuperblock {
+            inodes_count: sb.inodes_count,
+            blocks_count: sb.blocks_count,
+            reserved_blocks: sb.r_blocks_count,
+            free_blocks: sb.free_blocks_count,
+            free_inodes: sb.free_inodes_count,
+            first_data_block: sb.first_data_block,
+            log_block_size: sb.log_block_size,
+            blocks_per_group: sb.blocks_per_group,
+            inodes_per_group: sb.inodes_per_group,
+            magic: sb.magic,
+            state: sb.state,
+            rev_level: sb.rev_level,
+            first_ino: sb.first_ino,
+            inode_size: sb.inode_size,
+            feature_compat: sb.feature_compat,
+            feature_incompat: sb.feature_incompat,
+            feature_ro_compat: sb.feature_ro_compat,
+            uuid: uuid_text(&sb.uuid),
+            label: nul_trimmed(&sb.volume_name),
+            journal_inum: sb.journal_inum,
+            default_mount_opts: sb.default_mount_opts,
+            mtime: sb.mtime,
+            wtime: sb.wtime,
+            mnt_count: sb.mnt_count,
+        }
+    }
+}
+
+/// `ext::BlockRole` as the string `ExtBlockOwner.role` carries.
+pub fn block_role_name(role: ext::BlockRole) -> &'static str {
+    match role {
+        ext::BlockRole::Data => "data",
+        ext::BlockRole::Directory => "directory",
+        ext::BlockRole::Indirect => "indirect",
+        ext::BlockRole::Journal => "journal",
+    }
+}
+
+/// One row of `blockOwners()`: the inode and path a block belongs to and
+/// what it holds (`data`, `directory`, `indirect`, or `journal`). The
+/// journal's rows, its pointer blocks included, carry the path `<journal>`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtBlockOwner {
+    pub block: u32,
+    pub inode: u32,
+    pub path: String,
+    pub role: String,
+}
+
+/// Sorted by block (BTreeMap order).
+pub fn ext_owners_to_list(map: &BTreeMap<u32, ext::BlockOwner>) -> Vec<ExtBlockOwner> {
+    map.iter()
+        .map(|(&block, o)| ExtBlockOwner {
+            block,
+            inode: o.inode,
+            path: o.path.clone(),
+            role: block_role_name(o.role).to_string(),
+        })
+        .collect()
+}
+
+/// Where an inode's 128 bytes live: the inode-table block and the absolute
+/// byte offset of the slot on the disk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtInodeSlot {
+    pub block: u32,
+    pub offset: u64,
+}
+
+/// `extInode(ino)`: the decoded inode and its slot. `blocks` is `i_blocks`,
+/// in 512-byte units; `block` is all 15 pointers.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtInode {
+    pub ino: u32,
+    pub mode: u16,
+    pub uid: u16,
+    pub gid: u16,
+    pub size: u32,
+    pub links: u16,
+    pub blocks: u32,
+    pub flags: u32,
+    pub atime: u32,
+    pub ctime: u32,
+    pub mtime: u32,
+    pub dtime: u32,
+    pub block: Vec<u32>,
+    pub slot: ExtInodeSlot,
+}
+
+impl ExtInode {
+    /// `ino` must be in `1..=geo.inodes_count` (`ExtFs::inode` checks it).
+    pub fn new(ino: u32, inode: &ext::Inode, geo: &ext::Geometry) -> Self {
+        let (block, in_block) = geo.inode_location(ino);
+        ExtInode {
+            ino,
+            mode: inode.mode,
+            uid: inode.uid,
+            gid: inode.gid,
+            size: inode.size,
+            links: inode.links_count,
+            blocks: inode.blocks,
+            flags: inode.flags,
+            atime: inode.atime,
+            ctime: inode.ctime,
+            mtime: inode.mtime,
+            dtime: inode.dtime,
+            block: inode.block.to_vec(),
+            slot: ExtInodeSlot {
+                block,
+                offset: u64::from(block) * u64::from(geo.block_size) + in_block as u64,
+            },
+        }
+    }
+}
+
+/// One record of `dirEntries(path)`: the block holding it, its absolute
+/// byte offset on the disk, and its fields; `name` is lossy UTF-8.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtDirEntry {
+    pub block: u32,
+    pub offset: u64,
+    pub inode: u32,
+    pub rec_len: u16,
+    pub name_len: u8,
+    pub file_type: u8,
+    pub name: String,
+}
+
+impl ExtDirEntry {
+    /// The entry `ExtFs::dir_entries` found at `offset` bytes into `block`.
+    pub fn new(block: u32, offset: usize, e: &ext::DirEntry) -> Self {
+        ExtDirEntry {
+            block,
+            offset: u64::from(block) * u64::from(ext::BLOCK_SIZE) + offset as u64,
+            inode: e.inode,
+            rec_len: e.rec_len,
+            name_len: e.name_len,
+            file_type: e.file_type,
+            name: String::from_utf8_lossy(&e.name).into_owned(),
+        }
+    }
+}
+
+/// One pointer block of `fileBlocks(path)`: level 1 is a single-indirect
+/// block or a second-level block under the double, level 2 the
+/// double-indirect block.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtIndirectBlock {
+    pub block: u32,
+    pub level: u8,
+}
+
+/// `fileBlocks(path)`: the data blocks in logical order and the pointer
+/// blocks in the order they are referenced.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtFileBlocks {
+    pub data: Vec<u32>,
+    pub indirect: Vec<ExtIndirectBlock>,
+}
+
+impl ExtFileBlocks {
+    /// `blockmap::file_blocks` and `blockmap::indirect_blocks` of `inode`.
+    pub fn new(disk: &fs_core::Disk, inode: &ext::Inode) -> Self {
+        ExtFileBlocks {
+            data: ext::blockmap::file_blocks(disk, inode),
+            indirect: ext::blockmap::indirect_blocks(disk, inode)
+                .into_iter()
+                .map(|(block, level)| ExtIndirectBlock { block, level })
+                .collect(),
+        }
+    }
+}
+
 fn text(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).trim_end().to_string()
 }
@@ -1254,5 +1562,136 @@ mod tests {
         assert_eq!(list[1].first_cluster, 3);
         let back: BTreeMap<u32, fat::ClusterOwner> = owners_from_list(list);
         assert_eq!(back, map);
+    }
+
+    #[test]
+    fn ext_uuids_print_hyphenated_and_labels_stop_at_the_first_nul() {
+        assert_eq!(
+            uuid_text(&ext::DEFAULT_UUID),
+            "e2f5ee00-2026-4923-8000-000000000001"
+        );
+        assert_eq!(
+            uuid_text(&[0xAB; 16]),
+            "abababab-abab-abab-abab-abababababab"
+        );
+        assert_eq!(nul_trimmed(b"teach\0\0\0"), "teach");
+        assert_eq!(nul_trimmed(b"a\0b"), "a");
+        assert_eq!(nul_trimmed(b""), "");
+        assert_eq!(nul_trimmed(b"sixteen-bytes!!!"), "sixteen-bytes!!!");
+        assert_eq!(nul_trimmed(&[0xFF, b'x', 0]), "\u{FFFD}x");
+    }
+
+    #[test]
+    fn ext_geometry_and_superblock_map_the_default_disk() {
+        let fs = ext::ExtFs::format(ext::ExtFormatOptions::ext3()).unwrap();
+        let geo = ExtGeometry::new(fs.geometry(), fs.group_descriptors());
+        assert_eq!(
+            (geo.total_blocks, geo.inodes_count, geo.inode_size),
+            (16384, 1024, 128)
+        );
+        assert_eq!(
+            geo.groups[0],
+            ExtGroup {
+                index: 0,
+                first_block: 1,
+                block_count: 8192,
+                superblock_block: Some(1),
+                descriptors_block: Some(2),
+                block_bitmap: 3,
+                inode_bitmap: 4,
+                inode_table: 5,
+                first_data: 69,
+                free_blocks: 7082,
+                free_inodes: 501,
+                used_dirs: 2,
+            }
+        );
+        let sb = ExtSuperblock::from(fs.superblock());
+        assert_eq!((sb.free_blocks, sb.free_inodes), (15205, 1013));
+        assert_eq!(sb.uuid, "e2f5ee00-2026-4923-8000-000000000001");
+        assert_eq!((sb.label.as_str(), sb.journal_inum), ("", 8));
+    }
+
+    #[test]
+    fn ext_owner_rows_carry_role_strings_in_block_order() {
+        assert_eq!(block_role_name(ext::BlockRole::Data), "data");
+        assert_eq!(block_role_name(ext::BlockRole::Directory), "directory");
+        assert_eq!(block_role_name(ext::BlockRole::Indirect), "indirect");
+        assert_eq!(block_role_name(ext::BlockRole::Journal), "journal");
+        let fs = ext::ExtFs::format(ext::ExtFormatOptions::ext3()).unwrap();
+        let list = ext_owners_to_list(&fs.block_owners());
+        assert_eq!(list.len(), 13 + 1024 + 5);
+        assert!(list.windows(2).all(|w| w[0].block < w[1].block));
+        assert_eq!(
+            list[0],
+            ExtBlockOwner {
+                block: 69,
+                inode: 2,
+                path: "/".into(),
+                role: "directory".into()
+            }
+        );
+        assert_eq!(
+            list.last().unwrap(),
+            &ExtBlockOwner {
+                block: 1110,
+                inode: 8,
+                path: "<journal>".into(),
+                role: "indirect".into()
+            }
+        );
+    }
+
+    #[test]
+    fn ext_inode_slot_offsets_are_absolute() {
+        let fs = ext::ExtFs::format(ext::ExtFormatOptions::ext3()).unwrap();
+        let root = ExtInode::new(2, &fs.inode(2).unwrap(), fs.geometry());
+        assert_eq!(
+            root.slot,
+            ExtInodeSlot {
+                block: 5,
+                offset: 5 * 1024 + 0x80
+            }
+        );
+        assert_eq!((root.mode, root.links, root.block.len()), (0o40755, 3, 15));
+        assert_eq!(root.block[0], 69);
+        let lf = ExtInode::new(11, &fs.inode(11).unwrap(), fs.geometry());
+        assert_eq!(lf.slot.offset, 6 * 1024 + 0x100);
+        assert_eq!((lf.size, lf.blocks), (12288, 24));
+    }
+
+    #[test]
+    fn ext_dir_entries_and_file_blocks_map_the_default_disk() {
+        let mut fs = ext::ExtFs::format(ext::ExtFormatOptions::ext3()).unwrap();
+        fs.create_file("/bigger.txt", &[b'x'; 13312]).unwrap();
+        let rows: Vec<ExtDirEntry> = fs
+            .dir_entries("/")
+            .unwrap()
+            .iter()
+            .map(|(block, offset, e)| ExtDirEntry::new(*block, *offset, e))
+            .collect();
+        assert_eq!(rows.len(), 4);
+        assert_eq!(
+            rows[3],
+            ExtDirEntry {
+                block: 69,
+                offset: 69 * 1024 + 44,
+                inode: 12,
+                rec_len: 980,
+                name_len: 10,
+                file_type: 1,
+                name: "bigger.txt".into(),
+            }
+        );
+        let inode = fs.inode(fs.lookup("/bigger.txt").unwrap()).unwrap();
+        let blocks = ExtFileBlocks::new(fs.disk(), &inode);
+        assert_eq!(blocks.data, (1111..=1123).collect::<Vec<u32>>());
+        assert_eq!(
+            blocks.indirect,
+            vec![ExtIndirectBlock {
+                block: 1124,
+                level: 1
+            }]
+        );
     }
 }

@@ -1,10 +1,18 @@
 <script lang="ts">
   import { volume } from "../state/volume.svelte";
   import { selection } from "../state/selection.svelte";
+  import { FAMILIES } from "../fs";
+  import type { FsFamilyId } from "../fs/adapter";
   import { PANELS } from "../fs/panels";
 
-  /** The Format form of the mounted volume's family, from the panel registry. */
-  const FormatPanel = $derived(PANELS[volume.adapter.id].format);
+  /** The family the Format details will format: the mounted one until the Filesystem select
+   *  picks another, and back to the mounted one whenever that changes (a format, a load). */
+  const mounted = $derived(volume.adapter.id);
+  let family = $state<FsFamilyId>(volume.adapter.id);
+  $effect(() => { family = mounted; });
+
+  /** The chosen family's Format form, from the panel registry. */
+  const FormatPanel = $derived(PANELS[family].format);
 
   let path = $state("/Hello world.txt");
   let content = $state("Hello from the browser");
@@ -96,6 +104,12 @@
 
     <details class="format">
       <summary>Format</summary>
+      <label class="field">
+        Filesystem
+        <select id="format-family" bind:value={family}>
+          {#each Object.values(FAMILIES) as f}<option value={f.id}>{f.name}</option>{/each}
+        </select>
+      </label>
       <FormatPanel />
     </details>
 

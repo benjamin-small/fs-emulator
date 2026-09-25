@@ -1,16 +1,14 @@
-import { Volume, type Annotation, type ClusterOwner, type FatEntry, type FormatOptions, type Geometry, type Region, type RegionKind } from "../../lib/wasm";
+import { Volume, type Annotation, type ClusterOwner, type FatEntry, type FormatOptions, type Geometry } from "../../lib/wasm";
 import type { Interval } from "../../core/intervals";
-import type { ColorIndex } from "../../core/palette";
 import type { ByteChangeLike } from "../../core/patch";
-import type { DfFacts, FsAdapter, FsFamily, FsFamilyId, StatFacts, TraceRow, UnitOwner, UnitSpace, UnitVocab } from "../adapter";
+import type { DfFacts, FsAdapter, FsFamily, FsFamilyId, StatFacts, TraceRow, UnitOwner, UnitSpace } from "../adapter";
+import { SpaceAdapter, hexAddr } from "../base";
 import { findEntrySlots } from "./direntry";
 import { buildChain, describeFatEntry } from "./fatchain";
 import { MKFS } from "./format";
 import { fat16Space } from "./geometry";
 import { CORRUPT_NOTE, NOTES, touchesBootSector } from "./metadata";
 import { findRemnants } from "./remnants";
-
-const hexAddr = (n: number): string => `0x${n.toString(16)}`;
 
 /** wasm's row in the generic shape. The raw rows are kept too, for the helpers that take `ClusterOwner[]`. */
 function toUnitOwner(o: ClusterOwner): UnitOwner {
@@ -22,9 +20,10 @@ function toUnitOwner(o: ClusterOwner): UnitOwner {
  * `refreshMeta` made before the seam (`geometry`, `clusterOwners`, `fatEntries(0)`), unguarded,
  * so a corrupt volume behaves exactly as it did: the FAT crate answers from its last good
  * geometry, and the directory walks inside `entrySlots` and `remnants` absorb `CorruptImage`
- * themselves. Every cache is a plain field (see the reactivity rule in fs/adapter.ts).
+ * themselves. Every cache is a plain field (see the reactivity rule in fs/adapter.ts). The unit
+ * arithmetic, `ownerOf`, and `regionStart` are the shared `SpaceAdapter`'s (fs/base.ts).
  */
-export class Fat16Adapter implements FsAdapter {
+export class Fat16Adapter extends SpaceAdapter implements FsAdapter {
   readonly id: FsFamilyId = "fat16";
   readonly name = "FAT16";
   readonly family: FsFamily<FormatOptions> = fat16;
@@ -35,11 +34,14 @@ export class Fat16Adapter implements FsAdapter {
   owners: UnitOwner[] = [];
   readonly corruptNote = CORRUPT_NOTE;
   readonly notes = NOTES;
+  /** FAT has no journal, so there is never a transaction to recover (and no `journal`). */
+  readonly needsRecovery = false;
+  protected space!: UnitSpace;
   private geo!: Geometry;
-  private space!: UnitSpace;
   private rawOwners: ClusterOwner[] = [];
 
   constructor(vol: Volume) {
+    super();
     this.vol = vol;
     this.refresh();
   }
@@ -50,22 +52,6 @@ export class Fat16Adapter implements FsAdapter {
     this.rawOwners = this.vol.clusterOwners();
     this.owners = this.rawOwners.map(toUnitOwner);
     this.fat = this.vol.fatEntries(0);
-  }
-
-  // UnitSpace, over the geometry the last refresh() read.
-  get unit(): UnitVocab { return this.space.unit; }
-  get unitCount(): number { return this.space.unitCount; }
-  get unitSize(): number { return this.space.unitSize; }
-  get sectorSize(): number { return this.space.sectorSize; }
-  get totalSectors(): number { return this.space.totalSectors; }
-  unitOfSector(sector: number): number | undefined { return this.space.unitOfSector(sector); }
-  unitByteRange(unit: number): Interval { return this.space.unitByteRange(unit); }
-  unitOfOffset(offset: number): number | undefined { return this.space.unitOfOffset(offset); }
-  unitStartsAt(sector: number): boolean { return this.space.unitStartsAt(sector); }
-  colorForRegion(region: Region): ColorIndex { return this.space.colorForRegion(region); }
-
-  ownerOf(path: string): UnitOwner | undefined {
-    return this.owners.find((o) => o.path === path);
   }
 
   chain(path: string): number[] {
@@ -85,10 +71,6 @@ export class Fat16Adapter implements FsAdapter {
     if (path === "/") return this.geo.firstRootDirSector * this.geo.bytesPerSector;
     const owner = this.ownerOf(path);
     return owner ? this.unitByteRange(owner.firstUnit).start : null;
-  }
-
-  regionStart(kind: RegionKind): number | undefined {
-    return this.vol.layout().find((r) => r.kind === kind)?.sectors.start;
   }
 
   /** Byte offset of `cluster`'s 16-bit entry in FAT copy `copy`; copy 0 is the one the explorer reads. */
@@ -168,6 +150,7 @@ export class Fat16Adapter implements FsAdapter {
 export const fat16: FsFamily<FormatOptions> = {
   id: "fat16",
   name: "FAT16",
+  fsTypes: ["FAT16"],
   format: (options) => Volume.formatFat16(options),
   bind: (vol) => new Fat16Adapter(vol),
   mkfs: MKFS,

@@ -101,7 +101,7 @@ cd web/ui && pnpm install && pnpm dev       # or web/demo
 
 ## Development
 
-The supported toolchain is Rust 1.87 or newer, Node.js 22, pnpm 10, and
+The supported toolchain is Rust 1.87 or newer, Node.js 22, pnpm 12, and
 wasm-pack 0.15. Install `e2fsprogs` to run the external ext2 compatibility
 checks; CI treats those tools as required.
 

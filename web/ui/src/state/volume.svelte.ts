@@ -3,7 +3,7 @@ import { buildAttribution, type AttributionTable } from "../core/attribution";
 import { applyChanges, changedSectors } from "../core/patch";
 import { rescanSectors, scanZeroSectors } from "../core/zeros";
 import { DEFAULT_FAMILY, FAMILIES, adapterFor } from "../fs";
-import type { FsAdapter, FsFamilyId } from "../fs/adapter";
+import type { CrashPhase, FsAdapter, FsFamilyId } from "../fs/adapter";
 import { selection } from "./selection.svelte";
 
 export class VolumeStore {
@@ -26,6 +26,14 @@ export class VolumeStore {
    *  `null` while mounted. Refreshed alongside the adapter, so it tracks the volume
    *  through every op, format, and load. */
   corruption = $state<string | null>(null);
+  /** True while the journal holds an unfinished transaction (the adapter's `needsRecovery`;
+   *  always false on FAT and ext2). Refreshed with the adapter, like `corruption`. */
+  needsRecovery = $state(false);
+  /** The crash phase armed in the mounted journal, or null (always null without a journal).
+   *  Arming is not an op, so it moves neither the timeline nor `epoch`: this field is how the
+   *  Journal panel shows a phase the terminal's `crash` armed, and the reverse. `refreshMeta`
+   *  re-reads it, because the next op uses the phase up and a format or load binds a new journal. */
+  armedPhase = $state<CrashPhase | null>(null);
 
   // `epoch` is read first on purpose: `adapter.owners` is a plain field, so nothing else
   // in this expression would re-run it after an op.
@@ -57,6 +65,22 @@ export class VolumeStore {
     // `corruption()` is on the `FileSystem` trait, so every family answers it and it cannot
     // throw `NotFat`; no guard is needed.
     this.corruption = this.vol.corruption();
+    this.needsRecovery = this.adapter.needsRecovery;
+    this.armedPhase = this.adapter.journal?.phase() ?? null;
+  }
+
+  /** Arm a crash in the mounted journal, so its next op stops at `phase`, or disarm it (`null`).
+   *  Without a journal there is nothing to arm. Returns false, with `status` set, when the volume
+   *  refuses. */
+  setArmedPhase(phase: CrashPhase | null): boolean {
+    const journal = this.adapter.journal;
+    if (!journal) return true;
+    try {
+      if (phase === null) journal.disarm();
+      else journal.arm(phase);
+    } catch (e) { this.fail(e); return false; }
+    this.armedPhase = journal.phase();
+    return true;
   }
 
   /** A fresh volume of `family` (the current one by default) with that family's options. */

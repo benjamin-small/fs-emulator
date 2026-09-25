@@ -1,10 +1,12 @@
 # fs explorer UI
 
-A Svelte 5 (runes) app for exploring a filesystem byte by byte, FAT16 today:
-a whole-disk hex dump with ASCII and a strings overlay, a disk ribbon and FAT
-cluster map for seeing where files land, an operation timeline with
-byte-diff replay, nine guided scenarios, and a terminal drawer that mounts
-the volume at `/mnt` and the raw disk at `/dev/hda`. It runs entirely in the
+A Svelte 5 (runes) app for exploring a filesystem byte by byte, FAT16, ext2,
+and ext3: a whole-disk hex dump with ASCII and a strings overlay, a disk
+ribbon and a FAT cluster map or ext block-group map for seeing where files
+land, an ext3 journal panel with crash and recovery controls, an operation
+timeline with byte-diff replay, twelve guided scenarios, and a terminal
+drawer that mounts the volume at `/mnt` and the raw disk at `/dev/hda`. The
+app opens on a FAT16 disk. It runs entirely in the
 browser against the `fs-emulator-wasm` package — nothing is sent over the
 network, and there is no server component. The build from `main` is
 published at https://benjamin-small.github.io/fs-emulator/ by
@@ -34,9 +36,10 @@ pnpm preview   # serve the production build
 
 Layout: the current step runs as a strip under the top bar, next to the
 other controls; a disk ribbon runs full width above a three-column grid —
-files, FAT map, and actions on the left; the hex dump in the center; the
-lesson card, strings, and the byte inspector on the right — with an
-operation timeline along the bottom.
+files, the mounted family's map (the FAT map, or the block-group map and, on
+ext, the Journal panel under it), and actions on the left; the hex dump in
+the center; the lesson card, strings, and the byte inspector on the right —
+with an operation timeline along the bottom.
 
 - **Ribbon** — the entire disk as one strip, one column per pixel of its
   width, colored by owning file or region (or a hairline for free space),
@@ -53,9 +56,29 @@ operation timeline along the bottom.
 - **FAT map** — every cluster as a small cell: free, owned (in its
   file's hue), end-of-chain, or bad. Hover for the cluster number, FAT
   value, and owner; the selected file's chain draws as connected arrows.
+- **Block groups** (ext, in place of the FAT map) — one band per block
+  group headed `group 0 · blocks 1–8192 · 7,082 free`, every block a 4 px
+  cell: metadata in its region's colour, the journal in amber, owned data and
+  directory blocks in their file's hue, free blocks as a hairline, and a dot
+  on an indirect block. The selected file's blocks are outlined, the last
+  step's changes outlined in the diff colour, and the block under the dump's
+  hovered byte dashed. Hover for `block N · region · owner`; click to select
+  the owner and jump to the block.
+- **Journal** (ext, under the block-group map) — on ext3 the journal's mode
+  and header facts (sequence, head, start, size), a ring strip with one cell
+  per journal block coloured by kind (superblock, descriptor, copy, commit,
+  revoke, unused) with checkpointed transactions faded, and the crash
+  controls: pick a phase (before commit, after commit, during checkpoint),
+  **Arm** it so the next change stops there, and **Recover**, enabled while
+  the volume needs recovery, which replays a committed transaction or
+  discards an uncommitted one as a timeline step. While recovery is needed
+  the panel and the status line say so, and changes throw `NeedsRecovery`.
+  On ext2 the panel is one line: "This volume has no journal."
 - **Actions** — add, overwrite, or delete a file; make or remove a
-  folder; format a fresh disk with a chosen size and cluster size; load or
-  export a raw image. Every action records a step in the timeline.
+  folder; format a fresh disk (a Filesystem select picks FAT16, with a size
+  and cluster size, or ext, with ext2 or ext3, a size, inodes per group, a
+  label, and for ext3 the journal's mode and size); load or export a raw
+  image. Every action records a step in the timeline.
 - **Dump** — the virtualized whole-disk hex view: offset, 16 hex bytes,
   and a 16-character ASCII gutter per row. Bytes are tinted by owner, runs
   of zero sectors collapse into a single clickable row, and the header
@@ -63,8 +86,14 @@ operation timeline along the bottom.
 - **Inspector** — facts about the byte under the cursor (offset, sector,
   cluster, owner) plus the sector's decoded annotations — directory
   entries, FAT chain, boot sector fields — with the byte's range
-  highlighted. Offsets and integer fields are in hex to match the dump;
-  hover one for the decimal.
+  highlighted. On ext the address row is `Block`, with the block's own line
+  (`data block 0 of /hello.txt`, `single-indirect block of /bigger.txt`)
+  folded into it, since a block is both the sector and the unit; the
+  annotations decode the superblock, the group descriptors, the bitmaps,
+  inodes, directory entries, pointer blocks, and journal blocks, and the
+  selected file's trace runs from its directory entry through its inode and
+  pointer blocks to its first data block. Offsets and integer fields are in
+  hex to match the dump; hover one for the decimal.
 - **Strings** — printable runs (4+ bytes) in the visible window, or the
   whole disk on request, each with its offset and owner; click one to jump
   to it.
@@ -85,8 +114,17 @@ operation timeline along the bottom.
   disk, add a small file, add a long-named file (LFN entries), overwrite
   with a larger file (chain grows), delete and see what remains, fill the
   disk, make a directory, and work from the shell (the same operations typed
-  as commands, plus a raw-sector read and a raw patch of the volume label).
-  Pick one in the top bar and press **Start**; it formats a fresh disk and a
+  as commands, plus a raw-sector read and a raw patch of the volume label);
+  and, on ext3, the fundamentals (ext) (a tour of the block groups, the
+  superblock, descriptors, bitmaps, and inode table, and how a name reaches
+  its blocks through an inode, including a single-indirect block), a
+  journaled write (one create followed through the needs-recovery flag, the
+  data, the descriptor, the copies, the commit, and the checkpoint), and
+  crash and recover (a crash after the commit that recovery replays and one
+  before it that recovery discards, leaving bytes nobody owns). The picker
+  groups them by filesystem, FAT16 first.
+  Pick one in the top bar and press **Start**; it formats a fresh disk of the
+  lesson's filesystem (the default FAT16 or ext3 disk) and a
   **Lesson** card floats over the page, at the top right to begin with. Drag
   it by its bar to wherever it is out of the way of the bytes it talks about,
   or focus the ⋮⋮ handle and use the arrow keys (Shift for bigger steps); it
@@ -128,6 +166,15 @@ describe every command.
 The prompt shows the working directory: the shell hands it to the terminal on
 startup and after every `cd` or `mkfs`, so it reads `/mnt/DOCS ❯`.
 
+The command set follows the mounted volume: when a format, a load, or a
+lesson changes the family (or swaps ext3 for ext2), the terminal re-registers
+its commands. The address help follows the new family (`s:65 (sector), c:3
+(cluster)` on FAT, `b:65 (block), i:11 (inode)` on ext), so does `df`'s
+summary (cluster or block usage), and `crash` and `recover` exist only while
+the volume has a journal. `mkfs`'s flags do not change: every host lists
+every family's. The new commands share the old ones' working-directory
+state, and the prompt is set again.
+
 | Command | Does |
 |---|---|
 | `ls [path] [-l]` / `dir` | List a directory as a table of name, type, size (`-l` adds the modified time); entries keep their on-disk order. `ls /` shows `dev` and `mnt`; `ls /dev` shows `hda`, `zero`, `null` |
@@ -137,11 +184,13 @@ startup and after every `cd` or `mkfs`, so it reads `/mnt/DOCS ❯`.
 | `dd if=<src> of=<dst> bs=N count=N skip=N seek=N` | Copy bytes between files and the raw disk, in the classic operand form; `--if=<src>` and the rest work as flags too. At most 1 MiB per invocation; `/dev/zero` needs `count=` |
 | `xxd [path] [--offset --len --cols]` / `hexdump` | Hex dump of a path, piped bytes, or piped text; on `/dev/hda` one sector at absolute addresses that match the dump |
 | `mkdir`, `rmdir`, `rm`, `touch`, `cp` | The usual; `cp` into an existing directory keeps the source name |
-| `stat <path>` | Name, type, size, timestamps, first cluster, chain, entry offset, FAT entry offset, data offset; `stat /dev/hda` reports the sector size and count |
-| `df`, `mount` | Cluster usage; device, mount point, type, and `ok` or `corrupt` |
-| `seek <addr>` | Move the hex dump (`0x200`, `512`, `s:1`, `c:2`) |
+| `stat <path>` | Name, type, size, timestamps, then the family's facts: on FAT first cluster, chain, entry offset, FAT entry offset, data offset; on ext inode, inode offset, mode, links, 512-byte blocks, data blocks, indirect blocks, directory-entry offset. `stat /dev/hda` reports the sector size and count |
+| `df`, `mount` | Cluster usage on FAT, block usage (`blockSize`, `blocks`) on ext; device, mount point, type, and `ok` or `corrupt` |
+| `seek <addr>` | Move the hex dump (`0x200`, `512`, `s:1`, `c:2` on FAT; `b:69` for a block and `i:12` for an inode's slot on ext) |
 | `select [path]` | Select a file in every pane, or clear the selection |
-| `mkfs [--sectors --spc --label --root-entries --fats --reserved]` | Format a fresh disk; the timeline is cleared |
+| `mkfs [--type fat16\|ext2\|ext3] [flags]` | Format a fresh disk; the timeline is cleared. `--type` defaults to the mounted volume's type; FAT16 takes `--sectors --spc --label --root-entries --fats --reserved`, ext `--blocks --inodes-per-group --label --uuid --journal-blocks --journal-mode` (the last two ext3 only); a flag the type does not take is an error that names the type |
+| `crash [--at before-commit\|after-commit\|during-checkpoint] [--off]` | ext3 only: arm a crash so the next change to `/dev/hda` stops at that phase (default `after-commit`), or disarm it |
+| `recover` | ext3 only: replay the journal's committed transaction or discard an uncommitted one, as one timeline step, printing its events |
 | `exit` | Close the drawer |
 
 `>`, `>>`, and `<` resolve through the same tree:
@@ -225,7 +274,7 @@ Things to know:
 ## What is filesystem-specific
 
 The app is the fs explorer: one explorer for every filesystem family the wasm
-package can hold, FAT16 today. The hex dump, ribbon, byte attribution,
+package can hold, FAT16 and ext (ext2 and ext3) today. The hex dump, ribbon, byte attribution,
 zero-run collapsing, strings overlay, timeline, diff replay, and terminal read
 `layout()` regions and the operation journal from `fs-emulator-wasm`, so a
 second family gets all of them unchanged. Everything the UI knows about one
@@ -236,8 +285,8 @@ family lives behind the adapter in `src/fs/`:
   (`cluster`, `clusters`, `c` for FAT), the unit count and size, sector to
   unit and unit to byte range, the dump's row-label rule, and the region
   colours. `FsAdapter` is bound to one `Volume` and adds what needs the disk:
-  owners, chains, entry slots, remnants, `stat` and `df` facts, the
-  Inspector's trace, sector annotations, extra address forms, name matching,
+  owners, chains, entry slots, remnants, `stat` and `df` facts, the ribbon's
+  free count (`freeUnits`), the Inspector's trace, sector annotations, extra address forms, name matching,
   the "this write may have moved regions" trigger, and the notes the tree and
   the shell print. Its caches are plain fields that the store refreshes after
   every operation, so a `$derived` that calls an adapter method reads
@@ -250,26 +299,59 @@ family lives behind the adapter in `src/fs/`:
   wasm methods (`geometry`, `fatEntries`, `clusterOwners`,
   `annotateSectorWith`, `rawDirEntries`, `bootSector`, `clusterChain`,
   `formatFat16`) or names their types.
-- `src/fs/index.ts` is the registry: `FAMILIES`, `DEFAULT_FAMILY`,
-  `familyIdOf(fsType)`, and `adapterFor(vol)`, which picks the adapter from
-  `Volume.fsType()`. `src/fs/panels.ts` maps a family id to its map and
-  Format panels, and `App.svelte` and `ActionsPanel.svelte` render whichever
-  the mounted family names. The panels sit in that table rather than on the
-  adapter because the node tests have no Svelte plugin and the adapter must
-  stay importable from them.
-- The scenarios keep their FAT16 copy (they teach FAT16) and declare
-  `family: "fat16"`; a step reaches generic facts through the adapter it is
-  handed and FAT-only ones through `asFat16(fs)`.
+- `src/fs/ext/` is the ext implementation, one adapter for ext2 and ext3:
+  `ExtAdapter` over the ext-only DTOs (`extGeometry`, `extSuperblock`,
+  `blockOwners`, `inodeNumber`, `extInode`, `dirEntries`, `fileBlocks`), the
+  block geometry (`extSpace`), the Format model (`checkFormat`, the size and
+  journal defaults, the `mkfs` flags), `ExtJournal`, the metadata trigger,
+  `BlockGroupMap.svelte`, `JournalPanel.svelte`, and `ExtFormatForm.svelte`.
+  Journal blocks are never allocation units (the journal has its own region
+  kind and amber colour; its pointer blocks show as owned by `<journal>`),
+  and a file's indirect blocks are owner rows with `role: "indirect"`, so the
+  map, the dump, and the Inspector name them without a second table. It is
+  the only place, besides `src/lib/wasm.ts`, that calls the ext-only wasm
+  methods (those seven, the journal's `journalInfo`, `journalBlocks`,
+  `armCrash`, `disarmCrash`, `crashPhase`, `needsRecovery`, and `recover`,
+  and `formatExt2`/`formatExt3`) or names their types.
+- The **journal capability** is the one optional part of the seam:
+  `FsAdapter.journal?: JournalCapability` (`state`, `blocks`, `arm`,
+  `disarm`, `phase`, `recover`), present on ext3 and absent on FAT16 and
+  ext2, with `FsAdapter.needsRecovery` beside it. Its types live in
+  `fs/adapter.ts`, so the Journal panel, the status line, and the `crash` and
+  `recover` commands depend on the capability, never on the ext family, and
+  appear whenever the mounted adapter has one. `recover()` returns the
+  volume's op, which the caller runs through the timeline like any change.
+- **Vocabulary:** every noun the chrome prints comes from the adapter. The
+  sector noun (`UnitSpace.sector`) names one disk sector and the unit noun
+  (`UnitSpace.unit`) the allocation unit: FAT says sector and cluster
+  (`s:65`, `c:2`), ext says block for both, because its disk sector is the
+  block (`b:69`, plus `i:12` for an inode), and where the two nouns coincide
+  the chrome shows one name (the Inspector folds the unit row into the
+  address row, and the dump's `g` prompt names one noun). The Lesson card's
+  file clause is `unit.fileParts` ("its entry, chain, and clusters" on FAT,
+  "its inode, block map, and blocks" on ext).
+- `src/fs/index.ts` is the registry: `FAMILIES` (`fat16`, then `ext`),
+  `DEFAULT_FAMILY` (`fat16`), `familyIdOf(fsType)`, which returns the family
+  whose `fsTypes` lists the string (`FAT16`; `ext2` and `ext3`), and
+  `adapterFor(vol)`. `src/fs/panels.ts` maps a family id to its map and
+  Format panels and its `extras` (the Journal panel for ext), and `App.svelte`
+  and `ActionsPanel.svelte` render whichever the mounted family names. The
+  panels sit in that table rather than on the adapter because the node tests
+  have no Svelte plugin and the adapter must stay importable from them.
+- Each scenario declares its `family`; `start()` formats that family's
+  default disk. A step reaches generic facts through the adapter it is
+  handed and family-only ones through `asFat16(fs)` or `asExt(fs)`.
 
 `tests/adapterBoundary.test.ts` keeps it that way: it scans
 `src/**/*.{ts,svelte}` and fails on a FAT-only wasm call or type outside
-`src/fs/fat16/` and `src/lib/wasm.ts`, and on an import from `fs/fat16`
-anywhere but `src/fs/index.ts`, `src/fs/panels.ts`, and `src/scenarios/`.
-Adding a family means extending `FsFamilyId` in `fs/adapter.ts`, an adapter
-under `src/fs/<family>/`, an entry in `fs/index.ts` and `fs/panels.ts`, a map
-panel in its own words ("FAT map" stays; ext will get "Block groups"), and
-scenarios that teach what is different about it. `docs/ROADMAP.md` has the
-checklist.
+`src/fs/fat16/` and `src/lib/wasm.ts`, on an ext-only one outside
+`src/fs/ext/` and `src/lib/wasm.ts`, and on an import from `fs/fat16` or
+`fs/ext` anywhere but `src/fs/index.ts`, `src/fs/panels.ts`, and
+`src/scenarios/`. Adding a family means extending `FsFamilyId` in
+`fs/adapter.ts`, an adapter under `src/fs/<family>/`, an entry in
+`fs/index.ts` and `fs/panels.ts`, a map panel in its own words ("FAT map",
+"Block groups"), and scenarios that teach what is different about it.
+`docs/ROADMAP.md` has the checklist.
 
 ## Keyboard shortcuts
 
@@ -282,7 +364,7 @@ checklist.
 | Arrow keys | Move the dump's byte cursor, or seek one ribbon column (ribbon focused) |
 | `Page Up` / `Page Down` | Scroll the dump by a page |
 | `Home` / `End` | Jump to the start / end of the disk |
-| `g` | Jump to an offset, sector, or cluster (dump focused) |
+| `g` | Jump to an offset, sector, or cluster, or on ext an offset or block (dump focused) |
 | `s` | Toggle string highlighting (dump focused) |
 | `` ` `` | Toggle the terminal |
 

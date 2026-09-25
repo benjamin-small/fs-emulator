@@ -88,6 +88,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .row.own-8 { border-left-color: var(--own-8); } .row.own-8 .b { background: color-mix(in srgb, var(--own-8) 14%, transparent); }
 .row.own-9 { border-left-color: var(--own-9); } .row.own-9 .b { background: color-mix(in srgb, var(--own-9) 14%, transparent); }
 .row.own-10 { border-left-color: var(--own-10); } .row.own-10 .b { background: color-mix(in srgb, var(--own-10) 14%, transparent); }
+.row.own-11 { border-left-color: var(--own-11); } .row.own-11 .b { background: color-mix(in srgb, var(--own-11) 14%, transparent); }
 .hex .b { display: inline-block; width: 3ch; text-align: center; }
 .asc .b { display: inline-block; width: 1ch; }
 .is-str { text-decoration: underline dotted; }
@@ -136,10 +137,28 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .fatmap-wrap canvas { display: block; cursor: pointer; }
 .fatmap-caption { margin: 6px 0 0; font-size: 11px; min-height: 14px; }
 
+/* Block-group map (ext) */
+.bgmap-wrap { overflow-y: auto; overflow-x: hidden; }
+.bgmap-wrap canvas { display: block; cursor: pointer; position: sticky; top: 0; }
+.bgmap-caption { margin: 6px 0 0; font-size: 11px; min-height: 14px; }
+
+/* Journal panel (ext3) */
+.journal .facts { margin: 0 0 6px; }
+.journal .facts dd { margin: 0; }
+.journal-flag { margin: 0 0 6px; font-size: 12px; color: var(--diff-ink); }
+.journal-wrap { overflow-y: auto; overflow-x: hidden; }
+.journal-wrap canvas { display: block; cursor: pointer; }
+.journal-caption { margin: 6px 0 0; font-size: 11px; min-height: 14px; }
+.journal-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; font-size: 12px; }
+.journal-controls select { flex: 1 1 100%; min-width: 0; }
+.journal-armed { flex-basis: 100%; }
+.journal-none { margin: 0; font-size: 12px; }
+
 /* Step panel */
 /* Step strip (under the top bar): one wrapping row of heading, counter, op, sector buttons,
-   and events. */
-.step { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; padding: 5px 10px; }
+   and events. It scrolls past about six rows of buttons (210 px), which the FAT actions never
+   reach; an ext3 Add file's 18 block buttons and 30 events would push the grid down. */
+.step { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; padding: 5px 10px; max-height: 210px; overflow: auto; }
 .step > h2 { margin: 0; font: 500 13px var(--font-display); }
 .step p { margin: 0; }
 .step .counter { color: var(--ink-muted); }
@@ -201,6 +220,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .actions .format summary { cursor: pointer; font: 500 12px var(--font-display); margin-bottom: 6px; }
 .actions .format .field { margin-bottom: 6px; }
 .actions .cluster-count { margin: 0 0 6px; font-size: 12px; }
+.actions .format-check { margin: 0 0 6px; font-size: 12px; }
 .actions .warn { color: var(--diff-ink); }
 .actions .using-bytes { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 12px; }
 

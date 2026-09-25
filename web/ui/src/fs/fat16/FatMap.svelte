@@ -1,5 +1,7 @@
 <script lang="ts">
   import { attrAtOffset } from "../../core/attribution";
+  import { cellAt, cellRect, dashCell, dotCell, drawChain, gridCols, gridRows, outlineCell, prepareCanvas } from "../../core/grid";
+  import { observeWidth } from "../../core/observeWidth";
   import { layers } from "../../state/layers.svelte";
   import { selection } from "../../state/selection.svelte";
   import { volume } from "../../state/volume.svelte";
@@ -8,8 +10,10 @@
 
   const CELL = 6, GAP = 1, MAX_HEIGHT = 260;
 
-  let wrap = $state<HTMLDivElement>();
   let canvas = $state<HTMLCanvasElement>();
+  // The panel's content width, kept current by `observeWidth` on the wrapper so `cols` follows
+  // the sidebar's actual size (a resizable layout, a narrower viewport, …) rather than a value
+  // baked in at mount.
   let width = $state(0);
   let hoverCluster = $state<number | null>(null);
 
@@ -18,37 +22,24 @@
   // `$effect` below that reads them reads `volume.epoch` first (the rule in fs/adapter.ts).
   const fs = $derived(asFat16(volume.adapter));
   const clusterCount = $derived((volume.epoch, fs.unitCount));
-  const cols = $derived(Math.max(1, Math.floor(width / (CELL + GAP))));
-  const rows = $derived(Math.max(1, Math.ceil(clusterCount / cols)));
+  const cols = $derived(gridCols(width, CELL, GAP));
+  const rows = $derived(gridRows(clusterCount, cols));
   const canvasWidth = $derived(Math.max(1, Math.floor(width)));
   const canvasHeight = $derived(Math.max(1, rows * (CELL + GAP)));
-
-  // Track the panel's content width so `cols` follows the sidebar's actual size
-  // (a resizable layout, a narrower viewport, …) rather than a value baked in at mount.
-  $effect(() => {
-    if (!wrap) return;
-    width = wrap.getBoundingClientRect().width;
-    const ro = new ResizeObserver((entries) => { width = entries[0].contentRect.width; });
-    ro.observe(wrap);
-    return () => ro.disconnect();
-  });
 
   $effect(() => {
     volume.epoch; layers.chain; layers.diff; selection.hoverOffset; canvasWidth; canvasHeight;
     paint();
   });
 
-  function cellRect(c: number): { x: number; y: number } {
-    const i = c - 2, col = i % cols, row = Math.floor(i / cols);
-    return { x: col * (CELL + GAP), y: row * (CELL + GAP) };
+  /** Cluster `c`'s cell: the grid starts at cluster 2, the first data cluster. */
+  function clusterCell(c: number): { x: number; y: number } {
+    return cellRect(c - 2, cols, CELL, GAP);
   }
 
   function clusterAtPoint(px: number, py: number): number | null {
-    const col = Math.floor(px / (CELL + GAP));
-    const row = Math.floor(py / (CELL + GAP));
-    if (col < 0 || col >= cols || row < 0) return null;
-    const c = row * cols + col + 2;
-    return c >= 2 && c <= clusterCount + 1 ? c : null;
+    const i = cellAt(px, py, cols, clusterCount, CELL, GAP);
+    return i === null ? null : i + 2;
   }
 
   function overlapsDiff(c: number): boolean {
@@ -60,11 +51,8 @@
 
   function paint() {
     if (!canvas) return;
-    canvas.width = canvasWidth;
-    canvas.height = canvasHeight;
-    const ctx = canvas.getContext("2d");
+    const ctx = prepareCanvas(canvas, canvasWidth, canvasHeight);
     if (!ctx) return;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     // Read once per paint (not cached across paints) so a light/dark switch is
     // picked up on the very next repaint without any extra wiring.
@@ -82,7 +70,7 @@
     for (let c = 2; c <= clusterCount + 1; c++) {
       const entry = fat[c];
       if (!entry) continue;
-      const { x, y } = cellRect(c);
+      const { x, y } = clusterCell(c);
       const state = clusterState(entry);
       let fill = hairline;
       if (state === "bad") fill = diffInk;
@@ -93,35 +81,11 @@
       ctx.fillStyle = fill;
       ctx.fillRect(x, y, CELL, CELL);
 
-      if (state === "end") {
-        ctx.fillStyle = ink;
-        ctx.fillRect(x + 2, y + 2, 2, 2);
-      }
-
-      if (overlapsDiff(c)) {
-        ctx.strokeStyle = diffColor;
-        ctx.lineWidth = 1;
-        ctx.strokeRect(x + 0.5, y + 0.5, CELL - 1, CELL - 1);
-      }
+      if (state === "end") dotCell(ctx, x, y, CELL, ink);
+      if (overlapsDiff(c)) outlineCell(ctx, x, y, CELL, diffColor);
     }
 
-    const chain = layers.chain;
-    if (chain.length) {
-      ctx.strokeStyle = focus;
-      ctx.lineWidth = 1;
-      for (const c of chain) {
-        const { x, y } = cellRect(c);
-        ctx.strokeRect(x + 0.5, y + 0.5, CELL - 1, CELL - 1);
-      }
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      chain.forEach((c, i) => {
-        const { x, y } = cellRect(c);
-        const cx = x + CELL / 2, cy = y + CELL / 2;
-        if (i === 0) ctx.moveTo(cx, cy); else ctx.lineTo(cx, cy);
-      });
-      ctx.stroke();
-    }
+    if (layers.chain.length) drawChain(ctx, layers.chain.map(clusterCell), CELL, focus, 2);
 
     // Cross-link with the hex dump: whichever cluster the mouse is currently over
     // there gets a dashed outline here, so the map shows where in the whole disk
@@ -129,13 +93,8 @@
     if (selection.hoverOffset !== null) {
       const c = attrAtOffset(attribution, selection.hoverOffset).unit;
       if (c !== undefined) {
-        const { x, y } = cellRect(c);
-        ctx.save();
-        ctx.strokeStyle = focus;
-        ctx.setLineDash([1, 1]);
-        ctx.lineWidth = 1;
-        ctx.strokeRect(x + 0.5, y + 0.5, CELL - 1, CELL - 1);
-        ctx.restore();
+        const { x, y } = clusterCell(c);
+        dashCell(ctx, x, y, CELL, focus);
       }
     }
   }
@@ -168,7 +127,7 @@
 <section class="panel fatmap">
   <h2>FAT map &middot; {clusterCount.toLocaleString()} clusters</h2>
   {#if !volume.atLatest}<p class="muted stale-note">Shows the latest state, not the step you are viewing.</p>{/if}
-  <div class="fatmap-wrap" bind:this={wrap} style:max-height="{MAX_HEIGHT}px">
+  <div class="fatmap-wrap" use:observeWidth={(w) => (width = w)} style:max-height="{MAX_HEIGHT}px">
     <canvas bind:this={canvas} onmousemove={onMove} onmouseleave={onLeave} onclick={onClick} aria-label="FAT cluster map"></canvas>
   </div>
   <p class="mono muted fatmap-caption">{caption || " "}</p>

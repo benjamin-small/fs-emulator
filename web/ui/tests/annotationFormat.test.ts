@@ -31,6 +31,10 @@ describe("describeRange", () => {
   it("gives the decimal bounds for the tooltip", () => {
     expect(describeRange({ start: 11, end: 13 })).toBe("bytes 11..13 of the sector (decimal)");
   });
+
+  it("names the family's sector when given one", () => {
+    expect(describeRange({ start: 0x38, end: 0x3a }, "block")).toBe("bytes 56..58 of the block (decimal)");
+  });
 });
 
 describe("formatValue", () => {

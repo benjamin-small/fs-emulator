@@ -485,17 +485,80 @@ impl Volume {
 }
 
 /// ext-specific methods. Each throws `code === "NotExt"` on a non-ext volume.
-/// The superblock, inode, and block-ownership DTOs arrive with the explorer's
-/// ext panels; for now there are the group count (slice 2) and the ext3
-/// journal's crash, recovery, and inspection methods (slice 3, section 8).
-/// The journal methods answer on ext2 too: no journal, no armed crash,
-/// nothing to recover.
+/// The group count (slice 2), the ext3 journal's crash, recovery, and
+/// inspection methods (slice 3, section 8), and the explorer's inspection
+/// DTOs (slice 4, section 3): geometry, superblock, block owners, inodes,
+/// directory entries, and a file's block map. The journal methods answer on
+/// ext2 too: no journal, no armed crash, nothing to recover.
 #[wasm_bindgen]
 impl Volume {
     /// How many block groups the volume has (2 on the default 16 MiB disk).
     #[wasm_bindgen(js_name = blockGroupCount)]
     pub fn block_group_count(&self) -> Result<u32, JsValue> {
         Ok(self.ext()?.geometry().groups)
+    }
+
+    /// The geometry and every group's layout, with the primary descriptors'
+    /// free-block, free-inode, and directory counts.
+    #[wasm_bindgen(js_name = extGeometry, unchecked_return_type = "ExtGeometry")]
+    pub fn ext_geometry(&self) -> Result<JsValue, JsValue> {
+        let fs = self.ext()?;
+        to_value(&dto::ExtGeometry::new(
+            fs.geometry(),
+            fs.group_descriptors(),
+        ))
+    }
+
+    /// The primary superblock as the volume holds it now.
+    #[wasm_bindgen(js_name = extSuperblock, unchecked_return_type = "ExtSuperblock")]
+    pub fn ext_superblock(&self) -> Result<JsValue, JsValue> {
+        to_value(&dto::ExtSuperblock::from(self.ext()?.superblock()))
+    }
+
+    /// Every owned block, ascending: directory, data, and indirect blocks
+    /// by path, and on ext3 the journal's blocks under `<journal>`.
+    #[wasm_bindgen(js_name = blockOwners, unchecked_return_type = "ExtBlockOwner[]")]
+    pub fn block_owners(&self) -> Result<JsValue, JsValue> {
+        to_value(&dto::ext_owners_to_list(&self.ext()?.block_owners()))
+    }
+
+    /// The inode number `path` names (2 for `/`).
+    #[wasm_bindgen(js_name = inodeNumber)]
+    pub fn inode_number(&self, path: &str) -> Result<u32, JsValue> {
+        self.ext()?.lookup(path).map_err(to_js)
+    }
+
+    /// Inode `ino` as the disk holds it now, with its slot; `NotFound` for 0
+    /// or past `inodesCount`.
+    #[wasm_bindgen(js_name = extInode, unchecked_return_type = "ExtInode")]
+    pub fn ext_inode(&self, ino: u32) -> Result<JsValue, JsValue> {
+        let fs = self.ext()?;
+        let inode = fs.inode(ino).map_err(to_js)?;
+        to_value(&dto::ExtInode::new(ino, &inode, fs.geometry()))
+    }
+
+    /// Every record of the directory `path` names, in the order a scan reads
+    /// them (its blocks in logical order, then by offset), `.`, `..`, and
+    /// zero-inode records included.
+    #[wasm_bindgen(js_name = dirEntries, unchecked_return_type = "ExtDirEntry[]")]
+    pub fn dir_entries(&self, path: &str) -> Result<JsValue, JsValue> {
+        let list: Vec<dto::ExtDirEntry> = self
+            .ext()?
+            .dir_entries(path)
+            .map_err(to_js)?
+            .iter()
+            .map(|(block, offset, entry)| dto::ExtDirEntry::new(*block, *offset, entry))
+            .collect();
+        to_value(&list)
+    }
+
+    /// The data blocks `path`'s inode maps, in logical order, and its
+    /// pointer blocks with their levels.
+    #[wasm_bindgen(js_name = fileBlocks, unchecked_return_type = "ExtFileBlocks")]
+    pub fn file_blocks(&self, path: &str) -> Result<JsValue, JsValue> {
+        let fs = self.ext()?;
+        let inode = fs.inode(fs.lookup(path).map_err(to_js)?).map_err(to_js)?;
+        to_value(&dto::ExtFileBlocks::new(fs.disk(), &inode))
     }
 
     /// Arm a crash for the next journaled mutation: `"before_commit"`,

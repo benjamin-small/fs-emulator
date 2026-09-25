@@ -2,6 +2,7 @@
   import { volume } from "../state/volume.svelte";
   import { selection } from "../state/selection.svelte";
   import { attrAtOffset } from "../core/attribution";
+  import { isPseudoOwner, unitIsSector } from "../fs/adapter";
   import type { Annotation } from "../lib/wasm";
   import { describeRange, formatRange, formatValue } from "../core/annotationFormat";
 
@@ -18,6 +19,10 @@
   const inSector = $derived(offset === null ? -1 : offset % volume.sectorSize);
   const hex = (n: number) => "0x" + n.toString(16);
   const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
+
+  // Where the family's unit is its sector (ext: both are the block) the unit row would repeat
+  // the address row, so it folds into it: `Block 1111 · data (group 0) · data block 0 of /a`.
+  const oneNoun = $derived.by(() => { volume.epoch; return unitIsSector(volume.adapter); });
 
   // What the family's table says about the unit under the cursor ("FAT: end of chain"), or
   // null when it has nothing to say. `describeUnit` and `trace` are adapter methods over
@@ -42,9 +47,10 @@
   {:else}
     <dl class="facts">
       <dt>Offset</dt><dd class="mono">{hex(offset)} · {offset.toLocaleString()}</dd>
-      <dt>Sector</dt><dd class="mono">{attr.sector} · {attr.regionName}</dd>
-      {#if attr.unit !== undefined}<dt>{cap(volume.adapter.unit.singular)}</dt><dd class="mono">{attr.unit}{#if unitNote}{" "}· {unitNote}{/if}</dd>{/if}
-      {#if attr.ownerPath}<dt>Owner</dt><dd><button class="link" onclick={() => selection.select(attr.ownerPath!)}>{attr.ownerPath}</button></dd>{:else if attr.regionKind === "data"}<dt>Owner</dt><dd class="muted">free</dd>{/if}
+      <dt>{cap(volume.adapter.sector.singular)}</dt><dd class="mono">{attr.sector} · {attr.regionName}{#if oneNoun && unitNote}{" "}· {unitNote}{/if}</dd>
+      {#if attr.unit !== undefined && !oneNoun}<dt>{cap(volume.adapter.unit.singular)}</dt><dd class="mono">{attr.unit}{#if unitNote}{" "}· {unitNote}{/if}</dd>{/if}
+      <!-- A pseudo-owner (ext's journal pointer blocks) names no file in the tree: plain text, not a button. -->
+      {#if attr.ownerPath && isPseudoOwner(attr.ownerPath)}<dt>Owner</dt><dd>{attr.ownerPath}</dd>{:else if attr.ownerPath}<dt>Owner</dt><dd><button class="link" onclick={() => selection.select(attr.ownerPath!)}>{attr.ownerPath}</button></dd>{:else if attr.regionKind === "data"}<dt>Owner</dt><dd class="muted">free</dd>{/if}
     </dl>
     {#if !volume.atLatest}<p class="muted">Annotations describe the latest state, not the step you are viewing.</p>{/if}
     <ul class="annotations">
@@ -52,7 +58,7 @@
       {#each annotations as a}
         {@const v = formatValue(a.value)}
         <li class:hit={inSector >= a.range.start && inSector < a.range.end}>
-          <span class="muted" title={describeRange(a.range)}>{formatRange(a.range, volume.sectorSize)}</span>
+          <span class="muted" title={describeRange(a.range, volume.adapter.sector.singular)}>{formatRange(a.range, volume.sectorSize)}</span>
           {a.label}: <span title={v.title}>{v.text}</span>
         </li>
       {/each}

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { Volume } from "../../src/lib/wasm";
 import { addrHelp } from "../../src/shell/addr";
 import { createCommands, rewoundWarning } from "../../src/shell/commands";
 import { DD_MAX_BYTES } from "../../src/shell/dd";
@@ -252,6 +253,61 @@ describe("seek, select, exit", () => {
     expect(host.closed).toBe(false);
     await call(defs, "exit");
     expect(host.closed).toBe(true);
+  });
+});
+
+describe("on an ext3 host", () => {
+  /** The default ext3 disk with one 12-byte file: inode 12, data block 1111. */
+  function extSetup() {
+    const host = makeHost(Volume.formatExt3(undefined));
+    host.run((v) => v.createFile("/hello.txt", enc("Hello, ext3!")));
+    return { host, defs: createCommands(host, new Vfs()) };
+  }
+
+  it("df counts 1 KiB blocks from the superblock", async () => {
+    const { defs } = extSetup();
+    expect((await call(defs, "df")).value).toEqual([
+      { filesystem: "/dev/hda", mounted: "/mnt", type: "ext3", blockSize: 1024, blocks: 16384, used: 1180, free: 15204, bytesUsed: 1180 * 1024, bytesFree: 15204 * 1024, use: "7%" },
+    ]);
+  });
+
+  it("stat spreads the inode facts after the generic ones", async () => {
+    const { defs } = extSetup();
+    const r = (await call(defs, "stat", ["/mnt/hello.txt"])).value as Record<string, unknown>;
+    expect(Object.keys(r)).toEqual(["path", "name", "type", "size", "created", "modified", "accessed", "inode", "inodeOffset", "mode", "links", "blocks512", "dataBlocks", "indirectBlocks", "dirEntryOffset"]);
+    expect(r).toMatchObject({
+      path: "/mnt/hello.txt", name: "hello.txt", type: "file", size: 12,
+      inode: 12, inodeOffset: "0x1980", mode: "0100644", links: 1, blocks512: 2, dataBlocks: [1111], indirectBlocks: [], dirEntryOffset: "0x1142c",
+    });
+    expect((await call(defs, "stat", ["/mnt/lost+found"])).value).toMatchObject({
+      type: "dir", inode: 11, inodeOffset: "0x1900", mode: "040700", links: 2, dataBlocks: [70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81], indirectBlocks: [], dirEntryOffset: "0x11418",
+    });
+    expect((await call(defs, "stat", ["/dev/hda"])).value).toEqual({
+      path: "/dev/hda", type: "block", size: 16384 * 1024, sectorSize: 1024, sectors: 16384, fsType: "ext3", state: "ok",
+    });
+  });
+
+  it("seek takes block and inode addresses", async () => {
+    const { host, defs } = extSetup();
+    await call(defs, "seek", ["b:69"]);
+    await call(defs, "seek", ["i:12"]);
+    await call(defs, "seek", ["s:2"]);
+    expect(host.jumps).toEqual([69 * 1024, 6 * 1024 + 0x180, 2 * 1024]);
+    const e = await callErr(defs, "seek", ["c:3"]);
+    expect(e.message).toBe("bad address 'c:3'");
+    expect(e.help).toBe("addresses: 0x1f (hex), 512 (decimal), b:65 (block), i:11 (inode)");
+  });
+
+  it("xxd --offset and write --at take block and inode addresses too", async () => {
+    const { host, defs } = extSetup();
+    const hello = await call(defs, "xxd", { positionals: ["/dev/hda"], flags: { offset: "b:1111", len: "16" } });
+    expect((hello.value as string).startsWith("00115c00: ")).toBe(true); // block 1111 = 0x115c00
+    expect(hello.value).toContain("Hello, ext3!");
+    const inode = await call(defs, "xxd", { positionals: ["/dev/hda"], flags: { offset: "i:12", len: "16" } });
+    expect((inode.value as string).startsWith("00001980: ")).toBe(true); // inode 12's slot, block 6 + 0x180
+    expect((await call(defs, "write", { positionals: ["/dev/hda"], flags: { at: "b:2000" } }, "RAW")).log).toEqual(["3 bytes -> /dev/hda at 0x1f4000"]);
+    expect((await call(defs, "write", { positionals: ["/dev/hda"], flags: { at: "i:20" } }, "RAW")).log).toEqual(["3 bytes -> /dev/hda at 0x1d80"]); // a free inode's slot, block 7 + 0x180
+    expect(host.history.slice(-2).map((r) => r.op)).toEqual(["write_raw 0x1f4000 +3", "write_raw 0x1d80 +3"]);
   });
 });
 

@@ -13,17 +13,34 @@ function thrown(fn: () => unknown): ShellError {
 const FAT_HELP = "addresses: 0x1f (hex), 512 (decimal), s:65 (sector), c:3 (cluster)";
 
 /** A made-up family with 1 KiB units counted from 0 and the letter `b`, to prove the noun and
- *  letter come from the space rather than from the parser. */
+ *  letter come from the space rather than from the parser. Its sector keeps FAT's noun. */
 const blocks: AddrSpace = {
   sectorSize: 1024,
-  unit: { singular: "block", plural: "blocks", letter: "b", first: 0 },
+  unit: { singular: "block", plural: "blocks", letter: "b", first: 0, fileParts: "its blocks" },
+  sector: { singular: "sector", plural: "sectors", letter: "s" },
   unitByteRange: (u) => ({ start: u * 1024, end: (u + 1) * 1024 }),
 };
+
+/** An ext-shaped family: 1 KiB blocks that are both its sector and its unit (counted from 1,
+ *  block N at N KiB), plus an inode form of its own with the help text for it. */
+const extLike: AddrSpace = {
+  sectorSize: 1024,
+  unit: { singular: "block", plural: "blocks", letter: "b", first: 1, fileParts: "its inode, block map, and blocks" },
+  sector: { singular: "block", plural: "blocks", letter: "b" },
+  unitByteRange: (u) => ({ start: u * 1024, end: (u + 1) * 1024 }),
+  parseAddr: (v) => (/^i:\d+$/.test(v) ? 5 * 1024 + (Number(v.slice(2)) - 1) * 128 : undefined),
+  extraAddrHelp: ", i:11 (inode)",
+};
+const EXT_HELP = "addresses: 0x1f (hex), 512 (decimal), b:65 (block), i:11 (inode)";
 
 describe("addrHelp", () => {
   it("composes the FAT help exactly as before, and another family's from its noun and letter", () => {
     expect(addrHelp(space)).toBe(FAT_HELP);
     expect(addrHelp(blocks)).toBe("addresses: 0x1f (hex), 512 (decimal), s:65 (sector), b:3 (block)");
+  });
+
+  it("names one form when the unit is the sector, then the family's extra forms", () => {
+    expect(addrHelp(extLike)).toBe(EXT_HELP);
   });
 });
 
@@ -55,6 +72,7 @@ describe("parseAddr", () => {
     const tiny: AddrSpace = {
       sectorSize: 512,
       unit: space.unit,
+      sector: space.sector,
       unitByteRange: (u) => { const start = 4 * 512 + (u - 2) * 8 * 512; return { start, end: start + 8 * 512 }; },
     };
     expect(thrown(() => parseAddr("c:0", tiny)).message).toBe("bad address 'c:0'");
@@ -63,6 +81,7 @@ describe("parseAddr", () => {
     const withInodes: AddrSpace = {
       sectorSize: space.sectorSize,
       unit: space.unit,
+      sector: space.sector,
       unitByteRange: (u) => space.unitByteRange(u),
       parseAddr: (v) => (v === "i:1" ? 1234 : undefined),
     };
@@ -79,6 +98,30 @@ describe("parseAddr", () => {
     const e = thrown(() => parseAddr("c:3", blocks));
     expect(e.message).toBe("bad address 'c:3'");
     expect(e.help).toBe("addresses: 0x1f (hex), 512 (decimal), s:65 (sector), b:3 (block)");
+  });
+});
+
+describe("parseAddr on a family whose sector letter is not s", () => {
+  it("accepts s:N and the family's sector letter as sectors, hex, decimal, and the family's form", () => {
+    expect(parseAddr("s:3", extLike)).toBe(3 * 1024);
+    expect(parseAddr("b:3", extLike)).toBe(3 * 1024);
+    expect(parseAddr("B:69", extLike)).toBe(69 * 1024);
+    expect(parseAddr("0x400", extLike)).toBe(1024);
+    expect(parseAddr("2048", extLike)).toBe(2048);
+    expect(parseAddr("i:11", extLike)).toBe(5 * 1024 + 10 * 128);
+  });
+  it("reads b:N as a sector before a unit, which is what makes it safe where the two differ", () => {
+    // A family whose sector letter is b but whose unit starts elsewhere: b:N is the sector.
+    const shifted: AddrSpace = { ...extLike, unit: { ...extLike.unit, letter: "u" }, unitByteRange: (u) => ({ start: 7 + u, end: 8 + u }) };
+    expect(parseAddr("b:2", shifted)).toBe(2048);
+    expect(parseAddr("u:2", shifted)).toBe(9);
+  });
+  it("throws with the family's help, which lists every form it accepts", () => {
+    for (const bad of ["c:3", "i:x", "b:", "x:1"]) {
+      const e = thrown(() => parseAddr(bad, extLike));
+      expect(e.message).toBe(`bad address '${bad}'`);
+      expect(e.help).toBe(EXT_HELP);
+    }
   });
 });
 

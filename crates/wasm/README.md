@@ -99,13 +99,131 @@ does not validate them).
 `clusterOwners`, and `annotateSectorWith` are FAT-only and throw an error
 with code `NotFat` (message `not a FAT volume`) on any other volume; FAT32
 will reuse them. The methods below are ext-only and throw `NotExt` (message
-`not an ext volume`) on any other volume; the rest of the ext inspection
-(superblock, inodes, block ownership) arrives with the explorer's ext panels.
-A UI should branch on `fsType()` before calling the specific ones. The plan
-is in `docs/ROADMAP.md`.
+`not an ext volume`) on any other volume. A UI should branch on `fsType()`
+before calling the specific ones. The plan is in `docs/ROADMAP.md`.
 
 - `blockGroupCount()`: how many block groups the volume has (2 on the
   default disk).
+- `extGeometry()`: an `ExtGeometry`: the block and inode numbers every
+  layer derives from the superblock, and per group an `ExtGroup` whose
+  block numbers come from the layout and whose `freeBlocks`, `freeInodes`,
+  and `usedDirs` come from the primary group descriptor.
+- `extSuperblock()`: an `ExtSuperblock`, the primary superblock as the
+  volume holds it now; `uuid` is lower-case hex hyphenated 8-4-4-4-12 and
+  `label` stops at the first NUL (lossy UTF-8).
+- `blockOwners()`: one `ExtBlockOwner` per owned block, ascending by block,
+  from a walk of the tree: `role` is `"directory"`, `"data"`, or
+  `"indirect"` for a path's blocks, and on ext3 the journal's data blocks
+  are `"journal"` rows and its pointer blocks `"indirect"` rows, both with
+  inode 8 and the path `"<journal>"`. Free blocks and metadata have no row.
+- `inodeNumber(path)`: the inode number a path names (2 for `/`); it
+  throws `NotFound`, `NotADirectory`, `InvalidPath`, or `CorruptImage` like
+  the path methods.
+- `extInode(ino)`: an `ExtInode`, inode `ino` as the disk holds it, with
+  `slot`, the inode-table block and absolute byte offset of its 128 bytes.
+  `NotFound` for 0 or past `inodesCount`.
+- `dirEntries(path)`: one `ExtDirEntry` per record of a directory, in the
+  order a scan reads them (the directory's blocks in logical order, then by
+  offset), `.`, `..`, and records whose inode is 0 included; `offset` is
+  absolute and `name` is lossy UTF-8. `NotADirectory` for a file.
+- `fileBlocks(path)`: an `ExtFileBlocks`: `data`, the blocks the inode maps
+  in logical order, and `indirect`, its pointer blocks in the order they
+  are referenced (the single-indirect block at level 1, then the
+  double-indirect block at level 2 followed by each second-level block at
+  level 1). A directory's blocks are its `data`.
+
+On the default ext3 disk the root directory is block 69, `lost+found` is
+blocks 70 to 81, the journal's data is 82 to 1105 with its pointer blocks
+1106 to 1110, and a new file starts at block 1111 with its pointer blocks
+after its data. Inode `n` of group 0 sits at byte `5 * 1024 + (n - 1) *
+128`.
+
+```ts
+interface ExtGeometry {
+  blockSize: number;        // 1024
+  totalBlocks: number;
+  firstDataBlock: number;   // 1
+  blocksPerGroup: number;   // 8192
+  inodesPerGroup: number;
+  inodesCount: number;
+  inodeSize: number;        // 128
+  inodeTableBlocks: number; // per group
+  descriptorBlocks: number; // per copy of the descriptor table
+  groups: ExtGroup[];
+}
+
+interface ExtGroup {
+  index: number;
+  firstBlock: number;
+  blockCount: number;               // 8192, or the remainder for the last group
+  superblockBlock: number | null;   // null where sparse_super keeps no backup
+  descriptorsBlock: number | null;
+  blockBitmap: number;
+  inodeBitmap: number;
+  inodeTable: number;               // first of inodeTableBlocks
+  firstData: number;                // first block after the group's metadata
+  freeBlocks: number;               // from the primary group descriptor
+  freeInodes: number;
+  usedDirs: number;
+}
+
+interface ExtSuperblock {
+  inodesCount: number; blocksCount: number; reservedBlocks: number;
+  freeBlocks: number; freeInodes: number; firstDataBlock: number;
+  logBlockSize: number; blocksPerGroup: number; inodesPerGroup: number;
+  magic: number;            // 0xEF53
+  state: number; revLevel: number; firstIno: number; inodeSize: number;
+  featureCompat: number; featureIncompat: number; featureRoCompat: number;
+  uuid: string;             // "e2f5ee00-2026-4923-8000-000000000001" by default
+  label: string;            // "" by default
+  journalInum: number;      // 8 on ext3, 0 on ext2
+  defaultMountOpts: number; mtime: number; wtime: number; mntCount: number;
+}
+
+type ExtBlockOwnerRole = "data" | "directory" | "indirect" | "journal";
+
+interface ExtBlockOwner {
+  block: number;
+  inode: number;
+  path: string;             // "<journal>" for the journal's blocks
+  role: ExtBlockOwnerRole;
+}
+
+interface ExtInode {
+  ino: number; mode: number; uid: number; gid: number;
+  size: number;             // i_size in bytes
+  links: number;
+  blocks: number;           // i_blocks, in 512-byte units
+  flags: number;
+  atime: number; ctime: number; mtime: number; dtime: number; // Unix seconds
+  block: number[];          // all 15 pointers: 12 direct, single, double, triple
+  slot: ExtInodeSlot;
+}
+
+interface ExtInodeSlot {
+  block: number;            // the inode-table block
+  offset: number;           // absolute byte offset of the 128-byte slot
+}
+
+interface ExtDirEntry {
+  block: number;
+  offset: number;           // absolute byte offset of the record
+  inode: number;            // 0 for an unused record
+  recLen: number; nameLen: number; fileType: number;
+  name: string;
+}
+
+interface ExtFileBlocks {
+  data: number[];
+  indirect: ExtIndirectBlock[];
+}
+
+interface ExtIndirectBlock {
+  block: number;
+  level: number;            // 1: single-indirect or second-level; 2: double-indirect
+}
+```
+
 - `armCrash(phase)`: make the next path mutation stop at `"before_commit"`
   (after the last journal copy), `"after_commit"` (after the commit block),
   or `"during_checkpoint"` (after the first block written home); any other
@@ -226,8 +344,9 @@ exactly the `filetype` and `sparse_super` features, and no compat features
 other than ext3's `has_journal`; anything else there throws `Unsupported`
 naming the reason. It also needs 8,192 blocks per group (otherwise
 `CorruptImage`).
-The intended `mke2fs` form for an image it can load (not yet run against this
-crate by hand; CI's e2fsprogs checks go the other way, judging the
+The `mke2fs` form for an image it can load (checked by hand against the
+loader with e2fsprogs 1.47.4 on a 16,384-block image: it loads as `"ext2"`
+and takes a `createFile`; CI's e2fsprogs checks go the other way, judging the
 emulator's images) is:
 
 ```

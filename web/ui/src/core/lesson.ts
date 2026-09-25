@@ -7,7 +7,8 @@ const hex = (n: number): string => "0x" + n.toString(16);
  * The Lesson card's "Look at:" line: what the current scenario step pointed the UI at,
  * in words, so someone who looked away knows where to look back. `regionNameAt` comes
  * from the attribution table (`attrAtSector(...).regionName`), which the pure core
- * cannot reach on its own; `space` supplies the family's unit noun and byte arithmetic.
+ * cannot reach on its own; `space` supplies the family's nouns (the file clause
+ * `unit.fileParts`, the sector and unit names) and byte arithmetic.
  *
  * Null means the step moved nothing worth naming (no focus at all, or a focus that only
  * cleared the selection), and the card leaves the line out.
@@ -19,11 +20,11 @@ export function describeFocus(
 ): string | null {
   if (!focus) return null;
   const parts: string[] = [];
-  if (typeof focus.path === "string") parts.push(`Files: ${focus.path}, its entry, chain, and ${space.unit.plural}`);
+  if (typeof focus.path === "string") parts.push(`Files: ${focus.path}, ${space.unit.fileParts}`);
   // One place, not three: `ScenarioRunner.applyFocus` jumps to offset, else sector, else
   // unit, so the card names whichever of them the dump actually went to.
   if (focus.offset !== undefined) parts.push(`offset ${hex(focus.offset)} in ${regionNameAt(Math.floor(focus.offset / space.sectorSize))}`);
-  else if (focus.sector !== undefined) parts.push(`sector ${focus.sector}, ${regionNameAt(focus.sector)}`);
+  else if (focus.sector !== undefined) parts.push(`${space.sector.singular} ${focus.sector}, ${regionNameAt(focus.sector)}`);
   else if (focus.unit !== undefined) parts.push(`${space.unit.singular} ${focus.unit} in the data region (offset ${hex(space.unitByteRange(focus.unit).start)})`);
   if (focus.showRemnants) parts.push("deleted entries are shown hatched");
   if (focus.strings) parts.push("printable strings are highlighted");

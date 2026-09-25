@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { createCommands } from "../../src/shell/commands";
+import { Volume } from "../../src/lib/wasm";
+import { FAMILIES } from "../../src/fs";
+import { createCommands, mkfsFlagsFor, mkfsTypeOf, mkfsTypes, orList } from "../../src/shell/commands";
 import { Vfs } from "../../src/shell/vfs";
 import { call, callErr, makeHost } from "./helpers";
 
@@ -249,6 +251,18 @@ describe("mkfs", () => {
     expect(host.selected.at(-1)).toBe("/D"); // mkfs selects nothing; the host adapter resets the selection
   });
 
+  it("names the type the new volume reports in its done line", async () => {
+    const { host, defs } = setup();
+    // A host whose freshly formatted volume reports another type: the line follows
+    // `fsType()`, not a string of the family's.
+    const format = host.format.bind(host);
+    host.format = (family, options) => {
+      format(family, options);
+      host.vol = Object.assign(Object.create(host.vol), { fsType: () => "ext3" });
+    };
+    expect((await call(defs, "mkfs")).log).toEqual(["formatted /dev/hda as ext3; the timeline was cleared"]);
+  });
+
   it("surfaces the core's geometry error with its code and leaves the volume alone", async () => {
     const { host, defs } = setup();
     const err = await callErr(defs, "mkfs", { flags: { sectors: 5 } });
@@ -256,6 +270,76 @@ describe("mkfs", () => {
     expect(err.code).toBe("InvalidGeometry");
     expect(host.vol.geometry().totalSectors).toBe(32768);
     expect((await callErr(defs, "mkfs", { flags: { spc: -1 } })).message).toBe("--spc must be a non-negative integer");
+  });
+});
+
+describe("mkfs --type", () => {
+  it("formats ext3 from a FAT16 host: the ext family with its variant, the done line, cwd and prompt reset", async () => {
+    const { host, vfs, defs } = setup();
+    await call(defs, "mkdir", { positionals: ["/mnt/D"] });
+    vfs.cwd = "/mnt/D";
+    const r = await call(defs, "mkfs", { flags: { type: "ext3", blocks: 4096, label: "shell" } });
+    expect(r.log).toEqual(["formatted /dev/hda as ext3; the timeline was cleared"]);
+    expect(host.formats).toEqual([{ family: "ext", options: { variant: "ext3", totalBlocks: 4096, label: "shell" } }]);
+    expect(host.vol.fsType()).toBe("ext3");
+    expect(host.vol.sectorCount()).toBe(4096);
+    expect(host.adapter.id).toBe("ext");
+    expect(host.adapter.journal).toBeDefined();
+    expect(host.historyLength).toBe(0);
+    expect(vfs.cwd).toBe("/mnt");
+    expect(host.prompts).toEqual(["/mnt "]);
+  });
+
+  it("formats ext2 and back to fat16, naming each type in the done line", async () => {
+    const { host, defs } = setup();
+    expect((await call(defs, "mkfs", { flags: { type: "ext2" } })).log).toEqual(["formatted /dev/hda as ext2; the timeline was cleared"]);
+    expect(host.adapter.journal).toBeUndefined();
+    expect((await call(defs, "mkfs", { flags: { type: "FAT16", sectors: 8192, spc: 1 } })).log).toEqual(["formatted /dev/hda as FAT16; the timeline was cleared"]);
+    expect(host.vol.geometry().totalSectors).toBe(8192);
+    expect(host.formats).toEqual([
+      { family: "ext", options: { variant: "ext2" } },
+      { family: "fat16", options: { totalSectors: 8192, sectorsPerCluster: 1 } },
+    ]);
+  });
+
+  it("defaults to the mounted volume's own type", async () => {
+    const host = makeHost(Volume.formatExt3(undefined));
+    const defs = createCommands(host, new Vfs());
+    expect((await call(defs, "mkfs", { flags: { "journal-mode": "data" } })).log).toEqual(["formatted /dev/hda as ext3; the timeline was cleared"]);
+    expect(host.formats).toEqual([{ family: "ext", options: { variant: "ext3", journalMode: "data" } }]);
+    const ext2 = makeHost(Volume.formatExt2(undefined));
+    await call(createCommands(ext2), "mkfs");
+    expect(ext2.vol.fsType()).toBe("ext2");
+    expect(ext2.formats).toEqual([{ family: "ext", options: { variant: "ext2" } }]);
+  });
+
+  it("refuses a flag the chosen type does not take, naming the type", async () => {
+    const { host, defs } = setup();
+    expect((await callErr(defs, "mkfs", { flags: { type: "fat16", blocks: 4096 } })).message).toBe("--blocks is not a fat16 option");
+    expect((await callErr(defs, "mkfs", { flags: { blocks: 4096 } })).message).toBe("--blocks is not a fat16 option");
+    expect((await callErr(defs, "mkfs", { flags: { type: "ext3", spc: 2 } })).message).toBe("--spc is not an ext3 option");
+    expect((await callErr(defs, "mkfs", { flags: { type: "ext2", "root-entries": 64 } })).message).toBe("--root-entries is not an ext2 option");
+    expect(host.formats).toEqual([]);
+  });
+
+  it("surfaces the family's own error through fsCall, and refuses an unknown type", async () => {
+    const { host, defs } = setup();
+    expect((await callErr(defs, "mkfs", { flags: { type: "ext2", "journal-mode": "data" } })).message).toBe("/dev/hda: journalBlocks and journalMode need variant ext3");
+    expect((await callErr(defs, "mkfs", { flags: { type: "ext3", "journal-blocks": -1 } })).message).toBe("--journal-blocks must be a non-negative integer");
+    const bad = await callErr(defs, "mkfs", { flags: { type: "ntfs" } });
+    expect(bad.message).toBe("unknown type 'ntfs'");
+    expect(bad.help).toBe("types: fat16, ext2, ext3");
+    expect(host.vol.fsType()).toBe("FAT16");
+  });
+
+  it("builds its lists from the registry: the types, the default type, and the merged flags", () => {
+    expect([orList(["a"]), orList(["a", "b"]), orList(["fat16", "ext2", "ext3"])]).toEqual(["a", "a or b", "fat16, ext2, or ext3"]);
+    expect(mkfsTypes(FAMILIES)).toEqual(["fat16", "ext2", "ext3"]);
+    expect(mkfsTypeOf(makeHost())).toBe("fat16");
+    expect(mkfsTypeOf(makeHost(Volume.formatExt2(undefined)))).toBe("ext2");
+    // One family keeps its own words; a flag two families share merges them.
+    expect(mkfsFlagsFor({ fat16: FAMILIES.fat16 })).toEqual(FAMILIES.fat16.mkfs.flags.map(({ long, kind, desc }) => ({ long, kind, desc })));
+    expect(mkfsFlagsFor(FAMILIES).find((f) => f.long === "label")).toEqual({ long: "label", kind: "str", desc: "volume label (fat16: up to 11 characters; ext: up to 16 bytes)" });
   });
 });
 

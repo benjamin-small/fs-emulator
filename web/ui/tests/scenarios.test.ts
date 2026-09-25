@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { adapterFor, FAMILIES } from "../src/fs";
 import { ScenarioCursor } from "../src/core/scenarioCursor";
-import { all } from "../src/scenarios";
+import { all, scenarioGroups } from "../src/scenarios";
 import { scenario as formatScenario } from "../src/scenarios/format";
 import { scenario as shell } from "../src/scenarios/shell";
 
@@ -41,6 +41,30 @@ describe("scenario scripts", () => {
       expect(FAMILIES[s.family], `${s.id} names family "${s.family}"`).toBeDefined();
       expect(FAMILIES[s.family].id).toBe(s.family);
     }
+  });
+
+  it("every scenario id is unique", () => {
+    const ids = all.map((s) => s.id);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  // The three ext lessons follow the nine FAT ones, so the picker still opens on the FAT
+  // fundamentals and each family's lessons stay together.
+  it("lists the FAT lessons first, then the three ext lessons", () => {
+    expect(all.map((s) => s.family)).toEqual([...new Array(9).fill("fat16"), "ext", "ext", "ext"]);
+    expect(all.slice(9).map((s) => s.id)).toEqual(["ext-fundamentals", "journaled-write", "crash-recover"]);
+    expect(all[0].id).toBe("fundamentals");
+  });
+
+  // ScenarioPanel renders one <optgroup> per group, labelled with the family's display name.
+  it("groups the picker by family in registry order", () => {
+    expect(scenarioGroups().map((g) => [g.family, g.label, g.scenarios.map((s) => s.id)])).toEqual([
+      ["fat16", "FAT16", all.slice(0, 9).map((s) => s.id)],
+      ["ext", "ext", ["ext-fundamentals", "journaled-write", "crash-recover"]],
+    ]);
+    expect(Object.keys(FAMILIES)).toEqual(["fat16", "ext"]);
+    // A family with no lessons gets no empty group.
+    expect(scenarioGroups(all.slice(0, 9)).map((g) => g.family)).toEqual(["fat16"]);
   });
 
   // The runner itself needs runes, so the step bookkeeping it drives lives in a plain
@@ -107,9 +131,10 @@ describe("scenario scripts", () => {
   // The shell scenario's step text shows a terminal command and its action performs the
   // equivalent Volume call. Pin the outcomes the commands would leave behind.
   describe("work from the shell", () => {
-    it("is registered last, after the eight explorer-driven scenarios", () => {
-      expect(all.length).toBe(9);
-      expect(all[all.length - 1]).toBe(shell);
+    it("is the last FAT lesson, after the eight explorer-driven scenarios", () => {
+      const fat = all.filter((s) => s.family === "fat16");
+      expect(fat.length).toBe(9);
+      expect(fat[fat.length - 1]).toBe(shell);
       expect(shell.id).toBe("shell");
       expect(shell.steps.length).toBe(8);
       // Every step's text names the command it stands for.

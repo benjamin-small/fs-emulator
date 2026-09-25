@@ -77,7 +77,9 @@ describe("package integration", () => {
   it("the tree reports null, not 0, for the root and for an empty file: neither owns a unit", () => {
     const vol = Volume.formatFat16(undefined);
     vol.createFile("/EMPTY.TXT", new Uint8Array(0));
-    const tree = buildTree(vol, adapterFor(vol).owners);
+    const fs = adapterFor(vol);
+    const tree = buildTree(vol, fs.owners);
+    expect(fs.ownerOf("/")).toBeUndefined(); // FAT's root is a fixed region, not a cluster: no owner row
     expect(tree.firstUnit).toBeNull();
     expect(tree.children[0]).toMatchObject({ name: "EMPTY.TXT", size: 0, firstUnit: null });
   });
