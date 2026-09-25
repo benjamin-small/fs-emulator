@@ -482,19 +482,14 @@ describe("ExtAdapter: a corrupt volume", () => {
     expect(vol.corruption()).toContain("superblock or group descriptors no longer parse after a raw write");
     expect(() => fs.refresh()).not.toThrow();
 
-    // block_owners() walks the tree through self.inode(), which reads the inode table
-    // directly by its cached location rather than passing the corruption gate, so the owner
-    // rows come back unaffected: neither [] (the review's guess) nor stale in the sense of
-    // wrong, just not gated. Only the path-based wasm calls (fileBlocks, inodeNumber,
-    // dirEntries) pass the gate and answer "nothing" while the volume is corrupt.
-    expect(fs.owners).toEqual(ownersBefore);
+    // Behind the corruption gate the volume owns nothing (blockOwners passes the same gate
+    // as the path-based calls), so the map shows only regions and the tree is empty.
+    expect(fs.owners).toEqual([]);
     expect(fs.chain("/hello.txt")).toEqual([]);
     expect(fs.entrySlots("/hello.txt")).toBeNull();
     expect(fs.dataStart("/hello.txt")).toBeNull();
     expect(fs.trace("/hello.txt")).toEqual([{ label: "no data blocks", offset: null }]);
-    // describeUnit reads the (unaffected) owners cache, so it still names /docs's block
-    // rather than falling back to "free" as the review guessed.
-    expect(fs.describeUnit(1111)).toBe("directory block 0 of /docs");
+    expect(fs.describeUnit(1111)).toBe("free");
     // journalInfo() reads the disk directly too, so the journal capability is unaffected.
     expect(fs.journal?.state()).toMatchObject({ mode: "ordered", needsRecovery: false });
 

@@ -115,7 +115,8 @@ before calling the specific ones. The plan is in `docs/ROADMAP.md`.
   from a walk of the tree: `role` is `"directory"`, `"data"`, or
   `"indirect"` for a path's blocks, and on ext3 the journal's data blocks
   are `"journal"` rows and its pointer blocks `"indirect"` rows, both with
-  inode 8 and the path `"<journal>"`. Free blocks and metadata have no row.
+  inode 8 and the path `"<journal>"`. Free blocks and metadata have no row,
+  and a volume behind the corruption gate has none at all.
 - `inodeNumber(path)`: the inode number a path names (2 for `/`); it
   throws `NotFound`, `NotADirectory`, `InvalidPath`, or `CorruptImage` like
   the path methods.

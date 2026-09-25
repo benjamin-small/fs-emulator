@@ -750,11 +750,15 @@ impl ExtFs {
 
     /// Which inode and path every directory, data, and indirect block
     /// belongs to, from a walk of the tree from the root. Directories that
-    /// do not parse are skipped, so this never fails. On ext3 the journal's
-    /// data blocks (role `Journal`) and pointer blocks (`Indirect`) belong
-    /// to inode 8 with the path `<journal>`.
+    /// do not parse are skipped, so this never fails; a volume behind the
+    /// corruption gate owns nothing, like every path operation refuses.
+    /// On ext3 the journal's data blocks (role `Journal`) and pointer
+    /// blocks (`Indirect`) belong to inode 8 with the path `<journal>`.
     pub fn block_owners(&self) -> BTreeMap<u32, BlockOwner> {
         let mut owners = BTreeMap::new();
+        if self.ensure_mounted().is_err() {
+            return owners;
+        }
         let mut seen = BTreeSet::from([ROOT_INO]);
         let mut stack = vec![(ROOT_INO, "/".to_string())];
         while let Some((ino, path)) = stack.pop() {
