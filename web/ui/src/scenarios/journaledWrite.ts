@@ -6,8 +6,8 @@ import { biggerText } from "./fundamentals";
 /**
  * One create on the ordered-mode ext3 disk, followed through the journal in the order its bytes
  * were written. The first step runs the create; every later step only moves the dump, and the
- * Step strip's events list the writes in the same order. The dump shows the disk after the
- * create, so steps about a moment mid-transaction say what the bytes read then and what they
+ * What changed panel's events list the writes in the same order. The dump shows the disk after
+ * the create, so steps about a moment mid-transaction say what the bytes read then and what they
  * read now. tests/journaled-write.test.ts pins every quoted number, and the journal positions
  * below, against the create's own record.
  */
@@ -37,7 +37,7 @@ export const scenario: Scenario = {
   steps: [
     {
       title: "One create, one transaction",
-      text: "This step created /notes.txt, 3,000 bytes, on an ext3 disk in ordered mode. The superblock's incompatible-features word at block 1 + 0x60 reads 0x02 now, but while the create ran it read 0x06: bit 0x04 is needs_recovery, set before the first journal write and cleared after the last, so a crash in between leaves a flag that says so. The Step strip lists the create's events in the order they happened; the next steps follow them.",
+      text: "This step created /notes.txt, 3,000 bytes, on an ext3 disk in ordered mode. The superblock's incompatible-features word at block 1 + 0x60 reads 0x02 now, but while the create ran it read 0x06: bit 0x04 is needs_recovery, set before the first journal write and cleared after the last, so a crash in between leaves a flag that says so. The What changed panel lists the create's events, grouped by phase, in the order they happened; the next steps follow them.",
       action: (v) => v.createFile(NOTES_PATH, biggerText(NOTES_BYTES)),
       focus: { path: NOTES_PATH, offset: FLAG_WORD },
     },

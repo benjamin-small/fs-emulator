@@ -58,7 +58,11 @@ Both tests passed on 2026-09-25 (Linux 7.0); remove `target-linux/` afterwards.
 boundary. The TypeScript suite exercises the real generated WebAssembly package
 through adapters and integration scenarios, plus byte attribution, formatting,
 corruption, timeline patches, scenario playback, terminal parsing and commands,
-virtual filesystem behavior, redirects, `dd`, `xxd`, theming, and layout
-helpers. `pnpm --dir web/ui build` adds Svelte type-checking and a production
+virtual filesystem behavior, redirects, `dd`, `xxd`, theming, layout
+helpers, the tab route, per-tab scroll keeping and the maps' 0-width guard,
+per-tab lesson lists, `mkfs` per tab and the terminal's tab switch, Load
+image's family detection and routing, the adapters' one-line summaries, the
+Operation bar's slider, and the What changed panel's sector ranges and event
+phases. `pnpm --dir web/ui build` adds Svelte type-checking and a production
 bundle gate for the component layer. The demo build checks the package from a
 second consumer.

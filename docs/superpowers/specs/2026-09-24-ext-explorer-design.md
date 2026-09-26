@@ -35,6 +35,7 @@ binding for the crates.
   (with a Filesystem select) or with `mkfs --type ext3`, load an mke2fs
   image, and the tree, ribbon, dump, block-group map, Inspector, Journal
   panel, strings, timeline, diff, and terminal all work on it.
+  *Amended 2026-09-25 by the family-tabs spec: from the ext tab's Format (ext2 / ext3) details; there is no Filesystem select.*
 - On ext the chrome says block, the Inspector explains inodes, indirect
   blocks, and journal blocks, `stat` and `df` print ext facts, and
   `seek i:12` jumps to an inode.
@@ -90,6 +91,9 @@ optional part of the adapter that exposes the ext3 journal.
 - `DEFAULT_FAMILY` stays `fat16`; the app still opens on FAT16.
 - `PANELS` gains `extras: Component[]`, rendered by `App.svelte` under the
   map panel in order (`fat16: []`, `ext: [JournalPanel]`).
+  *Amended 2026-09-25 by the family-tabs spec: `extras` is renamed `aside` and rendered by `WorkspaceView.svelte`
+  at the top of the right column, under What changed (`fat16: []`,
+  `ext: [JournalPanel]`).*
 
 ## 2. Seam amendments (family-neutral)
 
@@ -243,7 +247,7 @@ phase mapping), `metadata.ts` (`CORRUPT_NOTE`, `NOTES`, `touchesMetadata`),
   when owned, ` · free` for a free data block; click selects the owner (if
   any) and jumps to the block. Heading `Block groups · ${groups} groups ·
   ${totalBlocks} blocks`, with the FAT map's "latest state" note when rewound.
-- **`JournalPanel.svelte`** (`PANELS.ext.extras[0]`). On ext2 a single
+- **`JournalPanel.svelte`** (`PANELS.ext.extras[0]`; *Amended 2026-09-25 by the family-tabs spec: `PANELS.ext.aside[0]`, in the right column*). On ext2 a single
   muted line `This volume has no journal.` On ext3: heading `Journal ·
   ${mode} mode`; facts `sequence`, `head`, `start`, `blocks` (maxlen), and,
   when `needsRecovery`, the line `Needs recovery: the journal holds an
@@ -275,7 +279,17 @@ phase mapping), `metadata.ts` (`CORRUPT_NOTE`, `NOTES`, `touchesMetadata`),
   select listing every family by `name` (`FAT16`, `ext`), initialised to the
   mounted family and re-synced when the mounted family changes; the form
   shown is `PANELS[selected].format`.
+  *Amended 2026-09-25 by the family-tabs spec: the Filesystem select is gone. Each tab formats its own family:
+  the form is `PANELS[volume.family].format`, and the details' summary reads
+  `Format (FAT16)` or `Format (ext2 / ext3)` (`FAMILIES[id].fsTypes.join(" / ")`).
+  Load image routes the image to its family's tab.*
 - **`App.svelte`** renders `PANELS[id].extras` after the map.
+  *Amended 2026-09-25 by the family-tabs spec: `WorkspaceView.svelte` renders `PANELS[id].aside` at the top of
+  the right column, after What changed; nothing follows the map.*
+- *Amended 2026-09-25 by the family-tabs spec: **`TabBar.svelte`** (new), in the top bar after the `h1`: a
+  `role="tablist"` of one tab per family (`FAT16`, `ext`), each switching the
+  whole workspace (disk, timeline, selection, panels, lesson, terminal cwd),
+  with a `lesson` badge on a tab running one; the URL hash names the tab.*
 - **`StatusLine.svelte`**: `NeedsRecovery: "This volume needs recovery: the
   journal holds an unfinished transaction. Recover it from the Journal panel
   or with recover."`; `Unsupported` leaves the table so the wasm text shows
@@ -295,6 +309,9 @@ phase mapping), `metadata.ts` (`CORRUPT_NOTE`, `NOTES`, `touchesMetadata`),
 - **ScenarioPanel**: the select groups options in `<optgroup>`s by family
   display name in registry order (`FAT16`, then `ext`), each family's
   scenarios in their `all` order.
+  *Amended 2026-09-25 by the family-tabs spec: no `<optgroup>`s: the picker lists `lessonsFor(tab)`, the active
+  tab's lessons in their `all` order, defaulting to `defaultLessonFor(tab)`
+  (its fundamentals), and keeps each tab's pick.*
 
 ## 6. Shell
 
@@ -324,6 +341,12 @@ phase mapping), `metadata.ts` (`CORRUPT_NOTE`, `NOTES`, `touchesMetadata`),
   the family's `Error` from section 1 through `fsCall`. Summary: `Format
   /dev/hda (clears the timeline); --type picks fat16, ext2, or ext3`. Done
   line composed as in section 2.
+  *Amended 2026-09-25 by the family-tabs spec: `mkfs --type` accepts only the tab's family's types, and the flags
+  are that family's alone (`--label` is no longer merged: `volume label, up
+  to 11 characters` on FAT16). Summaries `Format /dev/hda (clears the
+  timeline); --type picks fat16` and `…; --type picks ext2 or ext3`; the
+  other family's type is `ShellError("'ext3' is an ext type: switch to the
+  ext tab to format one", { help: "types: fat16" })` and its mirror on ext.*
 - `df` prints `blockSize`/`blocks`; `stat` spreads the ext facts; `seek`,
   `write --at`, `xxd --offset` accept `b:N` and `i:N` through `parseAddr`.
 - **Re-registration**: `TerminalPanel` keeps the registered command names;
@@ -332,6 +355,9 @@ phase mapping), `metadata.ts` (`CORRUPT_NOTE`, `NOTES`, `touchesMetadata`),
   them all and registers `createCommands(host, vfs)` again with the same
   `vfs` (so the working directory and prompt survive), then re-sets the
   prompt.
+  *Amended 2026-09-25 by the family-tabs spec: one terminal follows the active tab: each tab has its own host
+  and `vfs`, and a tab switch re-registers over that tab's, prints the tab
+  banner, and re-sets the prompt from its cwd.*
 
 ## 7. Lessons (all `family: "ext"`, all run on the default ext3 disk)
 
@@ -339,7 +365,8 @@ Numbers below are the default disk's; each lesson's test pins every quoted
 number against a freshly formatted volume, as `tests/fundamentals.test.ts`
 does for FAT. Steps use `fs` and, for ext-only offsets, `asExt(fs)`.
 
-**`ext-fundamentals`, "The fundamentals (ext)".** Creates `/hello.txt`
+**`ext-fundamentals`, "The fundamentals (ext)".** *Amended 2026-09-25 by the family-tabs spec: the title is
+`The fundamentals`: the ext tab's picker lists only ext lessons.* Creates `/hello.txt`
 (`Hello, ext3!`, 12 bytes) and `/bigger.txt` (13 blocks of numbered lines,
 13,312 bytes) in its first step, then tours: the boot block (block 0, all
 zero), the superblock (block 1: magic `0xEF53` at +0x38, 16,384 blocks, 1,024

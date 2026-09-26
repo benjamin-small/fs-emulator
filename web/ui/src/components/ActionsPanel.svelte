@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from "svelte";
   import { FAMILIES } from "../fs";
   import { PANELS } from "../fs/panels";
   import { getWorkspace, workspaces } from "../state/workspace.svelte";
@@ -59,6 +60,13 @@
       workspaces.loadImage(new Uint8Array(await file.arrayBuffer()), file.name, ws);
     } catch (err) {
       volume.report(err);
+      return;
+    }
+    // This input's tab is hidden now, which drops its focus to the page: keep the keyboard on
+    // Load image, in the tab that opened (mounted by the time `tick` resolves).
+    if (workspaces.activeId !== ws.id) {
+      await tick();
+      document.getElementById(`load-image-${workspaces.activeId}`)?.focus();
     }
   }
 
@@ -107,7 +115,7 @@
 
     <label class="field">
       Load image
-      <input type="file" onchange={onLoadImage} aria-describedby="load-hint-{ws.id}" />
+      <input id="load-image-{ws.id}" type="file" onchange={onLoadImage} aria-describedby="load-hint-{ws.id}" />
     </label>
     <p id="load-hint-{ws.id}" class="muted load-hint">FAT16 and ext images each open in their own tab.</p>
     <button onclick={exportImage}>Export image</button>
