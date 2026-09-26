@@ -122,6 +122,16 @@ describe("app.css layout guards", () => {
     expect(rule(".journal-controls select")).toContain("min-width: 0");
   });
 
+  it("gives the ribbon's hover caption a row of its own, so hovering the bar moves nothing", () => {
+    // The caption shares the legend's wrapping flex row. On ext the legend already wraps, and a
+    // long caption (`block 253 · journal · <path>`) pushed it onto a new line, so every panel
+    // below dropped a line while the mouse was over the bar. A full-width row with a reserved
+    // one-line height is always there, empty or not.
+    const caption = rule(".ribbon-caption");
+    expect(caption).toContain("flex: 1 0 100%");
+    expect(caption).toContain("min-height: 1.4em");
+  });
+
   it("lets the Format details' inputs and selects fill the Actions column", () => {
     // The ext form's number inputs and the Filesystem select would otherwise keep their intrinsic
     // widths: ragged against the other fields, and able to overflow the 220 px left column, which
@@ -152,6 +162,30 @@ describe("JournalPanel markup guards", () => {
     // with its content is not announced, so the regions wrap the blocks and stay in the DOM.
     expect(svelte).toContain('<div class="journal-live" aria-live="polite">');
     expect(svelte).toContain('<div class="journal-controls" aria-live="polite">');
+  });
+});
+
+describe("LessonPanel markup guards", () => {
+  const svelte = readFileSync(new URL("../src/components/LessonPanel.svelte", import.meta.url), "utf8");
+
+  it("keeps Prev, Next, and Close above the step text, so they never move as the text changes", () => {
+    // Under the text, the row's position depended on the step's length: a learner clicking
+    // through a lesson had to chase the buttons. Between the bar and the body they stay put.
+    const row = svelte.indexOf('<div class="btn-row"');
+    const body = svelte.indexOf('id="lesson-body"');
+    expect(row).toBeGreaterThan(-1);
+    expect(body).toBeGreaterThan(-1);
+    expect(row).toBeLessThan(body);
+  });
+});
+
+describe("the product name", () => {
+  it("reads FS Explorer in the page title and the heading", () => {
+    const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
+    const app = readFileSync(new URL("../src/App.svelte", import.meta.url), "utf8");
+    expect(html).toContain("<title>FS Explorer</title>");
+    expect(app).toContain("<h1>FS Explorer</h1>");
+    expect(app).toContain("document.title = `FS Explorer · ${");
   });
 });
 

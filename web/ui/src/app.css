@@ -88,7 +88,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .ribbon-swatch { display: inline-flex; align-items: center; gap: 5px; background: none; border: 0; padding: 2px 4px; border-radius: var(--radius); cursor: pointer; font: inherit; color: var(--ink); }
 .ribbon-swatch:hover { background: color-mix(in srgb, var(--ink-muted) 12%, transparent); border-color: transparent; }
 .ribbon-swatch .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--sw, var(--ink-muted)); flex-shrink: 0; }
-.ribbon-caption { margin-left: auto; font-size: 12px; min-width: 140px; text-align: right; }
+.ribbon-caption { flex: 1 0 100%; min-height: 1.4em; font-size: 12px; text-align: right; }
 
 /* Hex dump */
 .hexview { overflow: auto; height: 100%; position: relative; padding: 0; }
@@ -224,13 +224,13 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .lesson-bar .handle { letter-spacing: -2px; cursor: grab; }
 .lesson-bar .minimize { min-width: 20px; cursor: pointer; }
 .lesson-bar .handle:hover, .lesson-bar .minimize:hover { border-color: var(--hairline); color: var(--ink); }
-.lesson .btn-row.compact { margin-top: 2px; }
+.lesson .btn-row.compact { margin-bottom: 0; }
 .lesson .eyebrow { margin: 0 0 2px; font: 500 11px var(--font-display); text-transform: uppercase; letter-spacing: 0.04em; color: var(--ink-muted); }
 .lesson h2 { margin: 0 0 6px; font: 500 16px/1.2 var(--font-display); }
 .lesson h2:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .lesson .lesson-step-title { margin: 8px 0 4px; font: 500 13px var(--font-display); }
 .lesson .look-at { font-size: 12px; }
-.lesson .btn-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.lesson .btn-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 8px; }
 
 /* Actions panel */
 .actions fieldset { border: 0; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; }

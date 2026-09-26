@@ -214,6 +214,13 @@
       <button type="button" class="handle" aria-label="Move the lesson card (arrow keys; Shift for bigger steps)" title="Drag to move, or use the arrow keys" onkeydown={onHandleKeydown}>⋮⋮</button>
     {/if}
   </div>
+  <!-- Prev / Next / Close sit between the bar and the text, so their place never depends on
+       how long a step's text is: a learner clicks through a lesson without chasing them. -->
+  <div class="btn-row" class:compact={lessonWindow.minimized}>
+    <button onclick={() => scenarios.prev()} disabled={scenarios.index <= 0}>Prev</button>
+    <button onclick={advance}>{isLast ? "Finish" : "Next"}</button>
+    <button onclick={closeLesson}>Close</button>
+  </div>
   <div id="lesson-body" hidden={lessonWindow.minimized}>
     <!-- The title names the scenario, not the step, so it carries the step's own title and
          text as its description: the focus move above then announces the new step in one
@@ -224,10 +231,5 @@
     {#if lookAt}
       <p class="look-at muted">Look at: {lookAt}</p>
     {/if}
-  </div>
-  <div class="btn-row" class:compact={lessonWindow.minimized}>
-    <button onclick={() => scenarios.prev()} disabled={scenarios.index <= 0}>Prev</button>
-    <button onclick={advance}>{isLast ? "Finish" : "Next"}</button>
-    <button onclick={closeLesson}>Close</button>
   </div>
 </div>

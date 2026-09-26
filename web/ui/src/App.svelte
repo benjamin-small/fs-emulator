@@ -22,7 +22,7 @@
   }
   $effect(syncHash);
   $effect(() => {
-    document.title = `fs explorer · ${FAMILIES[workspaces.activeId].name}`;
+    document.title = `FS Explorer · ${FAMILIES[workspaces.activeId].name}`;
   });
   // A hash typed or pasted into the address bar: open the tab it names. An unknown name keeps the
   // current tab, and its hash is put back.
@@ -57,7 +57,7 @@
 <svelte:window onkeydown={onKeydown} onhashchange={onHashChange} />
 <div class="app" class:term-side={terminal.placement === "side"} style:--term-h="{terminal.height}px" style:--term-w="{terminal.width}px">
   <header class="topbar">
-    <h1>fs explorer</h1>
+    <h1>FS Explorer</h1>
     <TabBar />
     <button
       id="terminal-toggle"
