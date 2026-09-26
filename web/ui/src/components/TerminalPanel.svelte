@@ -54,7 +54,11 @@
     const panes = (term as unknown as { paneManager?: { handleEvent?: (e: PaneOutput) => void } }).paneManager;
     const pane = term.snapshot?.active_pane;
     if (typeof panes?.handleEvent !== "function" || pane === undefined) return;
-    panes.handleEvent({ type: "paneOutput", pane, data: `\r\x1b[2K${line}\r\n` });
+    try {
+      panes.handleEvent({ type: "paneOutput", pane, data: `\r\x1b[2K${line}\r\n` });
+    } catch {
+      return;
+    }
     term.setPrompt("");
   }
 
