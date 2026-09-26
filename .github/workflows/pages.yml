@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   build:
-    name: build fs explorer
+    name: build FS Explorer
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

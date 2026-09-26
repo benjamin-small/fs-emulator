@@ -1,4 +1,4 @@
-# fs explorer UI
+# FS Explorer UI
 
 A Svelte 5 (runes) app for exploring a filesystem byte by byte, FAT16, ext2,
 and ext3: a whole-disk hex dump with ASCII and a strings overlay, a disk
@@ -333,7 +333,7 @@ Things to know:
 
 ## What is filesystem-specific
 
-The app is the fs explorer: one explorer for every filesystem family the wasm
+The app is FS Explorer: one explorer for every filesystem family the wasm
 package can hold, FAT16 and ext (ext2 and ext3) today. The hex dump, ribbon, byte attribution,
 zero-run collapsing, strings overlay, timeline, diff replay, and terminal read
 `layout()` regions and the operation journal from `fs-emulator-wasm`, so a
