@@ -1,8 +1,9 @@
 <script lang="ts">
   import { buildTree } from "../core/tree";
-  import { selection } from "../state/selection.svelte";
-  import { volume } from "../state/volume.svelte";
+  import { getWorkspace } from "../state/workspace.svelte";
   import TreeNodeView from "./TreeNodeView.svelte";
+
+  const { volume, selection } = getWorkspace();
 
   const tree = $derived((volume.epoch, buildTree(volume.vol, volume.adapter.owners)));
 </script>

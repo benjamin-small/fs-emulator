@@ -30,7 +30,7 @@ function both(a: OpRecord, b: OpRecord): OpRecord {
 
 export const scenario: Scenario = {
   id: "ext-fundamentals",
-  title: "The fundamentals (ext)",
+  title: "The fundamentals",
   summary: "Tour the block groups of an ext3 disk and follow a name through its inode to its blocks.",
   family: "ext",
   steps: [

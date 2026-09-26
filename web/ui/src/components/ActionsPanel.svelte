@@ -1,18 +1,16 @@
 <script lang="ts">
-  import { volume } from "../state/volume.svelte";
-  import { selection } from "../state/selection.svelte";
+  import { tick } from "svelte";
   import { FAMILIES } from "../fs";
-  import type { FsFamilyId } from "../fs/adapter";
   import { PANELS } from "../fs/panels";
+  import { getWorkspace, workspaces } from "../state/workspace.svelte";
 
-  /** The family the Format details will format: the mounted one until the Filesystem select
-   *  picks another, and back to the mounted one whenever that changes (a format, a load). */
-  const mounted = $derived(volume.adapter.id);
-  let family = $state<FsFamilyId>(volume.adapter.id);
-  $effect(() => { family = mounted; });
+  const ws = getWorkspace();
+  const { volume, selection } = ws;
 
-  /** The chosen family's Format form, from the panel registry. */
-  const FormatPanel = $derived(PANELS[family].format);
+  /** The tab's Format form, from the panel registry: a tab formats its own family only. */
+  const FormatPanel = PANELS[volume.family].format;
+  /** The types that form makes: "FAT16", "ext2 / ext3". */
+  const formatTypes = FAMILIES[volume.family].fsTypes.join(" / ");
 
   let path = $state("/Hello world.txt");
   let content = $state("Hello from the browser");
@@ -57,10 +55,18 @@
   async function onLoadImage(e: Event) {
     const file = (e.currentTarget as HTMLInputElement).files?.[0] ?? null;
     if (!file) return;
+    // An image of the other family opens in that family's tab (`loadImage` says so there).
     try {
-      volume.load(new Uint8Array(await file.arrayBuffer()));
+      workspaces.loadImage(new Uint8Array(await file.arrayBuffer()), file.name, ws);
     } catch (err) {
-      volume.status = { text: err instanceof Error ? err.message : String(err) };
+      volume.report(err);
+      return;
+    }
+    // This input's tab is hidden now, which drops its focus to the page: keep the keyboard on
+    // Load image, in the tab that opened (mounted by the time `tick` resolves).
+    if (workspaces.activeId !== ws.id) {
+      await tick();
+      document.getElementById(`load-image-${workspaces.activeId}`)?.focus();
     }
   }
 
@@ -81,7 +87,7 @@
   <fieldset disabled={!volume.atLatest}>
     <label class="field">
       Path
-      <input id="action-path" class="mono" type="text" bind:value={path} />
+      <input id="action-path-{ws.id}" class="mono" type="text" bind:value={path} />
     </label>
     <label class="field">
       Content
@@ -103,20 +109,15 @@
     </div>
 
     <details class="format">
-      <summary>Format</summary>
-      <label class="field">
-        Filesystem
-        <select id="format-family" bind:value={family}>
-          {#each Object.values(FAMILIES) as f}<option value={f.id}>{f.name}</option>{/each}
-        </select>
-      </label>
+      <summary>Format ({formatTypes})</summary>
       <FormatPanel />
     </details>
 
     <label class="field">
       Load image
-      <input type="file" onchange={onLoadImage} />
+      <input id="load-image-{ws.id}" type="file" onchange={onLoadImage} aria-describedby="load-hint-{ws.id}" />
     </label>
+    <p id="load-hint-{ws.id}" class="muted load-hint">FAT16 and ext images each open in their own tab.</p>
     <button onclick={exportImage}>Export image</button>
   </fieldset>
 </section>

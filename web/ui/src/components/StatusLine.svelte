@@ -1,5 +1,7 @@
 <script lang="ts">
-  import { volume } from "../state/volume.svelte";
+  import { getWorkspace } from "../state/workspace.svelte";
+
+  const { volume } = getWorkspace();
 
   // Sentence-case, verb-first-adjacent copy per the design spec ("Disk full. Free
   // space or use a smaller file."); falls back to the raw wasm message for codes not
@@ -43,5 +45,6 @@
        the corruption go away, and the two say different things. -->
   {#if volume.corruption}<span>Volume not mounted: {volume.corruption}</span>{/if}
   {#if volume.needsRecovery}<span>Volume needs recovery</span>{/if}
+  {#if volume.notice}<span class="note">{volume.notice}</span>{/if}
   {#if volume.status}<span class="err">{message}{#if volume.status.code}{" "}<span class="muted">{volume.status.code}</span>{/if}</span>{/if}
 </div>

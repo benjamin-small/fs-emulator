@@ -1,7 +1,8 @@
 <script lang="ts">
-  import { selection } from "../../state/selection.svelte";
-  import { volume } from "../../state/volume.svelte";
+  import { getWorkspace } from "../../state/workspace.svelte";
   import { DEFAULTS, SIZES, checkFormat, defaultInodesPerGroup, defaultJournalBlocks, formOptions } from "./format";
+
+  const { volume, selection } = getWorkspace();
 
   // Start from the disk every ext lesson runs on (ext3, 16 MB, ordered, default inode and
   // journal sizes); a blank number field means "the default", shown as its placeholder.

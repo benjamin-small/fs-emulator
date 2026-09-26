@@ -5,8 +5,9 @@ and ext3: a whole-disk hex dump with ASCII and a strings overlay, a disk
 ribbon and a FAT cluster map or ext block-group map for seeing where files
 land, an ext3 journal panel with crash and recovery controls, an operation
 timeline with byte-diff replay, twelve guided scenarios, and a terminal
-drawer that mounts the volume at `/mnt` and the raw disk at `/dev/hda`. The
-app opens on a FAT16 disk. It runs entirely in the
+drawer that mounts the volume at `/mnt` and the raw disk at `/dev/hda`. Each
+family has its own tab, FAT16 and ext, and the app opens on the FAT16 tab. It
+runs entirely in the
 browser against the `fs-emulator-wasm` package — nothing is sent over the
 network, and there is no server component. The build from `main` is
 published at https://benjamin-small.github.io/fs-emulator/ by
@@ -34,13 +35,60 @@ pnpm preview   # serve the production build
 
 ## Panes
 
-Layout: the current step runs as a strip under the top bar, next to the
-other controls; a disk ribbon runs full width above a three-column grid —
-files, the mounted family's map (the FAT map, or the block-group map and, on
-ext, the Journal panel under it), and actions on the left; the hex dump in
-the center; the lesson card, strings, and the byte inspector on the right —
-with an operation timeline along the bottom.
+The top bar holds two tabs, **FAT16** and **ext**, and each tab is a
+workspace of its own: its own disk and timeline, selection, dump position,
+panel state, running lesson, and the terminal's working directory in it.
+Switching tabs keeps both exactly as they were (both disks stay in memory),
+and a tab that is running a lesson carries a `lesson` badge. The URL hash
+names the tab (`#fat16`, `#ext`; `#fat`, `#ext2`, and `#ext3` work too), so a
+link or a reload opens it, and a bare URL opens FAT16. The ext tab's disk is
+created the first time the tab opens: a fresh ext3 disk. Inside a tab nothing
+changes the family: the Format details, the lesson picker, and `mkfs` know
+only the tab's own, and an image of the other family opens in its own tab.
 
+Layout, per tab: the Operation bar runs under the top bar and a disk ribbon
+full width under it, above a three-column grid:
+
+- **FAT16 tab:** left Files, FAT map, Actions; center the dump; right What
+  changed, Strings, Inspector.
+- **ext tab:** left Files, Block groups, Actions; center the dump; right What
+  changed, Journal, Strings, Inspector.
+
+The right column scrolls, and the Lesson card floats over the page. Both tabs
+have the Ribbon, Files, Dump, Inspector, Strings, Operation bar, and What
+changed (each tab its own). FAT16-only: FAT map. ext-only: Block groups,
+Journal (right column).
+
+- **Operation bar** (under the top bar) — the timeline and the current step
+  in one line: **Prev**, **Play** / **Pause**, **Next**, a slider with one
+  tick per step (its tooltip names the step under the pointer, `2 of 2 ·
+  create_file /b.txt`), then the step, `1 of 1 · create_file /Hello world.txt
+  · 7 sectors · 7 events` (blocks on ext; the operation names are the wasm
+  package's). Before any action it describes the disk instead: `FAT16 · 16 MB
+  · 512-byte sectors · 2 KiB clusters` or `ext3 · 16 MB · 16,384 1 KiB blocks
+  in 2 groups · 1,024-block journal, ordered mode`, then "Run an action to see
+  what it changes." Play stops at the last step, or when its tab is hidden.
+  Replay reconstructs the disk as it was after any step and highlights what
+  that step changed, in amber, in both the dump and the ribbon. Running a
+  command never moves the dump: it highlights the changed bytes and leaves
+  the view where you left it. Any explicit navigation does move it — a
+  timeline step (Prev/Next/Play, the slider, `[`/`]`), the ribbon, a tree
+  node or a map cell, an Inspector, Strings, or What changed link, the dump's
+  own keys, or `seek`.
+- **What changed** (top of the right column) — what the current step wrote.
+  First the changed sectors (blocks on ext) as ranges, `1` `33` `65` `97–100`
+  for a FAT16 create and `1–6` `69` `82–91` `1111` for an ext3 one: click a
+  range to jump the dump to its first sector, hover or focus it to outline
+  it on the ribbon and the map. Then the step's events grouped into phases,
+  in the order each phase first appears, each a collapsible list headed by
+  its count (`Allocation · 3 events`). FAT16 and ext2 steps group into
+  Directory entry, Allocation, and Data; a step that touches the ext3 journal
+  groups into Filesystem writes, Journal, Checkpoint, Cleanup, Recovery, and
+  Crash (in the warning colour). In a step without the journal a kind the
+  grouping does not know lands in Other (with the journal, in Filesystem
+  writes). The first phase starts open and the rest closed, and a phase you
+  open or close stays that way while you step. An event with a region is a
+  button: click to jump, hover to outline.
 - **Ribbon** — the entire disk as one strip, one column per pixel of its
   width, colored by owning file or region (or a hairline for free space),
   with region-boundary ticks and a bracket showing the dump's current
@@ -53,10 +101,10 @@ with an operation timeline along the bottom.
   directory slot, its FAT chain, and its clusters everywhere else in the
   UI. A "Show remnants" toggle marks deleted entries and the data they left
   behind.
-- **FAT map** — every cluster as a small cell: free, owned (in its
+- **FAT map** (FAT16 tab) — every cluster as a small cell: free, owned (in its
   file's hue), end-of-chain, or bad. Hover for the cluster number, FAT
   value, and owner; the selected file's chain draws as connected arrows.
-- **Block groups** (ext, in place of the FAT map) — one band per block
+- **Block groups** (ext tab, in place of the FAT map) — one band per block
   group headed `group 0 · blocks 1–8192 · 7,082 free`, every block a 4 px
   cell: metadata in its region's colour, the journal in amber, owned data and
   directory blocks in their file's hue, free blocks as a hairline, and a dot
@@ -64,7 +112,8 @@ with an operation timeline along the bottom.
   step's changes outlined in the diff colour, and the block under the dump's
   hovered byte dashed. Hover for `block N · region · owner`; click to select
   the owner and jump to the block.
-- **Journal** (ext, under the block-group map) — on ext3 the journal's mode
+- **Journal** (ext tab, right column, under What changed) — on ext3 the
+  journal's mode
   and header facts (sequence, head, start, size), a ring strip with one cell
   per journal block coloured by kind (superblock, descriptor, copy, commit,
   revoke, unused) with checkpointed transactions faded, and the crash
@@ -75,10 +124,17 @@ with an operation timeline along the bottom.
   the panel and the status line say so, and changes throw `NeedsRecovery`.
   On ext2 the panel is one line: "This volume has no journal."
 - **Actions** — add, overwrite, or delete a file; make or remove a
-  folder; format a fresh disk (a Filesystem select picks FAT16, with a size
-  and cluster size, or ext, with ext2 or ext3, a size, inodes per group, a
-  label, and for ext3 the journal's mode and size); load or export a raw
-  image. Every action records a step in the timeline.
+  folder; format a fresh disk of the tab's family (**Format (FAT16)**: a size
+  and cluster size; **Format (ext2 / ext3)**: ext2 or ext3, a size, inodes
+  per group, a label, and for ext3 the journal's mode and size); load or
+  export a raw image. Load image opens an image in its own family's tab,
+  whichever tab it was loaded from: an ext image loaded from the FAT16 tab
+  switches to the ext tab, mounts there (closing a lesson running there),
+  says so on the status line (`Opened mke2fs-ext3.img in the ext tab: it is
+  an ext3 image. The FAT16 tab is as you left it.`), and leaves the keyboard
+  on that tab's Load image; the FAT16 tab is untouched. Bytes neither family
+  recognises are the loading tab's error. Every action records a step in the
+  timeline.
 - **Dump** — the virtualized whole-disk hex view: offset, 16 hex bytes,
   and a 16-character ASCII gutter per row. Bytes are tinted by owner, runs
   of zero sectors collapse into a single clickable row, and the header
@@ -97,35 +153,29 @@ with an operation timeline along the bottom.
 - **Strings** — printable runs (4+ bytes) in the visible window, or the
   whole disk on request, each with its offset and owner; click one to jump
   to it.
-- **Step** (strip under the top bar) **/ Timeline** (bottom) — the current
-  operation's plain-language events and changed sectors, with Prev/Next/Play
-  scrubbing through history. Replay
-  reconstructs the disk as it was after any step and highlights what that
-  step changed, in amber, in both the dump and the ribbon. Running a command
-  never moves the dump: it highlights the changed bytes and leaves the view
-  where you left it. Any explicit navigation does move it — a timeline step
-  (a step button, Prev/Next/Play, the slider, `[`/`]`), the ribbon, a tree
-  node or a FAT-map cluster, an inspector, strings, or step-panel link, the
-  dump's own keys, or `seek`.
-- **Learning scenarios** (top bar) — guided walkthroughs: the fundamentals
+- **Learning scenarios** (top bar) — guided walkthroughs. The picker lists
+  the active tab's lessons, starting on that tab's fundamentals, and each tab
+  remembers its own pick. On the FAT16 tab: the fundamentals
   (a tour of the regions, the allocation table, the root directory, and how
   a file's slot, chain, and clusters link together, on a disk that already
   holds a small file and a three-cluster one), format an empty
   disk, add a small file, add a long-named file (LFN entries), overwrite
   with a larger file (chain grows), delete and see what remains, fill the
   disk, make a directory, and work from the shell (the same operations typed
-  as commands, plus a raw-sector read and a raw patch of the volume label);
-  and, on ext3, the fundamentals (ext) (a tour of the block groups, the
-  superblock, descriptors, bitmaps, and inode table, and how a name reaches
-  its blocks through an inode, including a single-indirect block), a
+  as commands, plus a raw-sector read and a raw patch of the volume label).
+  On the ext tab, all on ext3: the fundamentals (a tour of the block groups,
+  the superblock, descriptors, bitmaps, and inode table, and how a name
+  reaches its blocks through an inode, including a single-indirect block), a
   journaled write (one create followed through the needs-recovery flag, the
   data, the descriptor, the copies, the commit, and the checkpoint), and
   crash and recover (a crash after the commit that recovery replays and one
-  before it that recovery discards, leaving bytes nobody owns). The picker
-  groups them by filesystem, FAT16 first.
+  before it that recovery discards, leaving bytes nobody owns).
   Pick one in the top bar and press **Start**; it formats a fresh disk of the
-  lesson's filesystem (the default FAT16 or ext3 disk) and a
-  **Lesson** card floats over the page, at the top right to begin with. Drag
+  tab's family (the default FAT16 or ext3 disk) and a
+  **Lesson** card floats over the page, at the top right to begin with. The
+  card belongs to its tab: switching away hides it while the lesson keeps
+  running (the tab's `lesson` badge says so), and coming back shows it at the
+  same step. Drag
   it by its bar to wherever it is out of the way of the bytes it talks about,
   or focus the ⋮⋮ handle and use the arrow keys (Shift for bigger steps); it
   remembers where you left it, and `Escape` inside it closes it. The − / +
@@ -166,14 +216,22 @@ describe every command.
 The prompt shows the working directory: the shell hands it to the terminal on
 startup and after every `cd` or `mkfs`, so it reads `/mnt/DOCS ❯`.
 
-The command set follows the mounted volume: when a format, a load, or a
-lesson changes the family (or swaps ext3 for ext2), the terminal re-registers
-its commands. The address help follows the new family (`s:65 (sector), c:3
-(cluster)` on FAT, `b:65 (block), i:11 (inode)` on ext), so does `df`'s
-summary (cluster or block usage), and `crash` and `recover` exist only while
-the volume has a journal. `mkfs`'s flags do not change: every host lists
-every family's. The new commands share the old ones' working-directory
-state, and the prompt is set again.
+There is one terminal for the page, and it follows the active tab. Each
+tab keeps its own working directory; switching tabs re-registers the commands
+over that tab's disk, prints a banner naming the tab and its disk
+(`-- ext tab: /dev/hda is ext3 --`, `-- FAT16 tab: /dev/hda is FAT16 --`),
+and sets the prompt from that tab's directory. The scrollback is shared
+across tabs by design, so the banner marks where one tab's output ends.
+Within a tab the commands are re-registered too when a format or a load
+swaps ext3 for ext2 or back. The address help follows the family (`s:65
+(sector), c:3 (cluster)` on FAT, `b:65 (block), i:11 (inode)` on ext), so
+does `df`'s summary (cluster or block usage), and `crash` and `recover` exist
+only while the volume has a journal. `mkfs` knows only the tab's family:
+`--type` takes `fat16` on the FAT16 tab and `ext2` or `ext3` on the ext tab,
+its flags are that family's alone (`--label` is `volume label, up to 11
+characters` on FAT16 and `volume label, up to 16 bytes` on ext), and the
+other family's type is an error that names its tab (`'ext3' is an ext type:
+switch to the ext tab to format one`).
 
 | Command | Does |
 |---|---|
@@ -188,7 +246,7 @@ state, and the prompt is set again.
 | `df`, `mount` | Cluster usage on FAT, block usage (`blockSize`, `blocks`) on ext; device, mount point, type, and `ok` or `corrupt` |
 | `seek <addr>` | Move the hex dump (`0x200`, `512`, `s:1`, `c:2` on FAT; `b:69` for a block and `i:12` for an inode's slot on ext) |
 | `select [path]` | Select a file in every pane, or clear the selection |
-| `mkfs [--type fat16\|ext2\|ext3] [flags]` | Format a fresh disk; the timeline is cleared. `--type` defaults to the mounted volume's type; FAT16 takes `--sectors --spc --label --root-entries --fats --reserved`, ext `--blocks --inodes-per-group --label --uuid --journal-blocks --journal-mode` (the last two ext3 only); a flag the type does not take is an error that names the type |
+| `mkfs [--type <type>] [flags]` | Format a fresh disk of the tab's family; the timeline is cleared. `--type` is `fat16` on the FAT16 tab and `ext2` or `ext3` on the ext tab, defaulting to the mounted volume's type; FAT16 takes `--sectors --spc --label --root-entries --fats --reserved`, ext `--blocks --inodes-per-group --label --uuid --journal-blocks --journal-mode` (the last two ext3 only); a flag the type does not take is an error that names the type, and the other family's type is an error that names its tab |
 | `crash [--at before-commit\|after-commit\|during-checkpoint] [--off]` | ext3 only: arm a crash so the next change to `/dev/hda` stops at that phase (default `after-commit`), or disarm it |
 | `recover` | ext3 only: replay the journal's committed transaction or discard an uncommitted one, as one timeline step, printing its events |
 | `exit` | Close the drawer |
@@ -262,11 +320,13 @@ Things to know:
   warn on.
 - `dd` and `cat` refuse more than 1 MiB per invocation: every byte is
   journaled twice in Rust and again in the UI's history.
-- The working directory is one value per page, not per shell session: the
-  prompt prefix is engine-wide, so two sessions could not show different
-  directories anyway. Anything that replaces the volume — `mkfs`, the Actions
-  panel's Format, starting a learning scenario, or loading a raw image —
-  returns the shell to `/mnt`, since the directory it was in no longer exists.
+- The working directory is one value per tab, not per shell session: the
+  prompt prefix is engine-wide, so two sessions in the drawer could not show
+  different directories anyway, and the prompt shows the active tab's.
+  Anything that replaces a tab's volume — `mkfs`, the Actions panel's Format,
+  starting a learning scenario, or loading a raw image into it — returns that
+  tab's shell to `/mnt`, since the directory it was in no longer exists;
+  switching tabs never does.
 - `echo` is the shell's own builtin and behaves as in browser-terminal.
 - The terminal and its wasm load on first open, so the initial page load is
   unchanged.
@@ -287,8 +347,10 @@ family lives behind the adapter in `src/fs/`:
   colours. `FsAdapter` is bound to one `Volume` and adds what needs the disk:
   owners, chains, entry slots, remnants, `stat` and `df` facts, the ribbon's
   free count (`freeUnits`), the Inspector's trace, sector annotations, extra address forms, name matching,
-  the "this write may have moved regions" trigger, and the notes the tree and
-  the shell print. Its caches are plain fields that the store refreshes after
+  the "this write may have moved regions" trigger, the notes the tree and
+  the shell print, and `summary()`, the disk in one line, which the Operation
+  bar shows before any action. Its caches are plain fields that the store
+  refreshes after
   every operation, so a `$derived` that calls an adapter method reads
   `volume.epoch` first.
 - `src/fs/fat16/` is the FAT16 implementation: `Fat16Adapter`, the cluster
@@ -333,14 +395,32 @@ family lives behind the adapter in `src/fs/`:
 - `src/fs/index.ts` is the registry: `FAMILIES` (`fat16`, then `ext`),
   `DEFAULT_FAMILY` (`fat16`), `familyIdOf(fsType)`, which returns the family
   whose `fsTypes` lists the string (`FAT16`; `ext2` and `ext3`), and
-  `adapterFor(vol)`. `src/fs/panels.ts` maps a family id to its map and
-  Format panels and its `extras` (the Journal panel for ext), and `App.svelte`
-  and `ActionsPanel.svelte` render whichever the mounted family names. The
-  panels sit in that table rather than on the adapter because the node tests
+  `adapterFor(vol)`; `FAMILIES` is in the order of the tabs, and
+  `DEFAULT_FAMILY` is the tab opened when the URL hash names none.
+  `src/fs/panels.ts` maps a family id to its map and Format panels and its
+  `aside` panels (the Journal panel for ext, at the top of the right column
+  under What changed), and `WorkspaceView.svelte` and `ActionsPanel.svelte`
+  render whichever the tab's family names. The panels sit in that table
+  rather than on the adapter because the node tests
   have no Svelte plugin and the adapter must stay importable from them.
-- Each scenario declares its `family`; `start()` formats that family's
-  default disk. A step reaches generic facts through the adapter it is
+- Each scenario declares its `family`, which is also the tab that lists it
+  (`lessonsFor(family)`, with `defaultLessonFor(family)` the first);
+  `start()` formats that family's default disk. A step reaches generic
+  facts through the adapter it is
   handed and family-only ones through `asFat16(fs)` or `asExt(fs)`.
+
+Each tab is a `Workspace` (`src/state/workspace.svelte.ts`): its own
+`VolumeStore`, `SelectionStore`, `LayersStore`, and `ScenarioRunner`, each
+built with its siblings passed in, and the shell's `Vfs`. A
+`WorkspaceRegistry` creates a workspace the first time its tab is activated,
+names the active one, and routes Load image to the image's family. A
+workspace formats and mounts its own family only (`VolumeStore` refuses
+another, and `ScenarioRunner.start` refuses another family's lesson).
+Components reach their tab's stores through Svelte context, `getWorkspace()`,
+set by `WorkspaceView` for a tab's body and by `WorkspaceScope` for the top
+bar's picker and status line and the Lesson card, never through module
+singletons; every opened tab's body stays mounted and is hidden while
+another tab is active, so each keeps its panels' own state.
 
 `tests/adapterBoundary.test.ts` keeps it that way: it scans
 `src/**/*.{ts,svelte}` and fails on a FAT-only wasm call or type outside
@@ -357,13 +437,15 @@ family lives behind the adapter in `src/fs/`:
 
 | Key | Effect |
 |---|---|
-| `[` / `]` | Step the timeline back / forward |
+| `[` / `]` | Step the active tab's timeline back / forward |
 | `n` / `p` | Next / previous step on the Lesson card (while a lesson is running) |
 | `Escape` (inside the Lesson card) | Close the lesson |
-| `/` | Focus the path field in Actions |
+| `/` | Focus the active tab's path field in Actions |
+| `Left` / `Right` (a tab focused) | Switch to the previous / next tab, wrapping |
+| `Home` / `End` (a tab focused) | Switch to the first / last tab |
 | Arrow keys | Move the dump's byte cursor, or seek one ribbon column (ribbon focused) |
 | `Page Up` / `Page Down` | Scroll the dump by a page |
-| `Home` / `End` | Jump to the start / end of the disk |
+| `Home` / `End` (dump or ribbon focused) | Jump to the start / end of the disk |
 | `g` | Jump to an offset, sector, or cluster, or on ext an offset or block (dump focused) |
 | `s` | Toggle string highlighting (dump focused) |
 | `` ` `` | Toggle the terminal |

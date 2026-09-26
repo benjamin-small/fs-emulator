@@ -1,11 +1,13 @@
 <script lang="ts">
   import { cellRect, dashCell, dotCell, drawChain, outlineCell, prepareCanvas } from "../../core/grid";
+  import { keepScroll } from "../../core/keepScroll";
   import { observeWidth } from "../../core/observeWidth";
-  import { layers } from "../../state/layers.svelte";
-  import { selection } from "../../state/selection.svelte";
-  import { volume } from "../../state/volume.svelte";
+  import { getWorkspace } from "../../state/workspace.svelte";
   import { CELL, FILL_FREE, GAP, HEADER, MAX_HEIGHT, bandHeader, blockAt, blockCaption, blockFills, blocksTouched, cellOf, clampScroll, clickPath, indirectBlocks, layoutBands, mapHeading, visibleRows, wrapHeader } from "./blockMap";
   import { asExt } from "./index";
+
+  const ws = getWorkspace();
+  const { volume, selection, layers } = ws;
 
   let canvas = $state<HTMLCanvasElement>();
   let wrap = $state<HTMLDivElement>();
@@ -44,7 +46,7 @@
   const scrollOffset = $derived(clampScroll(scrollTop, map.height, viewportHeight));
 
   $effect(() => {
-    volume.epoch; layers.chain; layers.diff; selection.hoverOffset; headers; map; fills; scrollOffset;
+    volume.epoch; layers.chain; layers.diff; layers.hover; selection.hoverOffset; headers; map; fills; scrollOffset;
     paint();
   });
 
@@ -135,6 +137,15 @@
       if (c && isVisible(c.y)) outlineCell(ctx, c.x, c.y, CELL, diffColor);
     }
 
+    // What changed's hovered range or event: the blocks it touches, outlined in the focus colour
+    // over the diff's.
+    if (layers.hover) {
+      for (const b of blocksTouched([layers.hover], geo.blockSize, geo.totalBlocks)) {
+        const c = cellOf(map, b);
+        if (c && isVisible(c.y)) outlineCell(ctx, c.x, c.y, CELL, focus);
+      }
+    }
+
     const chain = layers.chain.map((b) => cellOf(map, b)).filter((c): c is { x: number; y: number } => c !== null && isVisible(c.y));
     if (chain.length) drawChain(ctx, chain, CELL, focus, 1);
 
@@ -175,7 +186,8 @@
 <section class="panel bgmap">
   <h2>{heading}</h2>
   {#if !volume.atLatest}<p class="muted stale-note">Shows the latest state, not the step you are viewing.</p>{/if}
-  <div class="bgmap-wrap" bind:this={wrap} use:observeWidth={(w) => (width = w)} onscroll={onScroll} style:max-height="{MAX_HEIGHT}px">
+  <!-- `keepScroll`: hiding the tab zeroes the map's scroll; showing it again puts it back. -->
+  <div class="bgmap-wrap" bind:this={wrap} use:keepScroll={ws.active} use:observeWidth={(w) => (width = w)} onscroll={onScroll} style:max-height="{MAX_HEIGHT}px">
     <div class="bgmap-spacer" style:height="{map.height}px">
       <canvas bind:this={canvas} onmousemove={onMove} onmouseleave={onLeave} onclick={onClick} aria-label="Block group map"></canvas>
     </div>

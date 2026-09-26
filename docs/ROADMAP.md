@@ -65,7 +65,8 @@ with `Unsupported`. Still to do:
 ## Landed: `crates/ext` and the ext explorer
 
 Decided 2026-09-23, in four slices, each with its spec under
-`docs/superpowers/specs/`. All four have landed:
+`docs/superpowers/specs/`. All four have landed, followed by the family tabs
+(2026-09-25), which reshaped slice 4's chrome:
 
 - **Slice 1, the adapter seam** (`2026-09-23-fs-adapter-design.md`): every
   FAT assumption in `web/ui` sits behind `FsAdapter`; see "What stays
@@ -120,8 +121,9 @@ Decided 2026-09-23, in four slices, each with its spec under
   Lesson card's `fileParts`, owner roles and fixed colours, `extras` panels,
   and the optional journal capability (`FsAdapter.journal`,
   `needsRecovery`). The explorer mounts ext2 and ext3 volumes, formatted from
-  the Actions panel's Filesystem select or `mkfs --type ext2|ext3`, or loaded
-  from an mke2fs image: a block-group map replaces the FAT map, the Inspector
+  the Actions panel's Filesystem select (replaced by the family tabs below)
+  or `mkfs --type ext2|ext3`, or loaded from an mke2fs image: a block-group
+  map replaces the FAT map, the Inspector
   explains inodes, indirect blocks, and journal blocks, and `stat`, `df`, and
   `seek i:N` speak ext. On ext3 a Journal panel shows the ring with live and
   stale transactions, arms a crash phase, and recovers; the terminal's
@@ -130,7 +132,30 @@ Decided 2026-09-23, in four slices, each with its spec under
   the status line explains `NeedsRecovery` and shows `Unsupported`'s own
   wasm text. Three ext3 lessons (the fundamentals (ext), a journaled write,
   crash and recover) pin their numbers by test, and the lesson picker groups
-  lessons by filesystem. FAT16 is unchanged and still the default volume.
+  lessons by filesystem (replaced by the family tabs below). FAT16 is
+  unchanged and still the default volume.
+- **Family tabs** (`2026-09-25-family-tabs-design.md`): the explorer has a
+  tab per family, `FAT16` and `ext`, in the top bar, and each tab is a
+  workspace (`web/ui/src/state/workspace.svelte.ts`): its own volume and
+  timeline, selection, layers, lesson runner, and shell cwd, built with
+  their siblings injected and reached through Svelte context
+  (`getWorkspace()`) instead of module singletons. Every opened tab's body
+  stays mounted and hidden, so a switch keeps the dump's and the block-group
+  map's scroll, the panels' state, and a running lesson (a `lesson` badge
+  marks it); the ext workspace is created on first use; the URL hash names
+  the tab. Inside a tab nothing flips the family: the Filesystem select is
+  gone (`Format (FAT16)` / `Format (ext2 / ext3)`), the picker lists the
+  tab's lessons (`lessonsFor`), `mkfs --type` takes only the tab's types, and
+  Load image opens an image in its own family's tab. One terminal follows the
+  active tab with a banner on each switch. The Step strip and the Timeline
+  footer became the Operation bar (the timeline controls, a ticked slider,
+  and the step in one line, or the adapter's `summary()` before any action)
+  and the What changed panel at the top of the right column (the changed
+  blocks as ranges and the events grouped into phases); the Journal panel
+  moved to the right column (`PANELS[id].aside`). DOM ids inside a tab are
+  per tab (`action-path-{id}`, `opbar-heading-{id}`, `opbar-ticks-{id}`,
+  `load-hint-{id}`, `load-image-{id}`; `action-path` and `step-heading` are
+  gone), and the Format details' `#format-family` select is removed.
 
 ## Core API additions
 
@@ -214,6 +239,18 @@ clicking one of the journal's pointer blocks (`<journal>`,
 `<journal>` is a pseudo-owner (`isPseudoOwner`), not a tree path, so there is
 nothing to select.
 
+**`web/ui`, after the family tabs** (the tabs plan's browser pass): the
+terminal's tab banner is printed through browser-terminal 0.3.0's private
+`paneManager.handleEvent` (a `paneOutput` event), guarded so a missing
+internal only drops the banner, until the library has a public call that
+prints a host line; `FatMap`'s scroll is not kept across a tab switch (only
+the dump and the block-group map use `keepScroll`), so a FAT map scrolled
+down comes back at the top; workspaces are never disposed, about 33 MB each
+(the 16 MB image in wasm memory, a 16 MB JavaScript copy, the zero map), so
+the page holds both disks once the ext tab has opened; and the xterm
+scrollback is shared across tabs by design, with the banner marking each
+switch.
+
 **`web/ui`, seams the ext slice inherited**: (a) the free-space model in
 generic code assumes allocation units exist only in `data` regions and that
 an unowned unit is free. Slice 4 keeps journal blocks out of the units and
@@ -234,8 +271,9 @@ adapters and the shell, while `components/StringsPanel.svelte`,
 own.
 
 **`web/ui` terminal** (decided 2026-09-22): the working directory is one
-value per page, not per shell session, because `setPrompt` is engine-wide and
-two sessions could not show different directories in their prompts anyway;
+value per tab (per page until the family tabs), not per shell session,
+because `setPrompt` is engine-wide and two sessions could not show different
+directories in their prompts anyway;
 reads while the timeline is rewound show the latest state and warn (an
 `--at-step` flag reading the cached image is the follow-up), except through a
 `<` redirect, which has no channel to warn on; `dd` and `cat` are capped at
@@ -283,9 +321,9 @@ explorer adopted them on 2026-09-22. Each workaround they replaced is gone:
 5. A session or pane id on `ctx`, so each shell could keep its own working
    directory: https://github.com/benjamin-small/browser-terminal/issues/16.
    `ctx.session` and `ctx.pane` are available, but the working directory
-   stays one per page: `setPrompt` is engine-wide, so per-session directories
-   could not be shown in their prompts. The ids are there for whenever that
-   changes.
+   stays one per tab (the family tabs made it per tab; it was one per page):
+   `setPrompt` is engine-wide, so per-session directories could not be shown
+   in their prompts. The ids are there for whenever that changes.
 6. `CreateOptions.terminal` (theme, font family, font size) and `setTheme`,
    replacing the `!important` CSS overrides:
    https://github.com/benjamin-small/browser-terminal/issues/17.

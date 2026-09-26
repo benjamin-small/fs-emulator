@@ -101,6 +101,22 @@ export function unitIsSector(space: Pick<UnitSpace, "unit" | "sector">): boolean
   return space.unit.singular === space.sector.singular;
 }
 
+/** `n` with no decimals when it is whole to one decimal place, else with one: 16, 10.5. */
+function oneDecimal(n: number): string {
+  const r = Math.round(n * 10) / 10;
+  return Number.isInteger(r) ? String(r) : r.toFixed(1);
+}
+
+/** A disk's byte size as `summary()` gives it, in MB of 2^20 bytes: "16 MB", "10.5 MB". */
+export function megabytes(bytes: number): string {
+  return `${oneDecimal(bytes / 2 ** 20)} MB`;
+}
+
+/** A cluster's or a block's size as `summary()` gives it: "2 KiB" from 1 KiB up, else "512-byte". */
+export function unitSizeLabel(bytes: number): string {
+  return bytes >= 1024 ? `${oneDecimal(bytes / 1024)} KiB` : `${bytes}-byte`;
+}
+
 /** One row of the Inspector's "Selected file" trace. */
 export interface TraceRow { label: string; offset: number | null }   // null = muted text, no jump
 /** stat facts the shell prints as key/value after the generic ones. Keys are the family's. */
@@ -108,8 +124,8 @@ export type StatFacts = Record<string, string | number | number[]>;
 export interface DfFacts { unitSize: number; units: number; used: number; free: number }
 
 export interface MkfsFlag { long: string; desc: string; kind: "int" | "str"; option: string }
-/** The shell's `mkfs` flags for one family. There is one `mkfs` for every family, so its summary
- *  is the shell's (it names every type `--type` takes), and so is its done line: `formatted
+/** The shell's `mkfs` flags for one family. Each tab's `mkfs` lists its own family's flags; its
+ *  summary is the shell's (it names the types `--type` takes), and so is its done line: `formatted
  *  /dev/hda as ${vol.fsType()}; the timeline was cleared`, composed from the new volume, so a
  *  family with two types (ext2, ext3) names the one it made. */
 export interface MkfsSpec { flags: MkfsFlag[] }
@@ -190,6 +206,11 @@ export interface FsAdapter extends UnitSpace {
 
   /** Re-read owners, tables and geometry from `vol`. Called by the store after every op and on bind. */
   refresh(): void;
+  /** The mounted disk in one line, from the cached geometry: its type, its size, its units, and
+   *  (ext) its journal. FAT16: "FAT16 · 16 MB · 512-byte sectors · 2 KiB clusters"; ext3:
+   *  "ext3 · 16 MB · 16,384 1 KiB blocks in 2 groups · 1,024-block journal, ordered mode"; ext2:
+   *  "ext2 · 16 MB · 16,384 1 KiB blocks in 2 groups · no journal". The Operation bar's empty state. */
+  summary(): string;
   readonly owners: readonly UnitOwner[];                // sorted by unit
   ownerOf(path: string): UnitOwner | undefined;         // first owner row for a path
 

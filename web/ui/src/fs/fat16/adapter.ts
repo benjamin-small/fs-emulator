@@ -1,7 +1,7 @@
 import { Volume, type Annotation, type ClusterOwner, type FatEntry, type FormatOptions, type Geometry } from "../../lib/wasm";
 import type { Interval } from "../../core/intervals";
 import type { ByteChangeLike } from "../../core/patch";
-import type { DfFacts, FsAdapter, FsFamily, FsFamilyId, StatFacts, TraceRow, UnitOwner, UnitSpace } from "../adapter";
+import { megabytes, unitSizeLabel, type DfFacts, type FsAdapter, type FsFamily, type FsFamilyId, type StatFacts, type TraceRow, type UnitOwner, type UnitSpace } from "../adapter";
 import { SpaceAdapter, hexAddr } from "../base";
 import { findEntrySlots } from "./direntry";
 import { buildChain, describeFatEntry } from "./fatchain";
@@ -52,6 +52,13 @@ export class Fat16Adapter extends SpaceAdapter implements FsAdapter {
     this.rawOwners = this.vol.clusterOwners();
     this.owners = this.rawOwners.map(toUnitOwner);
     this.fat = this.vol.fatEntries(0);
+  }
+
+  /** "FAT16 · 16 MB · 512-byte sectors · 2 KiB clusters", from the boot sector's geometry. */
+  summary(): string {
+    const g = this.geo;
+    const size = megabytes(g.totalSectors * g.bytesPerSector);
+    return `${this.name} · ${size} · ${g.bytesPerSector}-byte sectors · ${unitSizeLabel(g.bytesPerSector * g.sectorsPerCluster)} clusters`;
   }
 
   chain(path: string): number[] {

@@ -85,8 +85,8 @@ const MKFS_FLAGS: (MkfsFlag & { option: keyof ExtFamilyOptions })[] = [
 ];
 
 /** The shell's `mkfs` for this family: the six flags. The summary and the done line are the
- *  shell's (one `mkfs` for every family; the done line names the new volume's `fsType()`,
- *  `ext2` or `ext3`). */
+ *  shell's (the ext tab's `mkfs --type` takes `ext2` or `ext3`; the done line names the new
+ *  volume's `fsType()`, `ext2` or `ext3`). */
 export const MKFS: MkfsSpec = {
   flags: MKFS_FLAGS,
 };

@@ -1,12 +1,13 @@
 <script lang="ts">
   import { attrAtOffset } from "../../core/attribution";
   import { cellAt, cellRect, dashCell, dotCell, drawChain, gridCols, gridRows, outlineCell, prepareCanvas } from "../../core/grid";
+  import type { Interval } from "../../core/intervals";
   import { observeWidth } from "../../core/observeWidth";
-  import { layers } from "../../state/layers.svelte";
-  import { selection } from "../../state/selection.svelte";
-  import { volume } from "../../state/volume.svelte";
+  import { getWorkspace } from "../../state/workspace.svelte";
   import { clusterState } from "./fatchain";
   import { asFat16 } from "./index";
+
+  const { volume, selection, layers } = getWorkspace();
 
   const CELL = 6, GAP = 1, MAX_HEIGHT = 260;
 
@@ -28,7 +29,7 @@
   const canvasHeight = $derived(Math.max(1, rows * (CELL + GAP)));
 
   $effect(() => {
-    volume.epoch; layers.chain; layers.diff; selection.hoverOffset; canvasWidth; canvasHeight;
+    volume.epoch; layers.chain; layers.diff; layers.hover; selection.hoverOffset; canvasWidth; canvasHeight;
     paint();
   });
 
@@ -42,10 +43,11 @@
     return i === null ? null : i + 2;
   }
 
-  function overlapsDiff(c: number): boolean {
-    if (!layers.diff.length) return false;
+  /** Whether cluster `c`'s bytes overlap any of `ivs` (the step's diff, the hovered range). */
+  function overlapsAny(c: number, ivs: readonly Interval[]): boolean {
+    if (!ivs.length) return false;
     const { start, end } = fs.unitByteRange(c);
-    for (const iv of layers.diff) if (iv.start < end && iv.end > start) return true;
+    for (const iv of ivs) if (iv.start < end && iv.end > start) return true;
     return false;
   }
 
@@ -66,6 +68,8 @@
 
     const fat = fs.fat;
     const attribution = volume.attribution;
+    // What changed's hovered range or event, as a list for `overlapsAny`.
+    const hover = layers.hover ? [layers.hover] : [];
 
     for (let c = 2; c <= clusterCount + 1; c++) {
       const entry = fat[c];
@@ -82,7 +86,10 @@
       ctx.fillRect(x, y, CELL, CELL);
 
       if (state === "end") dotCell(ctx, x, y, CELL, ink);
-      if (overlapsDiff(c)) outlineCell(ctx, x, y, CELL, diffColor);
+      if (overlapsAny(c, layers.diff)) outlineCell(ctx, x, y, CELL, diffColor);
+      // The hovered range's clusters, outlined in the focus colour over the diff's. A range in the
+      // FATs or the root directory touches none.
+      if (overlapsAny(c, hover)) outlineCell(ctx, x, y, CELL, focus);
     }
 
     if (layers.chain.length) drawChain(ctx, layers.chain.map(clusterCell), CELL, focus, 2);

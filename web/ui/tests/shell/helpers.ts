@@ -9,7 +9,8 @@ import type { CommandCtx, Value } from "@benjamin-small/browser-terminal";
  * A ShellHost over a plain Volume. `run` mirrors VolumeStore.run: it snaps
  * back to the latest step, applies the op, appends the record, leaves the
  * cursor at the end, and refreshes the adapter. `format` re-binds the adapter
- * the way `VolumeStore.adopt` does. `rewind` only moves the cursor (the volume
+ * the way `VolumeStore.adopt` does, and like the tab's store refuses another
+ * family. `rewind` only moves the cursor (the volume
  * itself always holds the latest state, exactly as in the app).
  */
 export class TestHost implements ShellHost {
@@ -45,6 +46,8 @@ export class TestHost implements ShellHost {
 
   format(family: FsFamilyId, options?: unknown): void {
     if (!Object.hasOwn(FAMILIES, family)) throw new Error(`no filesystem family "${family}"`);
+    // A tab formats its own family only, as VolumeStore.format does.
+    if (family !== this.adapter.id) throw new Error(`this tab formats ${this.adapter.id}, not ${family}`);
     const vol = FAMILIES[family].format(options);
     const adapter = adapterFor(vol);
     this.vol = vol;

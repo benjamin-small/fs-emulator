@@ -10,11 +10,60 @@ describe("app.css layout guards", () => {
     const m = css.match(new RegExp(`^${selector.replace(/[.[\]()]/g, (ch) => `\\${ch}`)} \\{([^}]*)\\}`, "m"));
     return m ? m[1] : null;
   };
+  /** The body of `@media (query) { … }`, which runs to the first line that is a lone `}`. */
+  const media = (query: string) => {
+    const start = css.indexOf(`@media (${query}) {\n`);
+    return start < 0 ? null : css.slice(start, css.indexOf("\n}\n", start));
+  };
 
   it("bounds the app column so children with pixel widths cannot push the page sideways", () => {
     // An implicit `auto` column grows to the max-content of the ribbon canvas and xterm's
     // screen layers, which are sized from their last layout; the window then never shrinks.
     expect(rule(".app")).toContain("grid-template-columns: minmax(0, 1fr)");
+  });
+
+  it("gives the app four rows: top bar, Operation bar, ribbon, and the grid, which takes the rest", () => {
+    // The Timeline footer is gone, so a fifth template row would leave an empty 8 px gap under the
+    // grid and push the terminal drawer (the implicit row after these) down by it.
+    expect(rule(".app")).toContain("grid-template-rows: auto auto auto minmax(0, 1fr);");
+  });
+
+  it("lays a shown tab's body out in the app grid, and leaves a hidden one to the UA's rule", () => {
+    // Each tab's body sits in a `.workspace` wrapper; as a box it would be one grid item and the
+    // Operation bar, ribbon, and grid would lose their rows. `:not([hidden])`, because an
+    // author `display` would override the UA's `[hidden] { display: none }`.
+    expect(rule(".workspace:not([hidden])")).toBe(" display: contents; ");
+  });
+
+  it("draws the family tabs as one segmented control in the top bar, the selected tab underlined", () => {
+    // The spec's rules verbatim: `.tab` drops the global button chrome, the selected tab reads as
+    // a raised panel with a focus-coloured underline, and the badge's words are all caps.
+    for (const line of [
+      ".tabbar { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--hairline); border-radius: var(--radius); background: var(--canvas); }",
+      ".tab { display: inline-flex; align-items: center; gap: 6px; border: 0; background: none; padding: 3px 14px; border-radius: calc(var(--radius) - 1px); font: 500 13px var(--font-display); color: var(--ink-muted); }",
+      ".tab:hover { color: var(--ink); }",
+      '.tab[aria-selected="true"] { background: var(--panel); color: var(--ink); box-shadow: inset 0 -2px 0 var(--focus); }',
+      ".tab-badge { padding: 0 4px; border: 1px solid var(--focus); border-radius: var(--radius); font: 500 10px var(--font-display); text-transform: uppercase; letter-spacing: .04em; color: var(--focus); }",
+    ]) expect(css).toContain(line);
+    // The badge's " running" is for screen readers only; without the clip it would widen the tab.
+    expect(rule(".sr-only")).toBe(" position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; ");
+  });
+
+  it("wraps the top bar under 1100 px, with the status line on a row of its own", () => {
+    // With the tabs added, the h1, tabs, Terminal, picker, status line, and theme switch do not
+    // fit one row at 1100 px; the status line's messages are the longest item, so it wraps last.
+    const narrow = media("max-width: 1100px");
+    expect(narrow).toContain(".topbar { flex-wrap: wrap; row-gap: 6px; }");
+    expect(narrow).toContain(".topbar > .status { order: 1; flex-basis: 100%; }");
+  });
+
+  it("gives the tabs a full row of equal 36 px tabs under 760 px, then Terminal and the picker, then the status line", () => {
+    const phone = media("max-width: 760px");
+    expect(phone).toContain(".topbar > .switch { order: 1; }");
+    expect(phone).toContain(".topbar > .tabbar { order: 2; display: flex; flex: 1 0 100%; }");
+    expect(phone).toContain(".tab { flex: 1 1 0; justify-content: center; min-height: 36px; }");
+    expect(phone).toContain("#terminal-toggle, #scenario-slot { order: 3; }");
+    expect(phone).toContain(".topbar > .status { order: 4; }");
   });
 
   it("gives the side terminal column an explicit width without redefining the main column", () => {
@@ -23,12 +72,17 @@ describe("app.css layout guards", () => {
     expect(side).not.toContain("grid-template-columns");
   });
 
-  it("caps the Step strip's height and scrolls it, so a long step cannot push the grid down", () => {
-    // An ext3 Add file lists 18 block buttons and 30 events; uncapped, the strip grew to 571 px in a
-    // 760 px window. 210 px is about six rows of buttons, more than the FAT actions fill.
-    const step = rule(".step");
-    expect(step).toContain("max-height: 210px");
-    expect(step).toContain("overflow: auto");
+  it("keeps the Operation bar to one wrapping row, with the summary on a line of its own under 760 px", () => {
+    // The bar holds only the controls and a one-line summary (the blocks and events moved to the
+    // What changed panel), so it needs no height cap; it wraps rather than pushing the page
+    // sideways, and the slider takes the slack but never shrinks below a usable 120 px.
+    expect(rule(".opbar")).toBe(" display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; padding: 5px 10px; ");
+    expect(rule(".opbar .tl-range")).toBe(" flex: 1 1 160px; min-width: 120px; ");
+    expect(media("max-width: 760px")).toContain(".opbar-summary { flex-basis: 100%; }");
+    // The Step strip's and the Timeline footer's rules went with them.
+    expect(rule(".step")).toBeNull();
+    expect(rule(".timeline")).toBeNull();
+    expect(css).not.toContain(".tl-step");
   });
 
   it("gives every palette colour, the journal's included, a dump row stripe and tint", () => {

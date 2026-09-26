@@ -1,12 +1,18 @@
-import type { Volume } from "../lib/wasm";
+import { Volume } from "../lib/wasm";
 import type { FsAdapter, FsFamily, FsFamilyId } from "./adapter";
 import { ext } from "./ext";
 import { fat16 } from "./fat16";
 
-/** Every registered family, by id, in the order the Format details' Filesystem select lists
- *  them. A new family is added here and in `fs/panels.ts`. */
+/** Every registered family, by id, in the order of the top bar's tabs. A new family is added
+ *  here and in `fs/panels.ts`. */
 export const FAMILIES: Record<FsFamilyId, FsFamily> = { fat16, ext };
+/** The tab opened when the URL hash names none. */
 export const DEFAULT_FAMILY: FsFamilyId = "fat16";
+/** The family ids in tab order; a family's workspace is created the first time its tab opens. */
+export const FAMILY_IDS = Object.keys(FAMILIES) as FsFamilyId[];
+/** Other hash spellings that open a family's tab (`#fat`, `#ext2`, `#ext3`); `parseRoute`
+ *  looks these up before the ids themselves. */
+export const ROUTE_ALIASES: Readonly<Record<string, FsFamilyId>> = { fat: "fat16", ext2: "ext", ext3: "ext" };
 
 /** The family whose `fsTypes` lists this `Volume.fsType()` string ("FAT16" -> "fat16"; one
  *  family may bind several types, as ext binds ext2 and ext3). Throws for a type no adapter
@@ -18,4 +24,12 @@ export function familyIdOf(fsType: string): FsFamilyId {
 
 export function adapterFor(vol: Volume): FsAdapter {
   return FAMILIES[familyIdOf(vol.fsType())].bind(vol);
+}
+
+/** Mount an image and name the family it belongs to, whichever tab it was loaded from. Throws
+ *  the loader's error for bytes no family recognises (`unsupported: no recognisable filesystem
+ *  signature`), and `familyIdOf`'s for a type with no adapter. */
+export function detectFamily(bytes: Uint8Array): { vol: Volume; id: FsFamilyId } {
+  const vol = Volume.fromImage(bytes);
+  return { vol, id: familyIdOf(vol.fsType()) };
 }

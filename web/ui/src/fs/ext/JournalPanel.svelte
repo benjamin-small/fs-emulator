@@ -1,11 +1,12 @@
 <script lang="ts">
   import { cellAt, cellRect, gridCols, gridRows, prepareCanvas } from "../../core/grid";
   import { observeWidth } from "../../core/observeWidth";
-  import { selection } from "../../state/selection.svelte";
-  import { volume } from "../../state/volume.svelte";
+  import { getWorkspace } from "../../state/workspace.svelte";
   import { CRASH_PHASES, CRASH_PHASE_LABELS, type CrashPhase } from "../adapter";
   import { CELL, GAP, MAX_HEIGHT } from "./blockMap";
   import { NEEDS_RECOVERY, NO_JOURNAL, armedText, journalFacts, journalHeading, ringCaption, ringFill } from "./journalRing";
+
+  const { volume, selection } = getWorkspace();
 
   let canvas = $state<HTMLCanvasElement>();
   // The panel's content width, kept current by `observeWidth` on the wrapper so the ring wraps

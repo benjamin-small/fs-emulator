@@ -2,9 +2,9 @@
   import { findStrings, scanChunked, type StringHit } from "../core/strings";
   import { normalize } from "../core/intervals";
   import { attrAtOffset } from "../core/attribution";
-  import { volume } from "../state/volume.svelte";
-  import { selection } from "../state/selection.svelte";
-  import { layers } from "../state/layers.svelte";
+  import { getWorkspace } from "../state/workspace.svelte";
+
+  const { volume, selection, layers } = getWorkspace();
 
   const CHUNK = 1 << 20; // 1 MiB
   const VISIBLE_LIMIT = 500;

@@ -55,7 +55,8 @@ const MKFS_FLAGS: (MkfsFlag & { option: keyof FormatOptions })[] = [
 ];
 
 /** The shell's `mkfs` for this family: the six flags. The summary and the done line are the
- *  shell's (one `mkfs` for every family; the done line from the new volume's `fsType()`). */
+ *  shell's (the FAT16 tab's `mkfs --type` takes `fat16`; the done line from the new volume's
+ *  `fsType()`). */
 export const MKFS: MkfsSpec = {
   flags: MKFS_FLAGS,
 };

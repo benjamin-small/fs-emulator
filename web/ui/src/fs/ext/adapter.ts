@@ -2,7 +2,7 @@ import { Volume, type Annotation, type ExtBlockOwner, type ExtFileBlocks, type E
 import type { Interval } from "../../core/intervals";
 import { COLOR_JOURNAL } from "../../core/palette";
 import type { ByteChangeLike } from "../../core/patch";
-import type { DfFacts, FsAdapter, FsFamily, FsFamilyId, StatFacts, TraceRow, UnitOwner, UnitSpace } from "../adapter";
+import { megabytes, unitSizeLabel, type DfFacts, type FsAdapter, type FsFamily, type FsFamilyId, type StatFacts, type TraceRow, type UnitOwner, type UnitSpace } from "../adapter";
 import { SpaceAdapter, hexAddr } from "../base";
 import { MKFS, toWasmOptions, type ExtFamilyOptions } from "./format";
 import { extSpace } from "./geometry";
@@ -114,6 +114,16 @@ export class ExtAdapter extends SpaceAdapter implements FsAdapter {
     this.info = this.vol.journalInfo();
     this.needsRecovery = this.vol.needsRecovery();
     this.journal = this.info ? (this.journal ?? new ExtJournal(this.vol, () => this.journalInfo())) : undefined;
+  }
+
+  /** "ext3 · 16 MB · 16,384 1 KiB blocks in 2 groups · 1,024-block journal, ordered mode" (or
+   *  "· no journal" on ext2), from the cached geometry and journal header. */
+  summary(): string {
+    const g = this.geo;
+    const n = (v: number) => v.toLocaleString("en-US");
+    const groups = `${g.groups.length} ${g.groups.length === 1 ? "group" : "groups"}`;
+    const journal = this.info ? `${n(this.info.maxlen)}-block journal, ${this.info.mode} mode` : "no journal";
+    return `${this.name} · ${megabytes(g.totalBlocks * g.blockSize)} · ${n(g.totalBlocks)} ${unitSizeLabel(g.blockSize)} blocks in ${groups} · ${journal}`;
   }
 
   /** The cached journal header; the capability's `state()` reads it. */

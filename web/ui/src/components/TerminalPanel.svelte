@@ -7,30 +7,81 @@
   // Type-only: the runtime import is the lazy `import()` in ensureCreated, so the
   // library's wasm loads only when someone opens the drawer.
   import type { BrowserTerminal } from "@benjamin-small/browser-terminal";
-  import type { Volume } from "../lib/wasm";
   import { themeFromTokens } from "../core/terminalTheme";
-  import { commandSetOf, registerCommands } from "../shell/register";
+  import { commandSetOf, registerCommands, registrationChange, tabBanner, type Registration } from "../shell/register";
   import type { ShellHost } from "../shell/host";
   import { createRedirectHandler } from "../shell/redirect";
   import { createStoreHost } from "../shell/storeHost.svelte";
-  import { MOUNT, Vfs, promptFor } from "../shell/vfs";
+  import { promptFor } from "../shell/vfs";
   import { terminal } from "../state/terminal.svelte";
   import { theme } from "../state/theme.svelte";
-  import { volume } from "../state/volume.svelte";
+  import { workspaces, type Workspace } from "../state/workspace.svelte";
 
   let mountEl = $state<HTMLDivElement>();
   let bt: BrowserTerminal | null = null;
   let creating: Promise<void> | null = null;
 
-  // One working directory per page (the commands' own rule), owned here so the prompt
-  // can be seeded from it as soon as the commands are registered.
-  const vfs = new Vfs();
-  // The registered commands' host, kept so the volume watcher below can reach `setPrompt`.
-  let host: ShellHost | null = null;
-  // The names the terminal holds and the command set they were built for (`commandSetOf`),
-  // so the family watcher below can swap them all. Plain fields, not state.
+  // One terminal for the page, following the active tab. Each tab's workspace gets its own
+  // host the first time the terminal follows it, kept for the life of the terminal: a host
+  // reads its workspace's stores live, so it never goes stale. The working directory is the
+  // workspace's own `vfs`, so a switch keeps each tab's.
+  const hosts = new Map<Workspace, ShellHost>();
+  // The names the terminal holds, and whose tab and which command set (`commandSetOf`) they
+  // were built for, so the effect below can tell a switch from a format. Plain fields, not state.
   let registered: string[] = [];
-  let registeredSet: string | null = null;
+  let current: Registration<Workspace> | null = null;
+
+  function hostFor(term: BrowserTerminal, ws: Workspace): ShellHost {
+    let host = hosts.get(ws);
+    if (!host) {
+      host = createStoreHost(ws, close, (prefix) => term.setPrompt(prefix));
+      hosts.set(ws, host);
+    }
+    return host;
+  }
+
+  /**
+   * Print `line` in the active pane in place of its prompt line, leaving the cursor on a fresh
+   * line for the caller's `setPrompt` to redraw the prompt (and any typed input) on.
+   * browser-terminal 0.3.0 has no call for a host line (`run()` hands its output back instead
+   * of printing it), so this gives the pane manager the `paneOutput` event the engine itself
+   * sends. An idle pane redraws its prompt only when the prefix changes, so the prefix is
+   * cleared here and the caller's `setPrompt` sets it again. Guarded: if a later version
+   * renames that internal, the banner is skipped and nothing else changes.
+   */
+  function printLine(term: BrowserTerminal, line: string) {
+    type PaneOutput = { type: "paneOutput"; pane: number; data: string };
+    const panes = (term as unknown as { paneManager?: { handleEvent?: (e: PaneOutput) => void } }).paneManager;
+    const pane = term.snapshot?.active_pane;
+    if (typeof panes?.handleEvent !== "function" || pane === undefined) return;
+    try {
+      panes.handleEvent({ type: "paneOutput", pane, data: `\r\x1b[2K${line}\r\n` });
+    } catch {
+      return;
+    }
+    term.setPrompt("");
+  }
+
+  /**
+   * Point the terminal at `ws`, whose command set is `set`: register that tab's commands over
+   * its own `vfs` and its redirect handler when the tab or the set changed, print the banner
+   * when the tab changed (not on the first registration), and always re-set the prompt from
+   * the tab's cwd, which `VolumeStore`'s `onAdopt` puts back at /mnt after a format or a load.
+   */
+  function follow(term: BrowserTerminal, ws: Workspace, set: string) {
+    const next = { ws, set };
+    const change = registrationChange(current, next);
+    const host = hostFor(term, ws);
+    if (change.register) {
+      registered = registerCommands(term, host, ws.vfs, registered);
+      // `>`, `>>` and `<` resolve through the same VFS the commands do, so
+      // `echo hi > /mnt/A.TXT` is the journaled write `echo hi | write /mnt/A.TXT` is.
+      term.setRedirectHandler(createRedirectHandler(host, ws.vfs));
+      current = next;
+    }
+    if (change.banner) printLine(term, tabBanner(ws.id, ws.volume.vol.fsType()));
+    host.setPrompt(promptFor(ws.vfs.cwd));
+  }
 
   /** Close the drawer and hand focus to the topbar button, since the element that had
    *  focus (the active pane's terminal input) is about to be hidden. `exit`, the Close
@@ -80,22 +131,16 @@
       try {
         // Commands read live store fields through the host on every call; only what is fixed
         // at registration (the command set, its summaries and flag descriptions) follows the
-        // family, through the re-registration effect below.
-        const created = createStoreHost(close, (prefix) => term.setPrompt(prefix));
-        registered = registerCommands(term, created, vfs);
-        registeredSet = commandSetOf(volume.adapter);
-        // `>`, `>>` and `<` resolve through the same VFS the commands do, so
-        // `echo hi > /mnt/A.TXT` is the journaled write `echo hi | write /mnt/A.TXT` is.
-        term.setRedirectHandler(createRedirectHandler(created, vfs));
-        // Seed the prompt with the directory the shell starts in; `cd`, `mkfs`, and the
-        // volume watcher below keep it in step from there.
-        created.setPrompt(promptFor(vfs.cwd));
-        host = created;
+        // tab and its family, through the effect below. Register the active tab's and seed
+        // the prompt with its cwd; `cd`, `mkfs`, and the effect keep it in step from there.
+        const ws = workspaces.active;
+        follow(term, ws, commandSetOf(ws.volume.adapter));
       } catch (e) {
         // A half-registered instance would still hold the library's one-per-page slot, so
         // every later open would fail to create and sit behind a permanent error banner.
         // Dispose it and leave `bt` null: the next open starts over.
         term.dispose();
+        forget();
         throw e;
       }
       bt = term;
@@ -121,48 +166,37 @@
       .then(() => requestAnimationFrame(focusShell));
   });
 
-  // A format or a load replaces the volume: VolumeStore.adopt swaps `vol` for a brand new
-  // wasm Volume, and the directory the shell was sitting in no longer exists. `mkfs` resets
-  // the cwd itself; the Actions panel's Format, a scenario step's `step.format`, and Load
-  // image do not, so follow the volume here and put the shell back at /mnt with a matching
-  // prompt. `volume.vol` is the only tracked read: `seenVol` and `vfs.cwd` are plain fields,
-  // and the prompt call is untracked so this effect can never depend on what it writes.
-  let seenVol: Volume | null = null;
+  // Follow the active tab. Every command reads the live adapter when it runs, but
+  // browser-terminal keeps each spec as it was registered: the summaries and flag descriptions
+  // that name the family's nouns (`df`'s "Cluster usage", the `b:65 (block)` address help,
+  // `mkfs`'s types) and whether `crash` and `recover` exist at all are fixed then. So on a tab
+  // switch, or when the tab's own set changes (ext3 formatted as ext2), swap the whole set over
+  // that tab's `vfs`, with the banner on a switch. A format or a load replaces the volume and
+  // `onAdopt` has put that tab's cwd back at /mnt, so the prompt is re-set every time. The
+  // tracked reads are the active workspace, its adapter's command set, and its `vol`; the
+  // terminal, the hosts, and the registration are plain fields, and the work is untracked.
+  // Before the terminal exists there is nothing to follow: creation registers the tab active then.
   $effect(() => {
-    const vol = volume.vol;
-    if (vol === seenVol) return;
-    const first = seenVol === null;
-    seenVol = vol;
-    if (first) return; // the disk the page started on; nothing to reset
-    vfs.cwd = MOUNT;
-    untrack(() => host?.setPrompt(promptFor(vfs.cwd)));
-  });
-
-  // Re-register when the mounted family (or its journal) changes. Every command reads the
-  // live adapter when it runs, but browser-terminal keeps each spec as it was registered: the
-  // summaries and flag descriptions that name the family's nouns (`df`'s "Cluster usage",
-  // the `b:65 (block)` address help) and whether `crash` and `recover` exist at all are fixed
-  // then. So swap the whole set: unregister every name, register `createCommands` again over
-  // the same `vfs` (the working directory survives), and re-set the prompt. `volume.adapter`
-  // is the only tracked read; the terminal and the names are plain fields, and the work is
-  // untracked. Before the terminal exists there is nothing to swap: creation registers the
-  // set of the family mounted then.
-  $effect(() => {
-    const set = commandSetOf(volume.adapter);
+    const ws = workspaces.active;
+    const set = commandSetOf(ws.volume.adapter);
+    void ws.volume.vol;
     untrack(() => {
-      if (!bt || !host || set === registeredSet) return;
-      registered = registerCommands(bt, host, vfs, registered);
-      registeredSet = set;
-      host.setPrompt(promptFor(vfs.cwd));
+      if (bt) follow(bt, ws, set);
     });
   });
+
+  /** Drop what belonged to a terminal instance: its hosts (their prompt callback holds it) and
+   *  the registration. */
+  function forget() {
+    hosts.clear();
+    registered = [];
+    current = null;
+  }
 
   function disposeTerminal() {
     bt?.dispose();
     bt = null;
-    host = null;
-    registered = [];
-    registeredSet = null;
+    forget();
   }
   // HMR replaces this module: dispose first or the next create() throws "one instance
   // per page". The unmount cleanup covers the non-HMR teardown. dispose() is idempotent.

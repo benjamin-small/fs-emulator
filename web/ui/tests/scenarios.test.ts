@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { adapterFor, FAMILIES } from "../src/fs";
 import { ScenarioCursor } from "../src/core/scenarioCursor";
-import { all, scenarioGroups } from "../src/scenarios";
+import { all, defaultLessonFor, lessonsFor } from "../src/scenarios";
 import { scenario as formatScenario } from "../src/scenarios/format";
 import { scenario as shell } from "../src/scenarios/shell";
 
@@ -48,23 +48,38 @@ describe("scenario scripts", () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  // The three ext lessons follow the nine FAT ones, so the picker still opens on the FAT
-  // fundamentals and each family's lessons stay together.
+  // `all` keeps each family's lessons together, FAT first, each family's tour first.
   it("lists the FAT lessons first, then the three ext lessons", () => {
     expect(all.map((s) => s.family)).toEqual([...new Array(9).fill("fat16"), "ext", "ext", "ext"]);
     expect(all.slice(9).map((s) => s.id)).toEqual(["ext-fundamentals", "journaled-write", "crash-recover"]);
     expect(all[0].id).toBe("fundamentals");
   });
 
-  // ScenarioPanel renders one <optgroup> per group, labelled with the family's display name.
-  it("groups the picker by family in registry order", () => {
-    expect(scenarioGroups().map((g) => [g.family, g.label, g.scenarios.map((s) => s.id)])).toEqual([
-      ["fat16", "FAT16", all.slice(0, 9).map((s) => s.id)],
-      ["ext", "ext", ["ext-fundamentals", "journaled-write", "crash-recover"]],
+  // Each tab's picker lists its own family's lessons only, flat, in `all` order.
+  it("gives each tab its own lessons, in order", () => {
+    expect(lessonsFor("fat16").map((s) => s.id)).toEqual([
+      "fundamentals", "format", "small-file", "long-name", "overwrite-grows", "delete-remnants", "fill-disk", "directory", "shell",
     ]);
+    expect(lessonsFor("ext").map((s) => s.id)).toEqual(["ext-fundamentals", "journaled-write", "crash-recover"]);
+    expect(lessonsFor("ext").map((s) => s.title)).toEqual(["The fundamentals", "A journaled write", "Crash and recover"]);
+    // A list without a family's lessons gives that family none.
+    expect(lessonsFor("ext", all.slice(0, 9))).toEqual([]);
+  });
+
+  it("puts every lesson in exactly one tab's list", () => {
     expect(Object.keys(FAMILIES)).toEqual(["fat16", "ext"]);
-    // A family with no lessons gets no empty group.
-    expect(scenarioGroups(all.slice(0, 9)).map((g) => g.family)).toEqual(["fat16"]);
+    const listed = Object.values(FAMILIES).flatMap((f) => lessonsFor(f.id));
+    expect(listed).toHaveLength(all.length);
+    expect(new Set(listed)).toEqual(new Set(all));
+  });
+
+  // The picker preselects the first of the tab's lessons: each family's fundamentals.
+  it("defaults each tab to its first lesson, the fundamentals", () => {
+    expect(defaultLessonFor("fat16")).toBe(lessonsFor("fat16")[0]);
+    expect(defaultLessonFor("fat16").title).toBe("The fundamentals");
+    expect(defaultLessonFor("ext")).toBe(lessonsFor("ext")[0]);
+    expect(defaultLessonFor("ext").id).toBe("ext-fundamentals");
+    expect(() => defaultLessonFor("ext", all.slice(0, 9))).toThrow("no lessons for ext");
   });
 
   // The runner itself needs runes, so the step bookkeeping it drives lives in a plain

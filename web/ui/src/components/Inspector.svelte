@@ -1,10 +1,11 @@
 <script lang="ts">
-  import { volume } from "../state/volume.svelte";
-  import { selection } from "../state/selection.svelte";
+  import { getWorkspace } from "../state/workspace.svelte";
   import { attrAtOffset } from "../core/attribution";
   import { isPseudoOwner, unitIsSector } from "../fs/adapter";
   import type { Annotation } from "../lib/wasm";
   import { describeRange, formatRange, formatValue } from "../core/annotationFormat";
+
+  const { volume, selection } = getWorkspace();
 
   const offset = $derived(selection.hoverOffset ?? selection.cursorOffset);
   const attr = $derived(offset === null ? null : attrAtOffset(volume.attribution, offset));

@@ -1,8 +1,9 @@
 <script lang="ts">
   import type { TreeNode } from "../core/tree";
-  import { selection } from "../state/selection.svelte";
-  import { volume } from "../state/volume.svelte";
+  import { getWorkspace } from "../state/workspace.svelte";
   import TreeNodeView from "./TreeNodeView.svelte";
+
+  const { volume, selection } = getWorkspace();
 
   let { node, depth }: { node: TreeNode; depth: number } = $props();
   let open = $state(true);

@@ -5,8 +5,9 @@
   import { inTextEntry } from "../core/keys";
   import { describeFocus } from "../core/lesson";
   import { lessonWindow } from "../state/lessonWindow.svelte";
-  import { scenarios } from "../state/scenarios.svelte";
-  import { volume } from "../state/volume.svelte";
+  import { getWorkspace } from "../state/workspace.svelte";
+
+  const { volume, scenarios } = getWorkspace();
 
   /** Below this viewport width the card docks to the bottom of the screen instead of
    *  floating: there is no room to drag it anywhere useful. Same breakpoint as the
@@ -32,8 +33,16 @@
   // Minimized, the title is hidden, so the dialog itself takes focus: its name is the
   // scenario title and its description the step's title and text, which aria still reads
   // from the hidden elements, so the new step is announced either way.
+  // A tab switch remounts the card over a lesson already under way (App keys it on the active
+  // tab): focus stays on the tab that was activated, as the tabs pattern expects, and moves
+  // only on the lesson's own steps after that.
+  let onTab = document.activeElement?.getAttribute("role") === "tab";
   $effect(() => {
     void scenarios.index;
+    if (onTab) {
+      onTab = false;
+      return;
+    }
     void tick().then(() => (lessonWindow.minimized ? cardEl : titleEl)?.focus());
   });
 
@@ -87,14 +96,15 @@
     if (lessonWindow.pos) lessonWindow.setPos(clampPosition(lessonWindow.pos, cardSize(), viewport));
   }
 
-  // The default spot is measured from the layout (the grid's top edge), after the card has
-  // its size; re-measured whenever the viewport changes and the user has not moved it yet.
+  // The default spot is measured from the layout (the shown tab's grid's top edge; a hidden
+  // tab's grid has no box), after the card has its size; re-measured whenever the viewport
+  // changes and the user has not moved it yet.
   $effect(() => {
     void viewport;
     if (lessonWindow.pos || docked) return;
     void tick().then(() => {
       if (lessonWindow.pos) return;
-      const gridTop = document.querySelector(".grid")?.getBoundingClientRect().top ?? 96;
+      const gridTop = document.querySelector(".workspace:not([hidden]) .grid")?.getBoundingClientRect().top ?? 96;
       fallback = defaultPosition(cardSize(), viewport, Math.round(gridTop));
     });
   });

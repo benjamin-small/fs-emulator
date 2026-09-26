@@ -91,7 +91,7 @@ export const scenario: Scenario = {
     },
     {
       title: "Putting it together",
-      text: "Every path through this disk starts at sector 0: its numbers locate the tables and the root directory, a directory slot names a first cluster, the table chains the rest, and cluster numbers turn into sector addresses by arithmetic. The other scenarios change the disk one operation at a time; watch the ribbon and the Step strip to see the same three places, slot, table, and data, move each time.",
+      text: "Every path through this disk starts at sector 0: its numbers locate the tables and the root directory, a directory slot names a first cluster, the table chains the rest, and cluster numbers turn into sector addresses by arithmetic. The other scenarios change the disk one operation at a time; watch the ribbon and the What changed panel to see the same three places, slot, table, and data, move each time.",
       focus: { path: null, sector: 0 },
     },
   ],
