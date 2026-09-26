@@ -22,9 +22,15 @@ describe("app.css layout guards", () => {
     expect(rule(".app")).toContain("grid-template-columns: minmax(0, 1fr)");
   });
 
+  it("gives the app four rows: top bar, Operation bar, ribbon, and the grid, which takes the rest", () => {
+    // The Timeline footer is gone, so a fifth template row would leave an empty 8 px gap under the
+    // grid and push the terminal drawer (the implicit row after these) down by it.
+    expect(rule(".app")).toContain("grid-template-rows: auto auto auto minmax(0, 1fr);");
+  });
+
   it("lays a shown tab's body out in the app grid, and leaves a hidden one to the UA's rule", () => {
     // Each tab's body sits in a `.workspace` wrapper; as a box it would be one grid item and the
-    // step strip, ribbon, grid, and footer would lose their rows. `:not([hidden])`, because an
+    // Operation bar, ribbon, and grid would lose their rows. `:not([hidden])`, because an
     // author `display` would override the UA's `[hidden] { display: none }`.
     expect(rule(".workspace:not([hidden])")).toBe(" display: contents; ");
   });
@@ -66,12 +72,17 @@ describe("app.css layout guards", () => {
     expect(side).not.toContain("grid-template-columns");
   });
 
-  it("caps the Step strip's height and scrolls it, so a long step cannot push the grid down", () => {
-    // An ext3 Add file lists 18 block buttons and 30 events; uncapped, the strip grew to 571 px in a
-    // 760 px window. 210 px is about six rows of buttons, more than the FAT actions fill.
-    const step = rule(".step");
-    expect(step).toContain("max-height: 210px");
-    expect(step).toContain("overflow: auto");
+  it("keeps the Operation bar to one wrapping row, with the summary on a line of its own under 760 px", () => {
+    // The bar holds only the controls and a one-line summary (the blocks and events moved to the
+    // What changed panel), so it needs no height cap; it wraps rather than pushing the page
+    // sideways, and the slider takes the slack but never shrinks below a usable 120 px.
+    expect(rule(".opbar")).toBe(" display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; padding: 5px 10px; ");
+    expect(rule(".opbar .tl-range")).toBe(" flex: 1 1 160px; min-width: 120px; ");
+    expect(media("max-width: 760px")).toContain(".opbar-summary { flex-basis: 100%; }");
+    // The Step strip's and the Timeline footer's rules went with them.
+    expect(rule(".step")).toBeNull();
+    expect(rule(".timeline")).toBeNull();
+    expect(css).not.toContain(".tl-step");
   });
 
   it("gives every palette colour, the journal's included, a dump row stripe and tint", () => {

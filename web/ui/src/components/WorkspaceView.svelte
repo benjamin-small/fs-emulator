@@ -5,10 +5,10 @@
   import DirTree from "./DirTree.svelte";
   import HexView from "./HexView.svelte";
   import Inspector from "./Inspector.svelte";
+  import OperationBar from "./OperationBar.svelte";
   import Ribbon from "./Ribbon.svelte";
-  import StepPanel from "./StepPanel.svelte";
   import StringsPanel from "./StringsPanel.svelte";
-  import Timeline from "./Timeline.svelte";
+  import WhatChangedPanel from "./WhatChangedPanel.svelte";
 
   /** One tab's body: everything under the top bar, over the tab's own stores. App keeps one
    *  per opened tab mounted and hides the others, so each keeps its component state. */
@@ -19,15 +19,16 @@
   setWorkspace(ws);
 
   /** The map panel of the tab's family (the FAT map, the block-group map), from the panel
-   *  registry. The family's aside panels (ext: the Journal) head the right column. */
+   *  registry. The family's aside panels (ext: the Journal) follow What changed at the top of
+   *  the right column. */
   const MapPanel = $derived(PANELS[ws.id].map);
 </script>
 
-<!-- The current step sits with the other controls, under the picker and the Terminal
-     button, so the right column is left to state and data (the family's aside panels, such as
-     ext's Journal, then Strings and the Inspector). The slots are classes, not ids: every
+<!-- The Operation bar (the timeline's controls and the step in one line) sits under the top
+     bar; what the step wrote heads the right column (What changed), then the family's aside
+     panels (ext's Journal), Strings, and the Inspector. The slots are classes, not ids: every
      opened tab has its own. -->
-<div class="step-slot"><StepPanel /></div>
+<div class="opbar-slot"><OperationBar /></div>
 <div class="ribbon-slot"><Ribbon /></div>
 <div class="grid">
   <aside class="col left">
@@ -37,9 +38,9 @@
   </aside>
   <main class="col center"><HexView /></main>
   <aside class="col right">
+    <WhatChangedPanel />
     {#each PANELS[ws.id].aside as Aside}<Aside />{/each}
     <StringsPanel />
     <Inspector />
   </aside>
 </div>
-<footer class="timeline-slot"><Timeline /></footer>

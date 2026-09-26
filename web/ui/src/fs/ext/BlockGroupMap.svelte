@@ -46,7 +46,7 @@
   const scrollOffset = $derived(clampScroll(scrollTop, map.height, viewportHeight));
 
   $effect(() => {
-    volume.epoch; layers.chain; layers.diff; selection.hoverOffset; headers; map; fills; scrollOffset;
+    volume.epoch; layers.chain; layers.diff; layers.hover; selection.hoverOffset; headers; map; fills; scrollOffset;
     paint();
   });
 
@@ -135,6 +135,15 @@
     for (const b of blocksTouched(layers.diff, geo.blockSize, geo.totalBlocks)) {
       const c = cellOf(map, b);
       if (c && isVisible(c.y)) outlineCell(ctx, c.x, c.y, CELL, diffColor);
+    }
+
+    // What changed's hovered range or event: the blocks it touches, outlined in the focus colour
+    // over the diff's.
+    if (layers.hover) {
+      for (const b of blocksTouched([layers.hover], geo.blockSize, geo.totalBlocks)) {
+        const c = cellOf(map, b);
+        if (c && isVisible(c.y)) outlineCell(ctx, c.x, c.y, CELL, focus);
+      }
     }
 
     const chain = layers.chain.map((b) => cellOf(map, b)).filter((c): c is { x: number; y: number } => c !== null && isVisible(c.y));

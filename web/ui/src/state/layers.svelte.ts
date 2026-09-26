@@ -8,6 +8,9 @@ export class LayersStore {
   extraSel = $state.raw<Interval[]>([]);
   str = $state.raw<Interval[]>([]);
   visible = $state.raw<Interval>({ start: 0, end: 0 });
+  /** The bytes under the pointer or focus in the What changed panel (a range of blocks, an
+   *  event's region): the ribbon and the map outline them in `--focus`. Null when none. */
+  hover = $state.raw<Interval | null>(null);
 
   // The tab's stores. The deriveds below read them lazily, after the constructor has run; they
   // are all `$derived.by` so the type checker sees the reads happen inside a function.

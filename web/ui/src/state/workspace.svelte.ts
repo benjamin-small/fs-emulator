@@ -45,7 +45,7 @@ export class Workspace {
   /**
    * Scrub to `step` and recenter the dump on what that step changed. Running an operation
    * never moves the dump — only explicit navigation does — so this is called from the
-   * Timeline's controls and from App.svelte's `[`/`]` shortcuts. A step with no changes (or an
+   * Operation bar's controls and from App.svelte's `[`/`]` shortcuts. A step with no changes (or an
    * index off either end of the history) leaves the dump alone.
    */
   goToStep(step: number) {

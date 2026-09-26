@@ -2,7 +2,9 @@
   import { untrack } from "svelte";
   import { attrAtSector, type Attr } from "../core/attribution";
   import { freeSpaceLabel } from "../core/freeSpace";
+  import type { Interval } from "../core/intervals";
   import { metaLabel } from "../core/legend";
+  import { observeWidth } from "../core/observeWidth";
   import { colorIndexForPath } from "../core/palette";
   import { buildTree, type TreeNode } from "../core/tree";
   import { getWorkspace } from "../state/workspace.svelte";
@@ -12,7 +14,6 @@
   const HEIGHT = 28;
   const FLASH_MS = 300;
 
-  let wrap = $state<HTMLDivElement>();
   let canvas = $state<HTMLCanvasElement>();
   let width = $state(0);
   let hoverCol = $state<number | null>(null);
@@ -26,22 +27,16 @@
   let colorCache: { idx: number; free: boolean }[] = [];
   let colorCacheKey = "";
 
-  // Track the ribbon's own on-screen width so `cols` follows a resize (breakpoint
-  // change, window resize) rather than a value baked in at mount — same pattern as
-  // FatMap.
-  $effect(() => {
-    if (!wrap) return;
-    width = wrap.getBoundingClientRect().width;
-    const ro = new ResizeObserver((entries) => { width = entries[0].contentRect.width; });
-    ro.observe(wrap);
-    return () => ro.disconnect();
-  });
+  // The ribbon's own on-screen width, kept current by `observeWidth` on the wrapper so `cols`
+  // follows a resize (breakpoint change, window resize) rather than a value baked in at mount —
+  // the maps' pattern. A hidden tab's ribbon measures 0; `observeWidth` ignores that, so the
+  // ribbon keeps its width instead of repainting 1 px wide and jumping back when shown.
 
   const cols = $derived(Math.max(1, Math.floor(width)));
   const sectorsPerCol = $derived(Math.max(1, Math.ceil(volume.totalSectors / cols)));
 
   $effect(() => {
-    volume.epoch; layers.visible; layers.diff; cols;
+    volume.epoch; layers.visible; layers.diff; layers.hover; cols;
     paint();
   });
 
@@ -60,13 +55,19 @@
     return typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches;
   }
 
+  /** The first and last columns a byte range covers. */
+  function colSpan(iv: Interval): { c0: number; c1: number } {
+    const s0 = Math.floor(iv.start / volume.sectorSize);
+    const s1 = Math.max(s0, Math.ceil(iv.end / volume.sectorSize) - 1);
+    const c0 = Math.max(0, Math.min(cols - 1, Math.floor(s0 / sectorsPerCol)));
+    const c1 = Math.max(c0, Math.min(cols - 1, Math.floor(s1 / sectorsPerCol)));
+    return { c0, c1 };
+  }
+
   function computeFlashCols(): Set<number> {
     const out = new Set<number>();
     for (const iv of layers.diff) {
-      const s0 = Math.floor(iv.start / volume.sectorSize);
-      const s1 = Math.max(s0, Math.ceil(iv.end / volume.sectorSize) - 1);
-      const c0 = Math.max(0, Math.min(cols - 1, Math.floor(s0 / sectorsPerCol)));
-      const c1 = Math.max(0, Math.min(cols - 1, Math.floor(s1 / sectorsPerCol)));
+      const { c0, c1 } = colSpan(iv);
       for (let c = c0; c <= c1; c++) out.add(c);
     }
     return out;
@@ -156,10 +157,7 @@
     // Viewport bracket: top and bottom lines spanning the visible columns.
     const v = layers.visible;
     if (v.end > v.start) {
-      const s0 = Math.floor(v.start / volume.sectorSize);
-      const s1 = Math.max(s0, Math.ceil(v.end / volume.sectorSize) - 1);
-      const c0 = Math.max(0, Math.min(cssWidth - 1, Math.floor(s0 / sectorsPerCol)));
-      const c1 = Math.max(c0, Math.min(cssWidth - 1, Math.floor(s1 / sectorsPerCol)));
+      const { c0, c1 } = colSpan(v);
       ctx.fillStyle = focus;
       ctx.fillRect(c0, 0, c1 - c0 + 1, 2);
       ctx.fillRect(c0, HEIGHT - 2, c1 - c0 + 1, 2);
@@ -174,6 +172,16 @@
         for (const col of flashCols) ctx.fillRect(col, 0, 1, HEIGHT);
         ctx.globalAlpha = 1;
       }
+    }
+
+    // What changed's hovered range or event: a 1 px outline around the columns it covers, drawn
+    // just outside them so a one-column range stays visible.
+    const h = layers.hover;
+    if (h && h.end > h.start) {
+      const { c0, c1 } = colSpan(h);
+      ctx.strokeStyle = focus;
+      ctx.lineWidth = 1;
+      ctx.strokeRect(c0 - 0.5, 0.5, c1 - c0 + 2, HEIGHT - 1);
     }
   }
 
@@ -260,7 +268,7 @@
 <svelte:window onmouseup={onUp} />
 
 <section class="ribbon">
-  <div class="ribbon-canvas-wrap" bind:this={wrap}>
+  <div class="ribbon-canvas-wrap" use:observeWidth={(w) => (width = w)}>
     <!-- svelte-ignore a11y_mouse_events_have_key_events -->
     <canvas
       bind:this={canvas}

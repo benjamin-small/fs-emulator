@@ -21,14 +21,14 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
    last layout (the ribbon's canvas, xterm's screen layers). With `auto`, narrowing the window
    left the column at the old width, the page scrolled sideways, and the resize observers that
    would refit those children never saw a smaller box. */
-.app { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto auto minmax(0, 1fr) auto; grid-auto-rows: var(--term-h, 220px); height: 100vh; gap: 8px; padding: 8px; }
+.app { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto auto minmax(0, 1fr); grid-auto-rows: var(--term-h, 220px); height: 100vh; gap: 8px; padding: 8px; }
 /* Wide viewports (placementFor in src/core/terminalPlacement.ts, mirrored by App.svelte as
    `.term-side`): the terminal is a column down the right side spanning every row, sized by
    `--term-w`. It is placed explicitly in column 2, so the implicit column exists only while
    the drawer is rendered; hidden, it adds neither a track nor a gap. */
 .app.term-side { grid-auto-columns: var(--term-w, 500px); }
-/* A tab's body (App.svelte's `.workspace` wrapper) adds no box: its step strip, ribbon, grid,
-   and footer are the app grid's rows. `:not([hidden])`, since an author `display` would
+/* A tab's body (App.svelte's `.workspace` wrapper) adds no box: its Operation bar, ribbon, and
+   grid are the app grid's rows. `:not([hidden])`, since an author `display` would
    override the UA's `[hidden] { display: none }` and show every tab at once. */
 .workspace:not([hidden]) { display: contents; }
 .app.term-side > .terminal-drawer { grid-column: 2; grid-row: 1 / -1; position: relative; }
@@ -76,6 +76,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   .tab { flex: 1 1 0; justify-content: center; min-height: 36px; }
   #terminal-toggle, #scenario-slot { order: 3; }
   .topbar > .status { order: 4; }
+  .opbar-summary { flex-basis: 100%; }
 }
 
 /* Ribbon */
@@ -175,26 +176,26 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .journal-armed { flex-basis: 100%; }
 .journal-none { margin: 0; font-size: 12px; }
 
-/* Step panel */
-/* Step strip (under the top bar): one wrapping row of heading, counter, op, sector buttons,
-   and events. It scrolls past about six rows of buttons (210 px), which the FAT actions never
-   reach; an ext3 Add file's 18 block buttons and 30 events would push the grid down. */
-.step { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; padding: 5px 10px; max-height: 210px; overflow: auto; }
-.step > h2 { margin: 0; font: 500 13px var(--font-display); }
-.step p { margin: 0; }
-.step .counter { color: var(--ink-muted); }
-.step .btn-row { display: flex; flex-wrap: wrap; gap: 6px; }
-.step .events { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 2px 14px; font-size: 12px; }
-.step .events .link { text-align: left; }
+/* Operation bar (under the top bar): Prev, Play, Next, the slider, then the step in one line
+   (`3 of 7 · create_file /hello.txt · 18 blocks · 30 events`). The blocks and events themselves
+   are the What changed panel's, so the bar never grows past two lines. */
+.opbar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; padding: 5px 10px; }
+.opbar-controls { display: flex; align-items: center; gap: 6px; }
+.opbar .tl-range { flex: 1 1 160px; min-width: 120px; }
+.opbar-summary { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.opbar-summary .counter { color: var(--ink-muted); }
 
-/* Timeline */
-.timeline { padding: 4px 2px; }
-.tl-controls { display: flex; align-items: center; gap: 6px; }
-.tl-range { flex: 1; }
-.tl-steps { display: flex; margin-top: 4px; }
-.tl-step { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; text-align: center; border-radius: 0; border-width: 1px 0 0 1px; }
-.tl-step:last-child { border-right-width: 1px; }
-.tl-step.current { background: color-mix(in srgb, var(--focus) 15%, transparent); border-color: var(--focus); }
+/* What changed panel (top of the right column): the step's changed blocks as ranges, then its
+   events grouped into phases, each a disclosure. */
+.changed p { margin: 0; }
+.changed .changed-label { margin-bottom: 4px; font-size: 12px; }
+.changed .ranges { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
+.changed .ranges button { padding: 1px 6px; }
+.changed .phase { border-top: 1px solid var(--hairline); padding: 4px 0; }
+.changed .phase summary { cursor: pointer; font: 500 12px var(--font-display); }
+.changed .phase ol { list-style: none; padding: 0; margin: 4px 0 2px; display: flex; flex-direction: column; gap: 2px; font-size: 12px; }
+.changed .phase .link { text-align: left; }
+.changed .warn { color: var(--warn); }
 
 /* Strings panel */
 .strings .toggle { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; font-size: 12px; }
