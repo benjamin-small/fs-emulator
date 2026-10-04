@@ -240,8 +240,8 @@ clicking one of the journal's pointer blocks (`<journal>`,
 nothing to select.
 
 **`web/ui`, after the family tabs** (the tabs plan's browser pass): the
-terminal's tab banner is printed through browser-terminal 0.3.0's private
-`paneManager.handleEvent` (a `paneOutput` event), guarded so a missing
+terminal's tab banner is printed through browser-terminal's private
+`paneManager.handleEvent` (a `paneOutput` event; still there in 0.5.0), guarded so a missing
 internal only drops the banner, until the library has a public call that
 prints a host line; `FatMap`'s scroll is not kept across a tab switch (only
 the dump and the block-group map use `keepScroll`), so a FAT map scrolled
@@ -332,8 +332,12 @@ explorer adopted them on 2026-09-22. Each workaround they replaced is gone:
 7. A public `focus()`, replacing the `.xterm-helper-textarea` query:
    https://github.com/benjamin-small/browser-terminal/issues/18.
 
-The explorer pins the package exactly (0.3.0) so a minor release cannot move
-any of this underneath it.
+The explorer pins the package exactly (0.5.0 since 2026-10-03) so a minor
+release cannot move any of this underneath it. From 0.5.0 `create()` mounts
+OPFS at `/scratch` with its own `pwd`, `cd`, `ls`, `cat`, file redirection
+and a working-directory prompt unless told otherwise; the explorer passes
+`filesystem: false` so its own commands, `src/shell/redirect.ts` and its
+`/mnt` prompt stay the only ones.
 
 ## Adding a filesystem: checklist
 

@@ -43,8 +43,8 @@
   /**
    * Print `line` in the active pane in place of its prompt line, leaving the cursor on a fresh
    * line for the caller's `setPrompt` to redraw the prompt (and any typed input) on.
-   * browser-terminal 0.3.0 has no call for a host line (`run()` hands its output back instead
-   * of printing it), so this gives the pane manager the `paneOutput` event the engine itself
+   * browser-terminal (0.3.0 through 0.5.0) has no call for a host line (`run()` hands its
+   * output back instead of printing it), so this gives the pane manager the `paneOutput` event the engine itself
    * sends. An idle pane redraws its prompt only when the prefix changes, so the prefix is
    * cleared here and the caller's `setPrompt` sets it again. Guarded: if a later version
    * renames that internal, the banner is skipped and nothing else changes.
@@ -126,8 +126,10 @@
       const { BrowserTerminal } = await import("@benjamin-small/browser-terminal");
       const { theme: xtermTheme, fontFamily } = currentTheme();
       // 12px matches the dump's `--dump-size` neighbourhood and keeps a usable number of
-      // columns in a 220px drawer; the library's own default is 13.
-      const term = await BrowserTerminal.create({ mount, terminal: { theme: xtermTheme, fontFamily, fontSize: 12 } });
+      // columns in a 220px drawer; the library's own default is 13. `filesystem: false` keeps
+      // 0.5.0's default OPFS /scratch (its own cd/ls/cat, redirects and prompt) out: the
+      // explorer registers those over the emulated volume itself.
+      const term = await BrowserTerminal.create({ mount, filesystem: false, terminal: { theme: xtermTheme, fontFamily, fontSize: 12 } });
       try {
         // Commands read live store fields through the host on every call; only what is fixed
         // at registration (the command set, its summaries and flag descriptions) follows the
