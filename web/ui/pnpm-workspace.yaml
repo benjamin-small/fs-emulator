@@ -6,3 +6,8 @@ overrides:
 allowBuilds:
   "@swc/core": false
   esbuild: false
+
+# Our own library, adopted the day it was released (issue #21); pnpm 12's release-age
+# check would otherwise fail the frozen install. Drop once 0.6.0 is past the window.
+minimumReleaseAgeExclude:
+  - '@benjamin-small/browser-terminal@0.6.0'

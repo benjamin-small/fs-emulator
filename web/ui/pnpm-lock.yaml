@@ -12,8 +12,8 @@ importers:
   .:
     dependencies:
       '@benjamin-small/browser-terminal':
-        specifier: 0.5.0
-        version: 0.5.0
+        specifier: 0.6.0
+        version: 0.6.0
       '@xterm/xterm':
         specifier: ^6.0.0
         version: 6.0.0
@@ -79,8 +79,8 @@ packages:
     resolution: {integrity: sha512-6zABk/ECA/QYSCQ1NGiVwwbQerUCZ+TQbp64Q3AgmfNvurHH0j8TtXa1qbShXA6qqkpAj4V5W8pP6mLe1mcMqA==}
     engines: {node: '>=18'}
 
-  '@benjamin-small/browser-terminal@0.5.0':
-    resolution: {integrity: sha512-x4AnCDGIQaFGq6M/iE2bxGwjaJ4gXXr/k2u+reQX9CNnfM+BAS1Wz9ZpeHre8OqrTBEPtoxYe2bDRUHqB86TKA==}
+  '@benjamin-small/browser-terminal@0.6.0':
+    resolution: {integrity: sha512-5/rXKR2uZMbddf4riOqS1vgthQDdy9VDviDi7ST3Yx6L1DZ5nA4mHpeY/GFLIH9b+EEVI02k9b0qfQpdcwuhKA==}
 
   '@esbuild/aix-ppc64@0.25.12':
     resolution: {integrity: sha512-Hhmwd6CInZ3dwpuGTF8fJG6yoWmsToE+vYgD4nytZVxcu1ulHpUQRAB1UJ8+N1Am3Mz4+xOByoQoSZf4D+CpkA==}
@@ -1113,7 +1113,7 @@ snapshots:
 
   '@bcoe/v8-coverage@1.0.2': {}
 
-  '@benjamin-small/browser-terminal@0.5.0':
+  '@benjamin-small/browser-terminal@0.6.0':
     dependencies:
       '@xterm/addon-fit': 0.11.0
       '@xterm/xterm': 6.0.0

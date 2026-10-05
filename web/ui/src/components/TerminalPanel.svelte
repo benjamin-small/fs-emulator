@@ -41,28 +41,6 @@
   }
 
   /**
-   * Print `line` in the active pane in place of its prompt line, leaving the cursor on a fresh
-   * line for the caller's `setPrompt` to redraw the prompt (and any typed input) on.
-   * browser-terminal (0.3.0 through 0.5.0) has no call for a host line (`run()` hands its
-   * output back instead of printing it), so this gives the pane manager the `paneOutput` event the engine itself
-   * sends. An idle pane redraws its prompt only when the prefix changes, so the prefix is
-   * cleared here and the caller's `setPrompt` sets it again. Guarded: if a later version
-   * renames that internal, the banner is skipped and nothing else changes.
-   */
-  function printLine(term: BrowserTerminal, line: string) {
-    type PaneOutput = { type: "paneOutput"; pane: number; data: string };
-    const panes = (term as unknown as { paneManager?: { handleEvent?: (e: PaneOutput) => void } }).paneManager;
-    const pane = term.snapshot?.active_pane;
-    if (typeof panes?.handleEvent !== "function" || pane === undefined) return;
-    try {
-      panes.handleEvent({ type: "paneOutput", pane, data: `\r\x1b[2K${line}\r\n` });
-    } catch {
-      return;
-    }
-    term.setPrompt("");
-  }
-
-  /**
    * Point the terminal at `ws`, whose command set is `set`: register that tab's commands over
    * its own `vfs` and its redirect handler when the tab or the set changed, print the banner
    * when the tab changed (not on the first registration), and always re-set the prompt from
@@ -79,7 +57,9 @@
       term.setRedirectHandler(createRedirectHandler(host, ws.vfs));
       current = next;
     }
-    if (change.banner) printLine(term, tabBanner(ws.id, ws.volume.vol.fsType()));
+    // `print` (0.6.0) writes above the prompt and redraws it with any half-typed input; the
+    // prompt is then re-set for the new tab's cwd.
+    if (change.banner) term.print(tabBanner(ws.id, ws.volume.vol.fsType()));
     host.setPrompt(promptFor(ws.vfs.cwd));
   }
 
