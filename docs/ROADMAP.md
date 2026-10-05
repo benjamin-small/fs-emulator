@@ -239,17 +239,13 @@ clicking one of the journal's pointer blocks (`<journal>`,
 `<journal>` is a pseudo-owner (`isPseudoOwner`), not a tree path, so there is
 nothing to select.
 
-**`web/ui`, after the family tabs** (the tabs plan's browser pass): the
-terminal's tab banner is printed through browser-terminal's private
-`paneManager.handleEvent` (a `paneOutput` event; still there in 0.5.0), guarded so a missing
-internal only drops the banner, until the library has a public call that
-prints a host line; `FatMap`'s scroll is not kept across a tab switch (only
-the dump and the block-group map use `keepScroll`), so a FAT map scrolled
-down comes back at the top; workspaces are never disposed, about 33 MB each
-(the 16 MB image in wasm memory, a 16 MB JavaScript copy, the zero map), so
-the page holds both disks once the ext tab has opened; and the xterm
-scrollback is shared across tabs by design, with the banner marking each
-switch.
+**`web/ui`, after the family tabs** (the tabs plan's browser pass):
+`FatMap`'s scroll is not kept across a tab switch (only the dump and the
+block-group map use `keepScroll`), so a FAT map scrolled down comes back at
+the top; workspaces are never disposed, about 33 MB each (the 16 MB image in
+wasm memory, a 16 MB JavaScript copy, the zero map), so the page holds both
+disks once the ext tab has opened; and the xterm scrollback is shared across
+tabs by design, with the banner marking each switch.
 
 **`web/ui`, seams the ext slice inherited**: (a) the free-space model in
 generic code assumes allocation units exist only in `data` regions and that
@@ -332,12 +328,18 @@ explorer adopted them on 2026-09-22. Each workaround they replaced is gone:
 7. A public `focus()`, replacing the `.xterm-helper-textarea` query:
    https://github.com/benjamin-small/browser-terminal/issues/18.
 
-The explorer pins the package exactly (0.5.0 since 2026-10-03) so a minor
+The explorer pins the package exactly (0.6.0 since 2026-10-05) so a minor
 release cannot move any of this underneath it. From 0.5.0 `create()` mounts
 OPFS at `/scratch` with its own `pwd`, `cd`, `ls`, `cat`, file redirection
 and a working-directory prompt unless told otherwise; the explorer passes
 `filesystem: false` so its own commands, `src/shell/redirect.ts` and its
-`/mnt` prompt stay the only ones.
+`/mnt` prompt stay the only ones. 0.6.0 added the two calls the explorer
+asked for next: `print()`, which now writes the tab banner (it replaced a
+guarded call into the private `paneManager`,
+https://github.com/benjamin-small/browser-terminal/issues/28), and a log
+level whose default `'warn'` keeps thrown command errors, already shown in
+the pane, out of the console
+(https://github.com/benjamin-small/browser-terminal/issues/29).
 
 ## Adding a filesystem: checklist
 
