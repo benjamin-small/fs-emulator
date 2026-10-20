@@ -276,7 +276,11 @@ reads while the timeline is rewound show the latest state and warn (an
 1 MiB per invocation in the shell, not in Rust; no `mv`, true append, or
 truncate until the core has them; the library and its wasm load lazily on
 first open; `Escape` closes the drawer only from its bar, since xterm cancels
-the key inside the terminal; no tab completion of `/mnt` paths. Deferred:
+the key inside the terminal; Tab completes paths under `/`, `/dev` and
+`/mnt` for the path arguments, `dd`'s `if=`/`of=` and redirects
+(`src/shell/complete.ts`, FAT names case-insensitively), and the library
+quotes a completed word holding `=` or `+` (`"if=/dev/hda"`,
+`"/mnt/lost+found/"`), which still runs. Deferred:
 under 760px the drawer track is capped at 40vh while the store's height can
 be 60%, so the first drag on a phone-width window jumps; `dd`'s volume-file
 sink bounds `--seek` by the disk size, not a sane file size, so a huge seek
