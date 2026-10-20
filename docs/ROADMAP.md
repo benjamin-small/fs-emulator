@@ -276,7 +276,11 @@ reads while the timeline is rewound show the latest state and warn (an
 1 MiB per invocation in the shell, not in Rust; no `mv`, true append, or
 truncate until the core has them; the library and its wasm load lazily on
 first open; `Escape` closes the drawer only from its bar, since xterm cancels
-the key inside the terminal; no tab completion of `/mnt` paths. Deferred:
+the key inside the terminal; Tab completes paths under `/`, `/dev` and
+`/mnt` for the path arguments, `dd`'s `if=`/`of=` and redirects
+(`src/shell/complete.ts`, FAT names case-insensitively), and the library
+quotes a completed word holding `=` or `+` (`"if=/dev/hda"`,
+`"/mnt/lost+found/"`), which still runs. Deferred:
 under 760px the drawer track is capped at 40vh while the store's height can
 be 60%, so the first drag on a phone-width window jumps; `dd`'s volume-file
 sink bounds `--seek` by the disk size, not a sane file size, so a huge seek
@@ -299,34 +303,34 @@ All seven shipped in `@benjamin-small/browser-terminal` 0.3.0, and the
 explorer adopted them on 2026-09-22. Each workaround they replaced is gone:
 
 1. A prompt prefix (`setPrompt`), so the prompt shows the working directory:
-   https://github.com/benjamin-small/browser-terminal/issues/12. The explorer
+   https://github.com/poietic-tech/browser-terminal/issues/12. The explorer
    was already calling `host.setPrompt(promptFor(vfs.cwd))` on startup and
    after every `cd` and `mkfs`; the call reaches the terminal now instead of
    an optional-chained no-op.
 2. `>`, `>>`, and `<` redirection with a host-pluggable file hook:
-   https://github.com/benjamin-small/browser-terminal/issues/13. The explorer
+   https://github.com/poietic-tech/browser-terminal/issues/13. The explorer
    registers `src/shell/redirect.ts` over the same `/mnt` and `/dev` resolver
    its commands use, so a redirect is an ordinary journaled write.
 3. `key=value` barewords, so `dd if=/dev/hda count=1` lexes without quotes:
-   https://github.com/benjamin-small/browser-terminal/issues/14. `parseDd`
+   https://github.com/poietic-tech/browser-terminal/issues/14. `parseDd`
    already accepted that shape; the docs now lead with it.
 4. A bytes `Value`, replacing the `{ bytes: "<hex>", length }` blob record:
-   https://github.com/benjamin-small/browser-terminal/issues/15. `cat
+   https://github.com/poietic-tech/browser-terminal/issues/15. `cat
    --bytes`, `dd` and `xxd` carry `Uint8Array` now, and the terminal shows it
    as `<N bytes>`.
 5. A session or pane id on `ctx`, so each shell could keep its own working
-   directory: https://github.com/benjamin-small/browser-terminal/issues/16.
+   directory: https://github.com/poietic-tech/browser-terminal/issues/16.
    `ctx.session` and `ctx.pane` are available, but the working directory
    stays one per tab (the family tabs made it per tab; it was one per page):
    `setPrompt` is engine-wide, so per-session directories could not be shown
    in their prompts. The ids are there for whenever that changes.
 6. `CreateOptions.terminal` (theme, font family, font size) and `setTheme`,
    replacing the `!important` CSS overrides:
-   https://github.com/benjamin-small/browser-terminal/issues/17.
+   https://github.com/poietic-tech/browser-terminal/issues/17.
    `src/core/terminalTheme.ts` maps the design tokens onto an `ITheme`, and
    the panel re-pushes it when the theme switch flips.
 7. A public `focus()`, replacing the `.xterm-helper-textarea` query:
-   https://github.com/benjamin-small/browser-terminal/issues/18.
+   https://github.com/poietic-tech/browser-terminal/issues/18.
 
 The explorer pins the package exactly (0.6.0 since 2026-10-05) so a minor
 release cannot move any of this underneath it. From 0.5.0 `create()` mounts
@@ -336,10 +340,10 @@ and a working-directory prompt unless told otherwise; the explorer passes
 `/mnt` prompt stay the only ones. 0.6.0 added the two calls the explorer
 asked for next: `print()`, which now writes the tab banner (it replaced a
 guarded call into the private `paneManager`,
-https://github.com/benjamin-small/browser-terminal/issues/28), and a log
+https://github.com/poietic-tech/browser-terminal/issues/28), and a log
 level whose default `'warn'` keeps thrown command errors, already shown in
 the pane, out of the console
-(https://github.com/benjamin-small/browser-terminal/issues/29).
+(https://github.com/poietic-tech/browser-terminal/issues/29).
 
 ## Adding a filesystem: checklist
 

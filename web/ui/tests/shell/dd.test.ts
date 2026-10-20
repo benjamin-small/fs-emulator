@@ -30,7 +30,7 @@ describe("parseDd", () => {
   });
   it("takes `dd if=/dev/hda count=1` exactly as browser-terminal 0.3.0 lexes it", () => {
     // Unquoted `key=value` barewords are positional strings now
-    // (https://github.com/benjamin-small/browser-terminal/issues/14), so this is the
+    // (https://github.com/poietic-tech/browser-terminal/issues/14), so this is the
     // argument list the engine hands the command for that line — no flags at all.
     expect(parseDd({}, ["if=/dev/hda", "count=1"])).toEqual({ if: "/dev/hda", bs: 512, count: 1, skip: 0, seek: 0 });
   });

@@ -9,6 +9,7 @@
   import type { BrowserTerminal } from "@benjamin-small/browser-terminal";
   import { themeFromTokens } from "../core/terminalTheme";
   import { commandSetOf, registerCommands, registrationChange, tabBanner, type Registration } from "../shell/register";
+  import { completePath } from "../shell/complete";
   import type { ShellHost } from "../shell/host";
   import { createRedirectHandler } from "../shell/redirect";
   import { createStoreHost } from "../shell/storeHost.svelte";
@@ -117,6 +118,12 @@
         // the prompt with its cwd; `cd`, `mkfs`, and the effect keep it in step from there.
         const ws = workspaces.active;
         follow(term, ws, commandSetOf(ws.volume.adapter));
+        // Paths complete against whichever tab is active when Tab is pressed; the library
+        // completes command names and flags itself. Disposed with the terminal.
+        term.addCompletionProvider((ctx) => {
+          const active = workspaces.active;
+          return completePath(hostFor(term, active), active.vfs, ctx);
+        });
       } catch (e) {
         // A half-registered instance would still hold the library's one-per-page slot, so
         // every later open would fail to create and sit behind a permanent error banner.
